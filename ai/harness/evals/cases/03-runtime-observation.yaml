@@ -1,0 +1,18 @@
+scenario:
+  id: runtime_observation
+  title: 执行中状态识别
+inputs:
+  required_docs:
+    - instrument_profile.yaml
+    - run_trace.jsonl
+expected_events:
+  - roi_detected
+  - observation_written_to_trace
+pass_criteria:
+  - observer_has_defined_inputs_outputs
+  - vision_mode_referenced
+fixtures:
+  related_memory:
+    - ai/memory/product/vision-patterns.md
+  related_agents:
+    - ai/agents/runtime/observer.md

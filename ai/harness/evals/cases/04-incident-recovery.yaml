@@ -1,0 +1,18 @@
+scenario:
+  id: incident_recovery
+  title: 异常恢复与升级
+inputs:
+  required_docs:
+    - run_trace.jsonl
+    - eval_case.yaml
+expected_events:
+  - exception_classified
+  - recovery_action_recorded
+pass_criteria:
+  - recovery_policy_referenced
+  - manual_confirmation_path_defined
+fixtures:
+  related_memory:
+    - ai/memory/product/failure-recovery-rules.md
+  related_skills:
+    - ai/skills/runtime/incident-recovery/SKILL.md

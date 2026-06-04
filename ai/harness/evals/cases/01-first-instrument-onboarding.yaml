@@ -1,0 +1,21 @@
+scenario:
+  id: first_instrument_onboarding
+  title: 首次仪器接入与校准
+inputs:
+  required_docs:
+    - instrument_profile.yaml
+    - platform_adapter.yaml
+expected_events:
+  - instrument_profile_created
+  - roi_bindings_defined
+  - platform_mapping_drafted
+pass_criteria:
+  - profile_contains_window_signature
+  - safety_limits_present
+  - related_agents_defined
+fixtures:
+  related_memory:
+    - ai/memory/product/instrument-archetypes.md
+  related_skills:
+    - ai/skills/runtime/vision-calibrator/SKILL.md
+    - ai/skills/runtime/platform-mapper/SKILL.md

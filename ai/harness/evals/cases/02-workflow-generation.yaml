@@ -1,0 +1,19 @@
+scenario:
+  id: workflow_generation
+  title: 自然语言生成工作流
+inputs:
+  required_docs:
+    - workflow.yaml
+    - instrument_profile.yaml
+expected_events:
+  - workflow_metadata_present
+  - preconditions_present
+  - retry_policy_present
+pass_criteria:
+  - workflow_steps_use_known_primitives
+  - outputs_declared
+fixtures:
+  related_memory:
+    - ai/memory/product/workflow-primitives.md
+  related_skills:
+    - ai/skills/runtime/workflow-designer/SKILL.md

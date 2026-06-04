@@ -1,0 +1,22 @@
+base_url: "http://speclabos.lab.local/api"
+auth:
+  mode: bearer_token_ref
+  secret_ref: SMARTACCESS_SPECLABOS_TOKEN
+endpoint_map:
+  health: /health
+  fetch_task: /smartaccess/tasks/next
+  fetch_template: /smartaccess/templates/{template_id}/versions/{template_version}
+  publish_template: /smartaccess/templates/publish
+  upload_status: /smartaccess/runs/status
+  upload_logs: /smartaccess/runs/logs
+  upload_results: /smartaccess/runs/results
+field_map:
+  session_id: run.sessionId
+  run_status: run.status
+  final_voltage: metrics.finalVoltage
+  template_id: workflow.templateId
+  template_version: workflow.templateVersion
+retry_policy:
+  max_attempts: 3
+  backoff_seconds: 5
+  cache_when_offline: true

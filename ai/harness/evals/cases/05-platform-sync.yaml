@@ -1,0 +1,23 @@
+scenario:
+  id: platform_sync
+  title: 平台模板同步与数据回传
+inputs:
+  required_docs:
+    - platform_adapter.yaml
+    - workflow.yaml
+    - run_trace.jsonl
+expected_events:
+  - template_published
+  - template_fetched_by_id_and_version
+  - status_uploaded
+  - result_fields_mapped
+pass_criteria:
+  - endpoint_map_present
+  - field_map_present
+  - retry_policy_present
+  - template_sync_endpoints_present
+fixtures:
+  related_skills:
+    - ai/skills/runtime/platform-mapper/SKILL.md
+  related_agents:
+    - ai/agents/runtime/orchestrator.md
