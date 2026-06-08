@@ -24,6 +24,38 @@ VK_MENU = 0x12
 VK_SHIFT = 0x10
 KEYEVENTF_KEYUP = 0x0002
 
+# -- SendInput structures for Unicode text input --------------------------
+INPUT_KEYBOARD = 1
+KEYEVENTF_UNICODE = 0x0004
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_ulonglong),
+    ]
+
+
+class _INPUT(ctypes.Structure):
+    """INPUT structure padded to match Windows sizeof(INPUT) = 40 on 64-bit.
+
+    We only use KEYBDINPUT (24 bytes), but the union's size is dictated by the
+    largest member MOUSEINPUT (32 bytes).  Total struct = 4 + 4(pad) + 32 = 40.
+    """
+
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("ki", _KEYBDINPUT),
+        ("_pad", ctypes.c_ubyte * 8),  # makes sizeof(_INPUT) == 40 on x64
+    ]
+
+
+def _sizeof_input() -> int:
+    return ctypes.sizeof(_INPUT)
+
 user32.SetCursorPos.argtypes = (ctypes.c_int, ctypes.c_int)
 user32.SetCursorPos.restype = wintypes.BOOL
 user32.mouse_event.argtypes = (wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p)
@@ -70,12 +102,16 @@ class Win32AutomationProvider:
         if action in {"click", "double_click"} and anchor is not None:
             self._click_anchor(anchor, double=(action == "double_click"))
         elif action == "type":
-            if anchor is not None:
-                self._click_anchor(anchor)
             self._type_text(str(value or ""))
         elif action == "hotkey":
             self._hotkey(str(value or ""))
-        elif action in {"wait", "wait_until", "screenshot_check"}:
+        elif action == "wait":
+            try:
+                duration = float(str(value)) if value is not None else 1.0
+            except (TypeError, ValueError):
+                duration = 1.0
+            time.sleep(max(0.0, duration))
+        elif action in {"wait_until", "screenshot_check"}:
             time.sleep(0.2)
         else:
             return ActionOutcome(ok=False, detail=f"不支持的动作: {action}")
@@ -116,13 +152,35 @@ class Win32AutomationProvider:
         return rect.left, rect.top
 
     def _type_text(self, text: str) -> None:
-        for char in text:
-            user32.VkKeyScanW.restype = ctypes.c_short
-            vk = user32.VkKeyScanW(ord(char)) & 0xFF
-            if vk:
-                user32.keybd_event(vk, 0, 0, None)
-                user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, None)
-                time.sleep(0.02)
+        """Type text using SendInput with KEYEVENTF_UNICODE — handles ASCII and CJK uniformly."""
+        user32.SendInput.restype = wintypes.UINT
+        n = len(text)
+        # Allocate 2 INPUT structs per character (key down + key up)
+        inputs = (_INPUT * (n * 2))()
+        for i, char in enumerate(text):
+            cp = ord(char)
+            # Key down
+            inputs[i * 2].type = INPUT_KEYBOARD
+            inputs[i * 2].ki.wScan = cp
+            inputs[i * 2].ki.dwFlags = KEYEVENTF_UNICODE
+            # Key up
+            inputs[i * 2 + 1].type = INPUT_KEYBOARD
+            inputs[i * 2 + 1].ki.wScan = cp
+            inputs[i * 2 + 1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+        sent = user32.SendInput(n * 2, inputs, ctypes.sizeof(_INPUT))
+        if sent != n * 2:
+            # Fallback: send one character at a time
+            for i in range(n):
+                pair = (_INPUT * 2)()
+                cp = ord(text[i])
+                pair[0].type = INPUT_KEYBOARD
+                pair[0].ki.wScan = cp
+                pair[0].ki.dwFlags = KEYEVENTF_UNICODE
+                pair[1].type = INPUT_KEYBOARD
+                pair[1].ki.wScan = cp
+                pair[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+                user32.SendInput(2, pair, ctypes.sizeof(_INPUT))
+                time.sleep(0.01)
 
     def _hotkey(self, value: str) -> None:
         keys = [part.strip().lower() for part in value.replace("+", ",").split(",") if part.strip()]

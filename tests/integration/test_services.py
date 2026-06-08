@@ -17,6 +17,7 @@ from smartaccess.runtime.domain.incident import IncidentType
 from smartaccess.runtime.domain.instrument import InstrumentStatus
 from smartaccess.runtime.domain.template import TemplateVersionStatus
 from smartaccess.runtime.domain.workflow import WorkflowLifecycleState
+from smartaccess.shared.contracts.workflow import WorkflowOutput
 from smartaccess.shared.events import EventBus, RuntimeEventName
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +51,21 @@ def test_workflow_standardize_and_transition_guard(tmp_path: Path) -> None:
     svc.transition(workflow, WorkflowLifecycleState.CALIBRATED)  # Draft -> Calibrated ok
     with pytest.raises(ValueError):
         svc.transition(workflow, WorkflowLifecycleState.PUBLISHED)  # illegal jump
+
+
+def test_workflow_update_persists_bindings_and_outputs(tmp_path: Path) -> None:
+    svc = _draft(tmp_path)
+    workflow = svc.draft_from_prompt("x", {"workflow_id": "w1", "instrument_profile": "d1"})
+    workflow.roi_bindings = {"contact_result": "contact_item"}
+    workflow.outputs = [WorkflowOutput(key="selected_contact", source="contact_item")]
+
+    svc.update(workflow)
+
+    reloaded = _draft(tmp_path).get("w1")
+    assert reloaded is not None
+    assert reloaded.roi_bindings == {"contact_result": "contact_item"}
+    assert [(out.key, out.source) for out in reloaded.outputs] == [("selected_contact", "contact_item")]
+    assert svc.standardize_check(workflow).ok
 
 
 def test_template_publish_supersede_and_rollback(tmp_path: Path) -> None:

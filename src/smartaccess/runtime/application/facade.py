@@ -116,8 +116,17 @@ class RuntimeFacade:
     def generate_workflow(self, prompt: str, context: dict[str, Any] | None = None) -> WorkflowContract:
         return self._workflow.draft_from_prompt(prompt, context or {})
 
+    def workflow_reasoning(self) -> str:
+        return self._workflow.last_reasoning()
+
+    def workflow_generator_label(self) -> str:
+        return self._workflow.generator_label()
+
     def register_workflow(self, workflow: WorkflowContract) -> WorkflowContract:
         return self._workflow.register(workflow)
+
+    def update_workflow(self, workflow: WorkflowContract) -> WorkflowContract:
+        return self._workflow.update(workflow)
 
     def list_workflows(self) -> list[WorkflowContract]:
         return self._workflow.list_workflows()

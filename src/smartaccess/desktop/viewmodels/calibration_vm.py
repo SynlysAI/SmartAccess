@@ -20,6 +20,10 @@ class CalibrationViewModel(ViewModel):
     def list_instruments(self) -> list[InstrumentProfileContract]:
         return self._facade.list_instruments()
 
+    def get_instrument(self, device_id: str) -> InstrumentProfileContract | None:
+        """Load a specific instrument profile by device_id."""
+        return self._facade.get_instrument(device_id)
+
     def create_profile(
         self,
         *,

@@ -28,23 +28,65 @@ class DeepSeekWorkflowGenerator:
         self._model = model
         self._timeout = timeout_seconds
         self.last_error = ""
+        self.last_reasoning = ""
 
     def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> WorkflowContract:
         payload = self._chat_payload(prompt, context)
         try:
             data = self._post("/chat/completions", payload)
-            content = data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            content = message["content"]
+            # DeepSeek-reasoner returns the chain-of-thought separately; capture
+            # it so the workflow page can show the model's analysis (item 13).
+            reasoning = message.get("reasoning_content") or ""
             workflow_data = self._extract_structured(content)
+            self.last_reasoning = self._format_reasoning(
+                reasoning, workflow_data, prompt, context
+            )
             return WorkflowContract.model_validate(workflow_data)
         except Exception as exc:
             self.last_error = str(exc)
+            self.last_reasoning = f"## 生成失败\n\n```\n{exc}\n```"
             raise RuntimeError(f"DeepSeek 工作流生成失败: {exc}") from exc
+
+    @staticmethod
+    def _format_reasoning(reasoning, workflow_data, prompt, context) -> str:
+        lines = [
+            "## DeepSeek 编排推理过程",
+            f"**模型**：`{context.get('instrument_profile', '')}` 上下文 · 目标：{prompt.strip()[:120]}",
+            "",
+        ]
+        if reasoning:
+            lines += ["### 模型思考", reasoning.strip(), ""]
+        else:
+            lines += [
+                "### 模型分析",
+                "（当前模型未单独返回思维链；以下为对生成结果的结构化解读）",
+                "",
+            ]
+        steps = workflow_data.get("steps", []) if isinstance(workflow_data, dict) else []
+        if steps:
+            lines.append("### 生成的步骤序列")
+            for i, s in enumerate(steps, 1):
+                tgt = f" → `{s.get('target')}`" if s.get("target") else ""
+                val = f" = {s.get('value')}" if s.get("value") is not None else ""
+                lines.append(f"{i}. **{s.get('id')}** · {s.get('action')}{tgt}{val}")
+        return "\n".join(lines)
 
     def _chat_payload(self, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         system = (
-            "你是 SmartAccess 工作流设计器。只输出一个 JSON 对象，不要 Markdown。"
-            "JSON 必须符合 workflow.yaml 合约：metadata, preconditions, roi_bindings, steps, outputs, retry_policy。"
-            "只能使用已校准 anchors/actions，危险步骤必须保留原始 step id 以便人工确认。"
+            "你是 SmartAccess 工作流设计器。只输出一个 JSON 对象，不要 Markdown。\n"
+            "JSON 必须严格符合 WorkflowContract 格式：\n"
+            "{\n"
+            '  "metadata": {"workflow_id": "...", "author": "...", "instrument_profile": "...", "experiment_type": "...", "lifecycle_state": "Draft"},\n'
+            '  "preconditions": [],\n'
+            '  "roi_bindings": {},  // 必须是对象，不是数组\n'
+            '  "steps": [{"id": "step_1", "action": "click", "target": "anchor_id", "value": null}],  // 使用 target 和 value，不是 anchor 和 params\n'
+            '  "outputs": [{"key": "output_name", "source": "roi_id"}],\n'
+            '  "retry_policy": {"max_attempts": 2}\n'
+            "}\n"
+            "重要：steps 中的每个步骤必须使用 'target' 字段（不是 'anchor'），'value' 字段（不是 'params'）。\n"
+            "只能使用已校准的 anchors/actions，危险步骤必须保留原始 step id 以便人工确认。"
         )
         user = {
             "user_prompt": prompt,
@@ -52,6 +94,7 @@ class DeepSeekWorkflowGenerator:
             "required_metadata": {
                 "workflow_id": context.get("workflow_id", "wf_draft"),
                 "instrument_profile": context.get("instrument_profile", "unknown_device"),
+                "experiment_type": context.get("experiment_type", "generic_automation"),
                 "author": "deepseek-assistant",
                 "lifecycle_state": "Draft",
             },

@@ -5,21 +5,48 @@ from pathlib import Path
 from smartaccess.bootstrap import build_runtime_facade
 from smartaccess.runtime.domain.run_session import RunSessionStatus
 from smartaccess.shared.config.settings import AppSettings
+from smartaccess.shared.contracts.workflow import (
+    WorkflowContract,
+    WorkflowMetadata,
+    WorkflowOutput,
+    WorkflowRetryPolicy,
+    WorkflowStep,
+)
+
+
+def _demo_workflow(workflow_id: str = "wf_test") -> WorkflowContract:
+    return WorkflowContract(
+        metadata=WorkflowMetadata(
+            workflow_id=workflow_id,
+            author="test",
+            instrument_profile="d1",
+            experiment_type="smoke_test",
+            lifecycle_state="Draft",
+        ),
+        roi_bindings={"status_banner": "roi_status"},
+        steps=[WorkflowStep(id="wait_running", action="wait_until", target="roi_status")],
+        outputs=[WorkflowOutput(key="run_status", source="roi_status")],
+        retry_policy=WorkflowRetryPolicy(max_attempts=2),
+    )
 
 
 def test_facade_smoke_and_dashboard(tmp_path: Path) -> None:
     facade = build_runtime_facade(
         AppSettings(workspace_dir=tmp_path),
-        seed_demo=True,
         eval_cases_dir=Path(__file__).resolve().parents[2] / "ai/harness/evals/cases",
     )
 
     received = []
     facade.subscribe(lambda e: received.append(e.name.value))
 
-    # Seed produced one instrument + one workflow.
-    assert facade.list_instruments()
-    workflow = facade.list_workflows()[0]
+    facade.create_calibration(
+        device_id="d1",
+        title_contains="ElectroChem Console",
+        anchors=[{"id": "roi_status", "type": "observation", "vision_mode": "ocr"}],
+        actions=["wait_until"],
+        safety_limits={},
+    )
+    workflow = facade.register_workflow(_demo_workflow())
 
     session = facade.start_run(workflow=workflow)
     assert session.status == RunSessionStatus.COMPLETED
@@ -31,3 +58,18 @@ def test_facade_smoke_and_dashboard(tmp_path: Path) -> None:
 
     evals = facade.run_evals()
     assert len(evals) == 5
+
+
+def test_facade_updates_workflow_bindings_and_outputs(tmp_path: Path) -> None:
+    facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
+    workflow = facade.register_workflow(_demo_workflow())
+    updated = workflow.model_copy(deep=True)
+    updated.roi_bindings = {"contact_result": "contact_item"}
+    updated.outputs = [WorkflowOutput(key="selected_contact", source="contact_item")]
+
+    saved = facade.update_workflow(updated)
+
+    assert saved.roi_bindings == {"contact_result": "contact_item"}
+    assert [(out.key, out.source) for out in saved.outputs] == [("selected_contact", "contact_item")]
+    assert facade.list_workflows()[0].roi_bindings == {"contact_result": "contact_item"}
+    assert facade.standardize(saved).ok

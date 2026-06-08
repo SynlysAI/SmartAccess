@@ -18,8 +18,8 @@ _STEP_STATUS = {
 
 
 class MonitoringViewModel(ViewModel):
-    steps_reset = pyqtSignal(list)
-    step_changed = pyqtSignal(str, str)
+    steps_reset = pyqtSignal(object)  # list[dict[str, str]]
+    step_changed = pyqtSignal(str, str)  # step_id, status
     log_line = pyqtSignal(str)
     run_state = pyqtSignal(str)
     reading = pyqtSignal(str)
@@ -32,11 +32,19 @@ class MonitoringViewModel(ViewModel):
         relay.event_received.connect(self._on_event)
 
     def start(self, workflow: WorkflowContract) -> RunSession:
-        self.steps_reset.emit([s.id for s in workflow.steps])
+        steps_data = [
+            {"id": s.id, "action": s.action, "target": s.target or "", "value": s.value or ""}
+            for s in workflow.steps
+        ]
+        print(f"[DEBUG] MonitoringViewModel.start: emitting steps_reset with {len(steps_data)} steps")
+        self.steps_reset.emit(steps_data)
         session = self._facade.start_run(workflow=workflow, background=True)
         self._session_id = session.session_id
         self.log_line.emit(f"启动运行 session={session.session_id}")
-        self.audit.emit(f"会话 {session.session_id}\n模板 {session.template_id or '-'}@{session.template_version or '-'}")
+        self.audit.emit(
+            f"会话 <b>{session.session_id}</b><br>"
+            f"模板 {session.template_id or '-'}@{session.template_version or '-'}"
+        )
         return session
 
     def _on_event(self, event: RuntimeEvent) -> None:

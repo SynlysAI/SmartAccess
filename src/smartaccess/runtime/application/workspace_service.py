@@ -49,6 +49,9 @@ class DashboardProjection:
     cloud_templates_available: bool = False
     outbox_pending: int = 0
     outbox_failed: int = 0
+    connected_devices: list[str] = field(default_factory=list)
+    templated_device_count: int = 0
+    simulated_device_count: int = 0
 
 
 class WorkspaceService:
@@ -62,16 +65,46 @@ class WorkspaceService:
         incidents: IncidentService,
         templates: TemplateService,
         platform_sync: PlatformSyncService,
+        workflows: "WorkflowService | None" = None,
     ) -> None:
         self._calibration = calibration
         self._run_sessions = run_sessions
         self._incidents = incidents
         self._templates = templates
         self._platform_sync = platform_sync
+        self._workflows = workflows
+
+    def _connected_devices(self) -> tuple[list[str], int, int]:
+        """Devices that are *really accessed*: the intersection of devices that
+        have a template made for them AND have been driven by a (simulated) run.
+
+        - templated: any template record names the device as its instrument_profile.
+        - simulated: a run session executed a workflow bound to the device.
+        """
+
+        calibrated = {p.device_id for p in self._calibration.list_profiles()}
+        templated = {
+            r.instrument_profile
+            for r in self._templates.list_all()
+            if r.instrument_profile
+        }
+        simulated: set[str] = set()
+        if self._workflows is not None:
+            run_workflow_ids = {s.workflow_id for s in self._run_sessions.list_sessions()}
+            by_id = {
+                wf.metadata.workflow_id: wf.metadata.instrument_profile
+                for wf in self._workflows.list_workflows()
+            }
+            simulated = {
+                by_id[wid] for wid in run_workflow_ids if wid in by_id and by_id[wid]
+            }
+        connected = sorted(calibrated & templated & simulated)
+        return connected, len(templated & calibrated), len(simulated & calibrated)
 
     def dashboard(self) -> DashboardProjection:
         sync = self._platform_sync.stats()
         template_stats = self._templates.stats()
+        connected, templated_count, simulated_count = self._connected_devices()
         return DashboardProjection(
             devices=[
                 DeviceStatus(
@@ -104,4 +137,7 @@ class WorkspaceService:
             cloud_templates_available=template_stats.cloud_available,
             outbox_pending=sync.pending,
             outbox_failed=sync.failed,
+            connected_devices=connected,
+            templated_device_count=templated_count,
+            simulated_device_count=simulated_count,
         )

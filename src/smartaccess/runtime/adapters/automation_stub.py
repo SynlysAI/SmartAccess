@@ -7,6 +7,7 @@ API so the calibration page shows the user's actual desktop windows.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from smartaccess.runtime.application.ports import ActionOutcome, WindowInfo
@@ -64,6 +65,12 @@ class StubAutomationProvider:
 
     def run_action(self, action: str, target: str | None, value: Any | None) -> ActionOutcome:
         self.actions.append((action, target, value))
+        if action == "wait":
+            try:
+                duration = float(str(value)) if value is not None else 1.0
+            except (TypeError, ValueError):
+                duration = 1.0
+            time.sleep(max(0.0, duration))
         anchor_detail = ""
         if self._profile and target:
             anchor = next((a for a in self._profile.anchors if a.id == target), None)

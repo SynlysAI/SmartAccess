@@ -57,10 +57,28 @@ class WorkflowService:
         self.register(workflow)
         return workflow
 
+    def last_reasoning(self) -> str:
+        """The most recent generator's reasoning/analysis trace, if any."""
+
+        return getattr(self._draft_generator, "last_reasoning", "") or ""
+
+    def generator_label(self) -> str:
+        """A short label of the active draft generator for the UI."""
+
+        if self._draft_generator is None:
+            return "未配置"
+        name = type(self._draft_generator).__name__
+        return "DeepSeek" if "DeepSeek" in name else "模板生成器"
+
     def register(self, workflow: WorkflowContract) -> WorkflowContract:
         self._workflows[workflow.metadata.workflow_id] = workflow
         self.save(workflow)
         return workflow
+
+    def update(self, workflow: WorkflowContract) -> WorkflowContract:
+        """Persist edits to an existing workflow draft."""
+
+        return self.register(workflow)
 
     def load(self, path: str | Path) -> WorkflowContract:
         workflow = load_yaml_contract(path, WorkflowContract)

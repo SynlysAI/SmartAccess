@@ -1,25 +1,28 @@
-"""A small colored status badge used across pages."""
+"""A small colored status badge used across pages (dark, high-contrast)."""
 
 from __future__ import annotations
 
 from PyQt6.QtWidgets import QLabel, QWidget
 
+# (background tint, text color) — text always far brighter than its fill.
 _COLORS = {
-    "completed": ("#dcfce7", "#166534"),
-    "succeeded": ("#dcfce7", "#166534"),
-    "active": ("#dcfce7", "#166534"),
-    "published": ("#dbeafe", "#1e40af"),
-    "running": ("#dbeafe", "#1e40af"),
-    "ready": ("#e0e7ff", "#3730a3"),
-    "standardized": ("#e0e7ff", "#3730a3"),
-    "draft": ("#f1f5f9", "#475569"),
-    "calibrated": ("#fef9c3", "#854d0e"),
-    "blocked": ("#fee2e2", "#991b1b"),
-    "failed": ("#fee2e2", "#991b1b"),
-    "rolledback": ("#fee2e2", "#991b1b"),
-    "superseded": ("#f1f5f9", "#475569"),
+    "completed": ("#10311f", "#34d399"),
+    "succeeded": ("#10311f", "#34d399"),
+    "completed_run": ("#10311f", "#34d399"),
+    "active": ("#10311f", "#34d399"),
+    "published": ("#16315c", "#7eb0ff"),
+    "running": ("#16315c", "#7eb0ff"),
+    "ready": ("#16315c", "#7eb0ff"),
+    "standardized": ("#1f2a4a", "#a5b4fc"),
+    "draft": ("#222732", "#c2cad8"),
+    "idle": ("#222732", "#c2cad8"),
+    "calibrated": ("#33270c", "#fbbf24"),
+    "blocked": ("#3a1f0a", "#fb923c"),
+    "failed": ("#3a1518", "#f87171"),
+    "rolledback": ("#3a1518", "#f87171"),
+    "superseded": ("#222732", "#8b94a6"),
 }
-_DEFAULT = ("#f1f5f9", "#475569")
+_DEFAULT = ("#222732", "#c2cad8")
 
 
 class StatusPill(QLabel):
@@ -31,9 +34,9 @@ class StatusPill(QLabel):
 
     def set_status(self, status: str) -> None:
         text = status or "-"
-        bg, fg = _COLORS.get(text.lower().replace(" ", ""), _DEFAULT)
+        bg, fg = _COLORS.get(text.lower().replace(" ", "").replace(".", "_"), _DEFAULT)
         self.setText(text)
         self.setStyleSheet(
             f"background-color: {bg}; color: {fg}; border-radius: 9px;"
-            " padding: 2px 10px; font-weight: 600;"
+            " padding: 3px 11px; font-weight: 700;"
         )
