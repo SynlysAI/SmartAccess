@@ -29,7 +29,9 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 ## 核心文档
 
 - [产品需求文档](docs/PRD.zh-CN.md)
+- [技术规格说明](docs/SPEC.zh-CN.md)
 - [系统架构总览](docs/architecture/system-overview.md)
+- [软件总体设计](docs/architecture/software-design.md)
 - [AI 组件设计](docs/architecture/ai-components.md)
 - [关键契约与样例](docs/contracts/interfaces.md)
 - [仓库级 Agent 协作约束](ai/AGENT.md)
@@ -55,7 +57,9 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 ### `docs/`
 
 - `PRD.zh-CN.md`：SmartAccess 的规范 PRD 主文件。
+- `SPEC.zh-CN.md`：SmartAccess 的技术规格基线，连接 PRD、架构和运行时契约。
 - `architecture/system-overview.md`：把架构图转换为可实现的文字说明。
+- `architecture/software-design.md`：把产品与技术规格进一步落成可实施的软件蓝图。
 - `architecture/ai-components.md`：定义 memory、skill、agent、harness 的边界和协作方式。
 - `contracts/interfaces.md`：沉淀运行时契约、字段含义和最小样例。
 

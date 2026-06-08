@@ -322,7 +322,9 @@ SmartAccess 将实验参数、阶段状态、日志和关键截图上传至 Spec
 
 ## 14. 关联架构与契约
 
+- 系统规格：见 [SPEC.zh-CN.md](SPEC.zh-CN.md)
 - 系统架构：见 [system-overview.md](architecture/system-overview.md)
+- 软件总体设计：见 [software-design.md](architecture/software-design.md)
 - AI 组件：见 [ai-components.md](architecture/ai-components.md)
 - 契约与样例：见 [interfaces.md](contracts/interfaces.md)
 - 系统总览图：见根目录 [SmartAccess.png](../SmartAccess.png)
