@@ -1,24 +1,33 @@
 """Device onboarding & calibration page.
 
-Window discovery, screenshot capture, coordinate-aware ROI annotation, anchor/action
-binding, and generic safety fields produce a complete ``instrument_profile.yaml``.
+Layout is a nested :class:`QMainWindow`: the ROI canvas occupies the full center
+so it can be enlarged, while the configuration panel (窗口 / 属性 / 锚点 / 确认)
+lives in a dockable side panel that can be hidden, floated, or pinned back.
+
+Produces a complete ``instrument_profile.yaml``: window discovery, screenshot
+capture, coordinate-aware ROI annotation, anchor/action binding, instrument-level
+capability confirmation, and generic safety fields.
 """
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDockWidget,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
+    QMainWindow,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -26,22 +35,43 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from smartaccess.desktop.shell import theme as t
 from smartaccess.desktop.viewmodels.calibration_vm import CalibrationViewModel
-from smartaccess.desktop.widgets.cards import Card, page_header, section_title
+from smartaccess.desktop.widgets.cards import Card, hint_label, section_title
 from smartaccess.desktop.widgets.roi_canvas import RoiCanvas
 
 _ALL_ACTIONS = [
-    ("click", "单击"),
-    ("double_click", "双击"),
-    ("type", "输入文字"),
-    ("hotkey", "快捷键"),
-    ("wait", "等待"),
-    ("wait_until", "等待条件"),
-    ("screenshot_check", "截图校验"),
+    ("click", "单击", "在锚点中心点击鼠标左键"),
+    ("double_click", "双击", "在锚点中心双击鼠标左键"),
+    ("type", "输入文字", "点击锚点后键入文本（取动作的 value）"),
+    ("press_enter", "按回车键", "在输入框中按回车键确认输入"),
+    ("hotkey", "快捷键", "发送组合键，如 ctrl+s、enter"),
+    ("wait", "等待", "固定等待一段时间"),
+    ("wait_until", "等待条件", "轮询观测区直到满足条件"),
+    ("screenshot_check", "截图校验", "截图并交由识别模块校验"),
 ]
-_DEFAULT_ACTIONS = {"click", "type", "hotkey", "wait_until"}
-_ANCHOR_TYPES = ["action_target", "observation", "button", "input", "readout", "status", "region"]
-_VISION_MODES = ["none", "ocr", "template", "presence", "color"]
+_DEFAULT_ACTIONS = {"click", "type", "press_enter", "hotkey", "wait_until"}
+
+# Anchor types — what each anchor represents in the instrument UI.
+_ANCHOR_TYPES = [
+    ("action_target", "动作目标：会被点击/输入的可操作控件（按钮、输入框）"),
+    ("observation", "观测区：仅读取、不操作，交给识别模块取值"),
+    ("button", "按钮：action_target 的细分，强调可点击"),
+    ("input", "输入框：action_target 的细分，强调可键入"),
+    ("readout", "读数区：observation 的细分，数值/文本读数"),
+    ("status", "状态区：observation 的细分，运行状态/提示"),
+    ("region", "通用区域：截图比对或模板匹配用的范围"),
+]
+# Vision modes — how the observation region is recognized at runtime.
+_VISION_MODES = [
+    ("none", "不识别：仅作为动作目标，不读取内容"),
+    ("ocr", "OCR 文本识别：读取区域内文字/数字（已接入 stub，可替换 PaddleOCR）"),
+    ("template", "模板匹配：与预存图样比对，判断是否出现（规划中）"),
+    ("presence", "存在性检测：判断区域是否非空/有控件（已接入 stub）"),
+    ("color", "颜色识别：按主色判断状态，如红=停止/绿=运行（规划中）"),
+]
+_ANCHOR_TYPE_KEYS = [k for k, _ in _ANCHOR_TYPES]
+_VISION_MODE_KEYS = [k for k, _ in _VISION_MODES]
 
 
 class CalibrationPage(QWidget):
@@ -51,53 +81,87 @@ class CalibrationPage(QWidget):
         self._windows_data: list[dict] = []
         self._selected_hwnd: int | None = None
         self._selected_title = ""
+        self._capability_confirmed = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
-        root.setSpacing(16)
-        root.addWidget(page_header("设备接入与校准", "扫描窗口、截图标注、绑定动作、保存真实仪器画像"))
+        root.setSpacing(14)
 
-        body = QHBoxLayout()
-        body.setSpacing(16)
+        header_row = QHBoxLayout()
+        from smartaccess.desktop.widgets.cards import page_header
+
+        header_row.addWidget(
+            page_header("设备接入与校准", "扫描窗口、截图标注、绑定动作、保存真实仪器画像"),
+            1,
+        )
+        self._panel_toggle = QPushButton("◧ 配置面板")
+        self._panel_toggle.setObjectName("Ghost")
+        self._panel_toggle.setCheckable(True)
+        self._panel_toggle.setChecked(True)
+        self._panel_toggle.setToolTip("显示/隐藏右侧配置面板，隐藏后 ROI 编辑区可放大")
+        header_row.addWidget(self._panel_toggle)
+        save_btn = QPushButton("生成 instrument_profile.yaml")
+        save_btn.clicked.connect(self._save)
+        header_row.addWidget(save_btn)
+        root.addLayout(header_row)
+
+        # Nested QMainWindow: canvas central, config as a dockable panel.
+        self._inner = QMainWindow()
+        self._inner.setDockOptions(QMainWindow.DockOption.AnimatedDocks)
+
+        canvas_card = Card(flush=True)
+        canvas_card.add(section_title("截图 / ROI 编辑区"))
+        canvas_card.add(
+            hint_label("在截图上拖动 ROI 矩形标记锚点区域，拖动四角可缩放大小。"
+                       "Ctrl+滚轮缩放画面，右键删除 ROI。")
+        )
+        self._canvas = RoiCanvas()
+        self._canvas.roi_deleted.connect(self._on_canvas_roi_deleted)
+        canvas_card.add(self._canvas)
+        self._inner.setCentralWidget(canvas_card)
+
+        self._config_dock = QDockWidget("配置面板", self._inner)
+        self._config_dock.setObjectName("CalibConfigDock")
+        self._config_dock.setAllowedAreas(
+            Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea
+        )
+        self._config_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
         tabs = QTabWidget()
         tabs.addTab(self._build_window_tab(), "窗口")
         tabs.addTab(self._build_profile_tab(), "属性")
         tabs.addTab(self._build_anchor_tab(), "锚点")
         tabs.addTab(self._build_safety_tab(), "确认")
-        body.addWidget(tabs, 2)
+        tabs.setMinimumWidth(420)
+        self._config_dock.setWidget(tabs)
+        self._inner.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._config_dock)
+        root.addWidget(self._inner, 1)
 
-        right = Card()
-        right.add(section_title("截图 / ROI 标注画布"))
-        hint = QLabel("在截图上拖动 ROI 矩形来标记锚点区域。Ctrl+滚轮缩放，右键删除 ROI。")
-        hint.setStyleSheet("color: #6b7280; font-size: 12px;")
-        hint.setWordWrap(True)
-        right.add(hint)
-        self._canvas = RoiCanvas()
-        self._canvas.roi_deleted.connect(self._on_canvas_roi_deleted)
-        right.add(self._canvas)
-        body.addWidget(right, 3)
-        root.addLayout(body, 1)
-
-        footer = QHBoxLayout()
-        save_btn = QPushButton("生成 instrument_profile.yaml")
-        save_btn.clicked.connect(self._save)
-        footer.addStretch(1)
-        footer.addWidget(save_btn)
-        root.addLayout(footer)
+        self._panel_toggle.toggled.connect(self._config_dock.setVisible)
+        self._config_dock.visibilityChanged.connect(self._panel_toggle.setChecked)
 
         self._discover()
+        self._refresh_instruments()
+
+    def on_show(self) -> None:
+        """Refresh the calibrated-instrument list when the page is shown."""
+
         self._refresh_instruments()
 
     def _build_window_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
         layout.addWidget(section_title("① 选择仪器窗口"))
         self._windows_list = QListWidget()
         self._windows_list.itemSelectionChanged.connect(self._on_window_selected)
         layout.addWidget(self._windows_list, 1)
         row = QHBoxLayout()
         scan_btn = QPushButton("扫描窗口")
+        scan_btn.setObjectName("Ghost")
         scan_btn.clicked.connect(self._discover)
         row.addWidget(scan_btn)
         self._capture_btn = QPushButton("捕获窗口画面")
@@ -106,13 +170,16 @@ class CalibrationPage(QWidget):
         row.addWidget(self._capture_btn)
         layout.addLayout(row)
         layout.addWidget(section_title("已校准仪器"))
+        layout.addWidget(hint_label("双击列表中的仪器可加载其配置进行编辑"))
         self._instruments = QListWidget()
+        self._instruments.itemDoubleClicked.connect(self._load_instrument)
         layout.addWidget(self._instruments)
         return page
 
     def _build_profile_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(8)
         form = QFormLayout()
         self._device_id = QLineEdit()
         self._device_id.setPlaceholderText("输入设备标识，如 instrument_win_01")
@@ -122,53 +189,159 @@ class CalibrationPage(QWidget):
         form.addRow("设备 ID *", self._device_id)
         form.addRow("窗口标题包含 *", self._title)
         layout.addLayout(form)
-        layout.addWidget(section_title("仪器级能力"))
+
+        layout.addWidget(section_title("仪器级能力（IO / 动作原语）"))
+        layout.addWidget(
+            hint_label("勾选该仪器上位机真正支持的操作原语。这是设备层面的能力声明，"
+                       "运行时执行器只会调用这里声明过的动作；锚点上的「动作」则是把"
+                       "某个能力具体绑定到某个控件。")
+        )
         self._actions: dict[str, QCheckBox] = {}
-        for key, label in _ALL_ACTIONS:
+        for key, label, tip in _ALL_ACTIONS:
             cb = QCheckBox(f"{key} — {label}")
+            cb.setToolTip(tip)
             cb.setChecked(key in _DEFAULT_ACTIONS)
+            cb.toggled.connect(self._invalidate_capability)
             self._actions[key] = cb
             layout.addWidget(cb)
+
+        layout.addWidget(self._build_capability_confirm())
         layout.addStretch(1)
         return page
+
+    def _build_capability_confirm(self) -> QWidget:
+        """The 'confirm instrument IO / capability is configured' control (item 6)."""
+
+        box = QFrame()
+        box.setObjectName("Card")
+        inner = QVBoxLayout(box)
+        inner.setContentsMargins(12, 12, 12, 12)
+        inner.setSpacing(8)
+        inner.addWidget(section_title("能力确认"))
+        inner.addWidget(
+            hint_label("确认上方仪器 IO / 动作能力已配置正确后再生成画像。"
+                       "未确认时仍可保存，但会在审计中标记为「能力未经确认」。")
+        )
+        self._capability_status = QLabel("● 能力尚未确认")
+        self._capability_status.setStyleSheet(f"color:{t.WARNING};font-weight:600;")
+        inner.addWidget(self._capability_status)
+        self._confirm_capability_btn = QPushButton("确认仪器 IO / 能力已配置")
+        self._confirm_capability_btn.setObjectName("Ghost")
+        self._confirm_capability_btn.clicked.connect(self._confirm_capability)
+        inner.addWidget(self._confirm_capability_btn)
+        return box
+
+    def _confirm_capability(self) -> None:
+        selected = [k for k, cb in self._actions.items() if cb.isChecked()]
+        if not selected:
+            QMessageBox.warning(self, "未选择能力", "请至少勾选一个仪器支持的动作原语。")
+            return
+        self._capability_confirmed = True
+        self._capability_status.setText(f"✓ 能力已确认：{', '.join(selected)}")
+        self._capability_status.setStyleSheet(f"color:{t.SUCCESS};font-weight:600;")
+
+    def _invalidate_capability(self) -> None:
+        if self._capability_confirmed:
+            self._capability_confirmed = False
+            self._capability_status.setText("● 能力已修改，请重新确认")
+            self._capability_status.setStyleSheet(f"color:{t.WARNING};font-weight:600;")
 
     def _build_anchor_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(8)
         layout.addWidget(section_title("③ 锚点、ROI 与动作绑定"))
+        layout.addWidget(
+            hint_label("每个锚点 = 仪器界面上的一块区域 + 它的用途。"
+                       "「类型」说明这块区域是什么（动作目标还是观测区，将鼠标悬停查看说明），"
+                       "「动作」把仪器能力绑定到这个锚点，「识别」说明运行时如何读取这块区域。")
+        )
         self._anchor_table = QTableWidget(0, 7)
-        self._anchor_table.setHorizontalHeaderLabels(["锚点", "类型", "ROI", "动作", "识别", "确认", ""])
-        self._anchor_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._anchor_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._anchor_table.setHorizontalHeaderLabels(
+            ["锚点", "类型 ⓘ", "ROI 坐标", "动作", "识别 ⓘ", "需确认", ""]
+        )
+        self._anchor_table.verticalHeader().setDefaultSectionSize(38)
+        header = self._anchor_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._anchor_table.setToolTip(
+            "类型/识别列的下拉项均有说明，选择后将鼠标悬停在单元格上查看含义。"
+        )
         layout.addWidget(self._anchor_table, 1)
+
+        # Help block explaining anchor types and vision modes (items 7 & 8).
+        layout.addWidget(self._build_anchor_help())
+
         row = QHBoxLayout()
         add_btn = QPushButton("+ 添加锚点")
         add_btn.clicked.connect(self._add_anchor)
         row.addWidget(add_btn)
-        sync_btn = QPushButton("同步坐标")
+        sync_btn = QPushButton("从画布同步坐标")
         sync_btn.setObjectName("Ghost")
+        sync_btn.setToolTip(
+            "把画布上每个 ROI 当前的像素坐标 (x,y,宽,高) 回填到「ROI 坐标」列。"
+            "拖动或缩放 ROI 后点此刷新，保存时即以此坐标写入画像。"
+        )
         sync_btn.clicked.connect(self._refresh_anchor_coordinates)
         row.addWidget(sync_btn)
         row.addStretch(1)
         layout.addLayout(row)
+        layout.addWidget(
+            hint_label("「动作」绑定的是仪器能力，因此无需再单独配置仪器层面的动作——"
+                       "锚点动作 = 把已声明的仪器能力指向具体控件。观测类锚点可不绑定动作。")
+        )
         return page
+
+    def _build_anchor_help(self) -> QWidget:
+        box = QFrame()
+        box.setObjectName("Card")
+        inner = QVBoxLayout(box)
+        inner.setContentsMargins(12, 10, 12, 10)
+        inner.setSpacing(4)
+        inner.addWidget(section_title("类型与识别说明"))
+        type_lines = "<br>".join(
+            f"<span style='color:{t.INK};font-weight:600;'>{k}</span>"
+            f"<span style='color:{t.INK_MUTED};'> — {desc.split('：',1)[-1]}</span>"
+            for k, desc in _ANCHOR_TYPES[:2]
+        )
+        vision_lines = "<br>".join(
+            f"<span style='color:{t.INK};font-weight:600;'>{k}</span>"
+            f"<span style='color:{t.INK_MUTED};'> — {desc.split('：',1)[-1]}</span>"
+            for k, desc in _VISION_MODES
+        )
+        lbl_type = QLabel(f"<b style='color:{t.INK_SUBTLE};'>锚点类型</b><br>{type_lines}")
+        lbl_type.setTextFormat(Qt.TextFormat.RichText)
+        lbl_type.setWordWrap(True)
+        lbl_vision = QLabel(f"<b style='color:{t.INK_SUBTLE};'>识别方式</b><br>{vision_lines}")
+        lbl_vision.setTextFormat(Qt.TextFormat.RichText)
+        lbl_vision.setWordWrap(True)
+        inner.addWidget(lbl_type)
+        inner.addWidget(lbl_vision)
+        return box
 
     def _build_safety_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(8)
         layout.addWidget(section_title("需人工确认的步骤 / 通用安全字段"))
+        layout.addWidget(
+            hint_label("高风险步骤（如启动运行、超量程参数）在此声明后，运行时会暂停并"
+                       "要求人工确认，确保危险动作不会被自动跳过。")
+        )
         self._safety_table = QTableWidget(0, 5)
-        self._safety_table.setHorizontalHeaderLabels(["字段/步骤", "显示名称", "类型", "风险", "确认"])
+        self._safety_table.setHorizontalHeaderLabels(["字段/步骤", "显示名称", "类型", "风险", "需确认"])
         self._safety_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._safety_table, 1)
         row = QHBoxLayout()
         add_btn = QPushButton("+ 添加确认项")
+        add_btn.setObjectName("Ghost")
         add_btn.clicked.connect(self._add_safety_field)
         row.addWidget(add_btn)
         row.addStretch(1)
         layout.addLayout(row)
         return page
 
+    # ------------------------------------------------------------------ #
     def _discover(self) -> None:
         self._windows_list.clear()
         self._windows_data.clear()
@@ -219,31 +392,43 @@ class CalibrationPage(QWidget):
         if not ok or not name.strip():
             return
         name = name.strip()
-        roi_name = name
-        self._canvas.add_roi(roi_name)
-        self._insert_anchor_row(name=name, roi_name=roi_name)
+        self._canvas.add_roi(name)
+        self._insert_anchor_row(name=name, roi_name=name)
 
     def _insert_anchor_row(self, *, name: str, roi_name: str) -> None:
         row = self._anchor_table.rowCount()
         self._anchor_table.insertRow(row)
         self._anchor_table.setItem(row, 0, QTableWidgetItem(name))
-        type_box = QComboBox()
-        type_box.addItems(_ANCHOR_TYPES)
+        type_box = self._make_help_combo(_ANCHOR_TYPES)
         self._anchor_table.setCellWidget(row, 1, type_box)
         self._anchor_table.setItem(row, 2, QTableWidgetItem(roi_name))
         action_box = QComboBox()
-        action_box.addItems([a[0] for a in _ALL_ACTIONS])
+        for key, label, tip in _ALL_ACTIONS:
+            action_box.addItem(f"{key} · {label}", key)
+            action_box.setItemData(action_box.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
         self._anchor_table.setCellWidget(row, 3, action_box)
-        vision_box = QComboBox()
-        vision_box.addItems(_VISION_MODES)
+        vision_box = self._make_help_combo(_VISION_MODES)
         self._anchor_table.setCellWidget(row, 4, vision_box)
         confirm = QCheckBox()
         self._anchor_table.setCellWidget(row, 5, confirm)
         del_btn = QPushButton("删除")
-        del_btn.setObjectName("Ghost")
+        del_btn.setObjectName("Danger")
         del_btn.clicked.connect(lambda _checked=False, r=row: self._delete_anchor(r))
         self._anchor_table.setCellWidget(row, 6, del_btn)
         self._refresh_anchor_coordinates()
+
+    def _make_help_combo(self, options: list[tuple[str, str]]) -> QComboBox:
+        """A combo whose items carry a tooltip and whose current value is its key."""
+
+        box = QComboBox()
+        for key, desc in options:
+            box.addItem(key, key)
+            box.setItemData(box.count() - 1, desc, Qt.ItemDataRole.ToolTipRole)
+        box.setToolTip(options[0][1])
+        box.currentIndexChanged.connect(
+            lambda idx, b=box: b.setToolTip(b.itemData(idx, Qt.ItemDataRole.ToolTipRole) or "")
+        )
+        return box
 
     def _delete_anchor(self, row: int) -> None:
         roi_item = self._anchor_table.item(row, 2)
@@ -255,7 +440,7 @@ class CalibrationPage(QWidget):
     def _on_canvas_roi_deleted(self, roi_name: str) -> None:
         for row in range(self._anchor_table.rowCount()):
             item = self._anchor_table.item(row, 2)
-            if item and item.text() == roi_name:
+            if item and item.text().split("  ")[0].strip() == roi_name:
                 self._anchor_table.removeRow(row)
                 self._rebind_delete_buttons()
                 return
@@ -263,7 +448,7 @@ class CalibrationPage(QWidget):
     def _rebind_delete_buttons(self) -> None:
         for row in range(self._anchor_table.rowCount()):
             btn = QPushButton("删除")
-            btn.setObjectName("Ghost")
+            btn.setObjectName("Danger")
             btn.clicked.connect(lambda _checked=False, r=row: self._delete_anchor(r))
             self._anchor_table.setCellWidget(row, 6, btn)
 
@@ -272,10 +457,12 @@ class CalibrationPage(QWidget):
             roi_item = self._anchor_table.item(row, 2)
             if not roi_item:
                 continue
-            rect = self._canvas.roi_rect(roi_item.text())
+            roi_name = roi_item.text().split("  ")[0].strip()
+            rect = self._canvas.roi_rect(roi_name)
             if rect:
                 roi_item.setText(
-                    f"{roi_item.text().split('  ')[0]}  ({rect['x']:.0f},{rect['y']:.0f},{rect['width']:.0f},{rect['height']:.0f})"
+                    f"{roi_name}  ({rect['x']:.0f},{rect['y']:.0f},"
+                    f"{rect['width']:.0f},{rect['height']:.0f})"
                 )
 
     def _add_safety_field(self) -> None:
@@ -295,6 +482,7 @@ class CalibrationPage(QWidget):
         confirm.setChecked(True)
         self._safety_table.setCellWidget(row, 4, confirm)
 
+    # ------------------------------------------------------------------ #
     def _save(self) -> None:
         device_id = self._device_id.text().strip()
         title = self._title.text().strip()
@@ -309,6 +497,15 @@ class CalibrationPage(QWidget):
             QMessageBox.warning(self, "缺少锚点", "请至少添加一个锚点并保存 ROI 坐标。")
             return
         actions = [key for key, cb in self._actions.items() if cb.isChecked()] or list(_DEFAULT_ACTIONS)
+        if not self._capability_confirmed:
+            reply = QMessageBox.question(
+                self,
+                "能力未确认",
+                "仪器 IO / 能力尚未点击确认。仍要继续生成画像吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         safety_fields, confirm_steps = self._collect_safety_fields(anchors)
         w, h = self._canvas.source_size()
         try:
@@ -326,7 +523,11 @@ class CalibrationPage(QWidget):
             QMessageBox.critical(self, "保存失败", str(exc))
             return
         self._refresh_instruments()
-        QMessageBox.information(self, "校准完成", f"已生成仪器画像: {profile.device_id}\n锚点: {len(profile.anchors)} 个")
+        suffix = "" if self._capability_confirmed else "\n（注意：能力未经确认）"
+        QMessageBox.information(
+            self, "校准完成",
+            f"已生成仪器画像: {profile.device_id}\n锚点: {len(profile.anchors)} 个{suffix}",
+        )
 
     def _collect_anchors(self) -> list[dict]:
         anchors: list[dict] = []
@@ -343,11 +544,13 @@ class CalibrationPage(QWidget):
             action_box = self._anchor_table.cellWidget(row, 3)
             vision_box = self._anchor_table.cellWidget(row, 4)
             confirm = self._anchor_table.cellWidget(row, 5)
-            action = action_box.currentText() if isinstance(action_box, QComboBox) else "click"
+            anchor_type = type_box.currentData() if isinstance(type_box, QComboBox) else "action_target"
+            action = action_box.currentData() if isinstance(action_box, QComboBox) else "click"
+            vision_mode = vision_box.currentData() if isinstance(vision_box, QComboBox) else "none"
             anchors.append(
                 {
                     "id": name,
-                    "type": type_box.currentText() if isinstance(type_box, QComboBox) else "action_target",
+                    "type": anchor_type,
                     "locator_hint": roi_name,
                     "roi": rect,
                     "normalized_roi": norm,
@@ -357,7 +560,7 @@ class CalibrationPage(QWidget):
                             "requires_confirmation": confirm.isChecked() if isinstance(confirm, QCheckBox) else False,
                         }
                     ],
-                    "vision_mode": vision_box.currentText() if isinstance(vision_box, QComboBox) else "none",
+                    "vision_mode": vision_mode,
                     "confidence_threshold": 0.7,
                 }
             )
@@ -398,6 +601,132 @@ class CalibrationPage(QWidget):
     def _refresh_instruments(self) -> None:
         self._instruments.clear()
         for profile in self._vm.list_instruments():
-            self._instruments.addItem(f"{profile.device_id}  ·  锚点 {len(profile.anchors)}  ·  动作 {', '.join(profile.actions)}")
+            item = QListWidgetItem(
+                f"{profile.device_id}  ·  锚点 {len(profile.anchors)}  ·  动作 {', '.join(profile.actions)}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, profile.device_id)
+            self._instruments.addItem(item)
         if self._instruments.count() == 0:
             self._instruments.addItem("尚无已校准仪器")
+
+    def _load_instrument(self, item: QListWidgetItem) -> None:
+        """Load an existing instrument profile for editing."""
+        device_id = item.data(Qt.ItemDataRole.UserRole)
+        if not device_id:
+            return
+
+        profile = self._vm.get_instrument(device_id)
+        if not profile:
+            QMessageBox.warning(self, "加载失败", f"无法加载设备配置: {device_id}")
+            return
+
+        # Clear existing state
+        self._canvas.clear_all()
+        self._anchor_table.setRowCount(0)
+        self._safety_table.setRowCount(0)
+
+        # Load basic info
+        self._device_id.setText(profile.device_id)
+        self._title.setText(profile.window_signature.title_contains or "")
+
+        # Load actions
+        for key, cb in self._actions.items():
+            cb.setChecked(key in profile.actions)
+
+        # Mark capability as confirmed since it's from a saved profile
+        self._capability_confirmed = True
+        self._capability_status.setText(f"✓ 能力已确认：{', '.join(profile.actions)}")
+        self._capability_status.setStyleSheet(f"color:{t.SUCCESS};font-weight:600;")
+
+        # Load anchors
+        for anchor in profile.anchors:
+            row = self._anchor_table.rowCount()
+            self._anchor_table.insertRow(row)
+
+            # Anchor ID
+            self._anchor_table.setItem(row, 0, QTableWidgetItem(anchor.id))
+
+            # Type
+            type_box = self._make_help_combo(_ANCHOR_TYPES)
+            if anchor.type in _ANCHOR_TYPE_KEYS:
+                type_box.setCurrentText(anchor.type)
+            self._anchor_table.setCellWidget(row, 1, type_box)
+
+            # ROI - add to canvas
+            if anchor.roi:
+                roi_name = anchor.id
+                self._canvas.add_roi(
+                    roi_name,
+                    anchor.roi.x,
+                    anchor.roi.y,
+                    anchor.roi.width,
+                    anchor.roi.height,
+                )
+                roi_text = f"{roi_name}  ({anchor.roi.x:.0f},{anchor.roi.y:.0f},{anchor.roi.width:.0f},{anchor.roi.height:.0f})"
+                self._anchor_table.setItem(row, 2, QTableWidgetItem(roi_text))
+
+            # Action (use first action binding if available)
+            action_box = QComboBox()
+            for key, label, tip in _ALL_ACTIONS:
+                action_box.addItem(f"{key} · {label}", key)
+                action_box.setItemData(action_box.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
+            if anchor.action_bindings:
+                first_action = anchor.action_bindings[0].action
+                for i in range(action_box.count()):
+                    if action_box.itemData(i) == first_action:
+                        action_box.setCurrentIndex(i)
+                        break
+            self._anchor_table.setCellWidget(row, 3, action_box)
+
+            # Vision mode
+            vision_box = self._make_help_combo(_VISION_MODES)
+            if anchor.vision_mode in _VISION_MODE_KEYS:
+                vision_box.setCurrentText(anchor.vision_mode)
+            self._anchor_table.setCellWidget(row, 4, vision_box)
+
+            # Requires confirmation
+            confirm = QCheckBox()
+            if anchor.action_bindings:
+                confirm.setChecked(anchor.action_bindings[0].requires_confirmation or False)
+            self._anchor_table.setCellWidget(row, 5, confirm)
+
+            # Delete button
+            del_btn = QPushButton("删除")
+            del_btn.setObjectName("Danger")
+            del_btn.clicked.connect(lambda _checked=False, r=row: self._delete_anchor(r))
+            self._anchor_table.setCellWidget(row, 6, del_btn)
+
+        # Rebind delete buttons after loading all anchors
+        self._rebind_delete_buttons()
+
+        # Load safety fields
+        if profile.safety_limits and profile.safety_limits.fields:
+            for field in profile.safety_limits.fields:
+                row = self._safety_table.rowCount()
+                self._safety_table.insertRow(row)
+                self._safety_table.setItem(row, 0, QTableWidgetItem(field.field_id))
+                self._safety_table.setItem(row, 1, QTableWidgetItem(field.label or field.field_id))
+
+                type_box = QComboBox()
+                type_box.addItems(["string", "number", "bool", "choice"])
+                type_box.setCurrentText(field.value_type or "string")
+                self._safety_table.setCellWidget(row, 2, type_box)
+
+                risk_box = QComboBox()
+                risk_box.addItems(["low", "medium", "high"])
+                risk_box.setCurrentText(field.risk_level or "medium")
+                self._safety_table.setCellWidget(row, 3, risk_box)
+
+                confirm_cb = QCheckBox()
+                confirm_cb.setChecked(field.requires_confirmation or False)
+                self._safety_table.setCellWidget(row, 4, confirm_cb)
+
+        QMessageBox.information(
+            self,
+            "配置已加载",
+            f"已加载设备 {profile.device_id} 的配置\n"
+            f"- {len(profile.anchors)} 个锚点\n"
+            f"- {len(profile.actions)} 个动作\n\n"
+            f"你可以在截图上调整锚点位置，修改后点击「生成 instrument_profile.yaml」保存。"
+        )
+

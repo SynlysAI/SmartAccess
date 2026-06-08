@@ -1,21 +1,24 @@
-"""A scalable screenshot canvas with draggable ROI rectangles.
+"""A scalable screenshot canvas with draggable, resizable ROI rectangles.
 
 Displays a captured window as the background image, with named ROI rectangles
-overlaid. The canvas exports image-space ROI coordinates so calibration can
-persist real anchors instead of only ROI names.
+overlaid. Each ROI can be moved and resized via corner handles. The canvas
+exports image-space ROI coordinates so calibration persists real anchors.
+
+Colors are tuned for a dark workbench: saturated, high-opacity borders and a
+readable text chip on every mask so labels stay legible over any screenshot.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
     QPen,
-    QPixmap,
 )
 from PyQt6.QtWidgets import (
+    QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
@@ -23,21 +26,139 @@ from PyQt6.QtWidgets import (
     QGraphicsView,
     QWidget,
 )
+from PyQt6.QtGui import QPixmap
 
 _PLACEHOLDER_W = 640
 _PLACEHOLDER_H = 420
+# (border, fill) — bright borders, translucent-but-visible fills.
 _ROI_COLORS = [
-    ("#2563eb", "#3b82f6", 40),
-    ("#dc2626", "#ef4444", 40),
-    ("#16a34a", "#22c55e", 40),
-    ("#9333ea", "#a855f7", 40),
-    ("#ea580c", "#f97316", 40),
-    ("#0891b2", "#06b6d4", 40),
+    ("#3b82f6", "#3b82f6"),
+    ("#f87171", "#ef4444"),
+    ("#34d399", "#10b981"),
+    ("#a855f7", "#9333ea"),
+    ("#fbbf24", "#f59e0b"),
+    ("#22d3ee", "#06b6d4"),
 ]
+_HANDLE = 9.0  # size of resize handles in scene units
+
+
+class _RoiItem(QGraphicsRectItem):
+    """A movable + resizable ROI rectangle with a labeled chip and handles."""
+
+    def __init__(self, name: str, border: str, fill: str, w: float, h: float) -> None:
+        super().__init__(QRectF(0, 0, w, h))
+        self._name = name
+        self._border = QColor(border)
+        self._fill = QColor(fill)
+        self.setPen(QPen(self._border, 2.2))
+        brush = QColor(self._fill)
+        brush.setAlpha(70)
+        self.setBrush(QBrush(brush))
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setAcceptHoverEvents(True)
+        self.setZValue(1)
+        self.setToolTip(f"{name} · 拖动移动 · 拖角缩放 · 右键删除")
+
+        # Label chip: dark rounded background + bright text, always readable.
+        self._chip = QGraphicsRectItem(self)
+        self._chip.setBrush(QBrush(QColor(10, 12, 17, 220)))
+        self._chip.setPen(QPen(self._border, 1.2))
+        self._chip.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self._label = QGraphicsSimpleTextItem(name, self._chip)
+        self._label.setBrush(QBrush(QColor("#f3f6fc")))
+        self._label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self._label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self._position_chip()
+
+        self._resizing = False
+        self._active_handle: str | None = None
+
+    # --- geometry helpers --------------------------------------------- #
+    def _position_chip(self) -> None:
+        text_rect = self._label.boundingRect()
+        pad = 4.0
+        self._chip.setRect(0, 0, text_rect.width() + pad * 2, text_rect.height() + pad)
+        self._label.setPos(pad, pad / 2)
+        self._chip.setPos(2, 2)
+
+    def _handle_rects(self) -> dict[str, QRectF]:
+        r = self.rect()
+        s = _HANDLE
+        return {
+            "tl": QRectF(r.left() - s / 2, r.top() - s / 2, s, s),
+            "tr": QRectF(r.right() - s / 2, r.top() - s / 2, s, s),
+            "bl": QRectF(r.left() - s / 2, r.bottom() - s / 2, s, s),
+            "br": QRectF(r.right() - s / 2, r.bottom() - s / 2, s, s),
+        }
+
+    def paint(self, painter, option, widget=None) -> None:  # noqa: D102
+        super().paint(painter, option, widget)
+        if self.isSelected():
+            painter.setBrush(QBrush(self._border))
+            painter.setPen(QPen(QColor("#0a0c11"), 1))
+            for rect in self._handle_rects().values():
+                painter.drawRect(rect)
+
+    # --- mouse: resize when a handle is grabbed ----------------------- #
+    def hoverMoveEvent(self, event):  # noqa: N802
+        handle = self._handle_at(event.pos())
+        cursors = {
+            "tl": Qt.CursorShape.SizeFDiagCursor,
+            "br": Qt.CursorShape.SizeFDiagCursor,
+            "tr": Qt.CursorShape.SizeBDiagCursor,
+            "bl": Qt.CursorShape.SizeBDiagCursor,
+        }
+        self.setCursor(cursors.get(handle, Qt.CursorShape.SizeAllCursor))
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event):  # noqa: N802
+        self._active_handle = self._handle_at(event.pos())
+        if self._active_handle:
+            self._resizing = True
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # noqa: N802
+        if self._resizing and self._active_handle:
+            self._resize_to(event.pos())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        self._resizing = False
+        self._active_handle = None
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        super().mouseReleaseEvent(event)
+
+    def _handle_at(self, pos: QPointF) -> str | None:
+        for name, rect in self._handle_rects().items():
+            if rect.contains(pos):
+                return name
+        return None
+
+    def _resize_to(self, pos: QPointF) -> None:
+        r = self.rect()
+        left, top, right, bottom = r.left(), r.top(), r.right(), r.bottom()
+        if "l" in self._active_handle:
+            left = min(pos.x(), right - 12)
+        if "r" in self._active_handle:
+            right = max(pos.x(), left + 12)
+        if "t" in self._active_handle:
+            top = min(pos.y(), bottom - 12)
+        if "b" in self._active_handle:
+            bottom = max(pos.y(), top + 12)
+        self.prepareGeometryChange()
+        self.setRect(QRectF(left, top, right - left, bottom - top))
+        self._position_chip()
 
 
 class RoiCanvas(QGraphicsView):
-    """Displays a window screenshot as background with movable ROI rectangles."""
+    """Displays a window screenshot as background with editable ROI rectangles."""
 
     roi_deleted = pyqtSignal(str)
     roi_added = pyqtSignal(str)
@@ -46,14 +167,13 @@ class RoiCanvas(QGraphicsView):
         self._scene = QGraphicsScene()
         super().__init__(self._scene, parent)
         self.setRenderHints(self.renderHints())
+        self.setBackgroundBrush(QBrush(QColor("#0a0c11")))
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
-        self.setTransformationAnchor(
-            QGraphicsView.ViewportAnchor.AnchorUnderMouse
-        )
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._image_item: QGraphicsPixmapItem | None = None
         self._placeholder: QGraphicsRectItem | None = None
         self._error_label: QGraphicsSimpleTextItem | None = None
-        self._rois: dict[str, QGraphicsRectItem] = {}
+        self._rois: dict[str, _RoiItem] = {}
         self._color_idx = 0
         self._source_size = (_PLACEHOLDER_W, _PLACEHOLDER_H)
         self._show_placeholder("点击「扫描窗口」→ 选择窗口 → 点击「捕获窗口画面」")
@@ -74,10 +194,10 @@ class RoiCanvas(QGraphicsView):
         self._scene.setSceneRect(QRectF(0, 0, w, h))
         self.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatio)
         for rect in self._rois.values():
-            rect.setZValue(0)
+            rect.setZValue(1)
 
     def load_placeholder(self, message: str) -> None:
-        """Show a grey frame with ``message`` when no image is available."""
+        """Show a frame with ``message`` when no image is available."""
 
         self._clear_background()
         self._show_placeholder(message)
@@ -85,34 +205,15 @@ class RoiCanvas(QGraphicsView):
     def source_size(self) -> tuple[int, int]:
         return self._source_size
 
-    def add_roi(self, name: str, x: float = 40, y: float = 60, w: float = 160, h: float = 70) -> str:
-        """Create a named draggable ROI rectangle and return the name."""
+    def add_roi(self, name: str, x: float = 48, y: float = 64, w: float = 180, h: float = 80) -> str:
+        """Create a named draggable + resizable ROI rectangle and return the name."""
 
         if name in self._rois:
             return name
-        border, fill, alpha = _ROI_COLORS[self._color_idx % len(_ROI_COLORS)]
+        border, fill = _ROI_COLORS[self._color_idx % len(_ROI_COLORS)]
         self._color_idx += 1
-
-        rect = QGraphicsRectItem(QRectF(0, 0, w, h))
+        rect = _RoiItem(name, border, fill, w, h)
         rect.setPos(x, y)
-        rect.setPen(QPen(QColor(border), 2))
-        rect.setBrush(QBrush(QColor(fill)))
-        rect.setOpacity(alpha / 255.0)
-        rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, True)
-        rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
-        rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-        rect.setZValue(1)
-        rect.setToolTip(f"右键删除 | {name}")
-
-        label = QGraphicsSimpleTextItem(name, rect)
-        label.setBrush(QBrush(QColor("#0f172a")))
-        label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        label.setPos(8, 4)
-        label.setZValue(2)
-        label.setFlag(
-            QGraphicsRectItem.GraphicsItemFlag.ItemIgnoresTransformations, True
-        )
-
         self._scene.addItem(rect)
         self._rois[name] = rect
         self.roi_added.emit(name)
@@ -194,7 +295,7 @@ class RoiCanvas(QGraphicsView):
 
     def _find_roi_item(self, item):
         while item is not None:
-            if isinstance(item, QGraphicsRectItem) and item in self._rois.values():
+            if isinstance(item, _RoiItem):
                 return item
             item = item.parentItem()
         return None
@@ -214,13 +315,13 @@ class RoiCanvas(QGraphicsView):
         self._source_size = (_PLACEHOLDER_W, _PLACEHOLDER_H)
         frame = self._scene.addRect(
             QRectF(0, 0, _PLACEHOLDER_W, _PLACEHOLDER_H),
-            QPen(QColor("#cbd5e1")),
-            QBrush(QColor("#eef2f7")),
+            QPen(QColor("#39414f")),
+            QBrush(QColor("#13161d")),
         )
         frame.setZValue(-1)
         self._placeholder = frame
         text = self._scene.addSimpleText(message)
-        text.setBrush(QBrush(QColor("#64748b")))
+        text.setBrush(QBrush(QColor("#8b94a6")))
         text.setFont(QFont("Segoe UI", 11))
         text.setPos(20, _PLACEHOLDER_H / 2 - 12)
         self._error_label = text

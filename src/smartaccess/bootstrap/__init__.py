@@ -94,7 +94,6 @@ def build_runtime_facade(
     settings: AppSettings | None = None,
     *,
     use_real: bool = False,
-    seed_demo: bool = False,
     eval_cases_dir: Path | None = None,
 ) -> RuntimeFacade:
     """Compose the full runtime: adapters + services + orchestrator."""
@@ -123,6 +122,7 @@ def build_runtime_facade(
         incidents=incidents,
         templates=template,
         platform_sync=platform_sync,
+        workflows=workflow,
     )
     evaluation = EvaluationService(cases_dir=eval_cases_dir or _DEFAULT_EVAL_CASES)
 
@@ -141,8 +141,6 @@ def build_runtime_facade(
         recovery=RecoveryEngine(),
     )
 
-    if seed_demo:
-        _seed_demo(facade)
     return facade
 
 
@@ -173,73 +171,10 @@ def _build_workflow_generator(settings: AppSettings, *, use_real: bool):
     return TemplatePromptWorkflowGenerator()
 
 
-def _seed_demo(facade: RuntimeFacade) -> None:
-    """Populate one instrument + one workflow so the UI shows real data."""
-
-    device_id = "potentiostat_win_01"
-    facade.create_calibration(
-        device_id=device_id,
-        title_contains="ElectroChem Console",
-        anchors=[
-            {
-                "id": "anchor_start_button",
-                "type": "button",
-                "roi": {"x": 40, "y": 40, "width": 160, "height": 48},
-                "normalized_roi": {"x": 0.1, "y": 0.08, "width": 0.2, "height": 0.08},
-                "action_bindings": [{"action": "click", "requires_confirmation": True}],
-                "vision_mode": "none",
-                "confidence_threshold": 0.8,
-            },
-            {
-                "id": "anchor_voltage_input",
-                "type": "input",
-                "roi": {"x": 220, "y": 132, "width": 140, "height": 42},
-                "normalized_roi": {"x": 0.28, "y": 0.22, "width": 0.18, "height": 0.07},
-                "action_bindings": [{"action": "type", "default_value": "4.20"}],
-                "vision_mode": "none",
-            },
-            {
-                "id": "roi_voltage_value",
-                "type": "observation",
-                "roi": {"x": 320, "y": 182, "width": 180, "height": 56},
-                "normalized_roi": {"x": 0.4, "y": 0.3, "width": 0.22, "height": 0.09},
-                "vision_mode": "ocr",
-                "confidence_threshold": 0.7,
-            },
-        ],
-        actions=["click", "type", "hotkey", "wait_until"],
-        safety_limits={
-            "max_voltage": 5.0,
-            "min_voltage": 0.0,
-            "requires_manual_confirm_for": ["start_run"],
-            "fields": [
-                {
-                    "field_id": "start_run",
-                    "label": "启动运行",
-                    "value_type": "bool",
-                    "requires_confirmation": True,
-                    "risk_level": "high",
-                    "applies_to_steps": ["start_run"],
-                }
-            ],
-        },
-        capture_width=1280,
-        capture_height=860,
-    )
-    facade.generate_workflow(
-        "对电池做一次标准循环：打开方法编辑器，设定电压 4.20V，启动并等待运行状态。",
-        {
-            "workflow_id": "wf_battery_cycle_demo",
-            "instrument_profile": device_id,
-            "experiment_type": "battery_cycle_test",
-        },
-    )
-
-
 def run_desktop(settings: AppSettings | None = None) -> int:
     """Build the runtime facade and launch the PyQt6 desktop workbench."""
 
     from smartaccess.desktop.shell.app import run_app
 
-    facade = build_runtime_facade(settings, seed_demo=True)
+    facade = build_runtime_facade(settings)
     return run_app(facade)
