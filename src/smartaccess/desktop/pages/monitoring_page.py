@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -50,15 +52,8 @@ class MonitoringPage(QWidget):
         self._timeline = Timeline()
         timeline_card.add(self._timeline)
 
-        center = self._build_center()
-        log_card = Card()
-        log_card.add(section_title("运行日志流"))
-        self._log = LogView()
-        log_card.add(self._log)
-
         body.addWidget(timeline_card, 2)
-        body.addWidget(center, 2)
-        body.addWidget(log_card, 3)
+        body.addWidget(self._build_run_tabs(), 5)
         root.addLayout(body, 1)
 
         self._wire_vm()
@@ -84,12 +79,47 @@ class MonitoringPage(QWidget):
         card.body().addLayout(row)
         return card
 
+    def _build_run_tabs(self) -> QWidget:
+        tabs = QTabWidget()
+        tabs.addTab(self._build_center(), "观测与审计")
+
+        log_card = Card()
+        log_card.add(section_title("运行日志流"))
+        self._log = LogView()
+        log_card.add(self._log)
+        tabs.addTab(log_card, "日志")
+        return tabs
+
     def _build_center(self) -> QWidget:
         center = Card(flush=True)
 
         obs_section = CollapsibleSection("观测结果", accent=t.PRIMARY)
+        obs_section.add(hint_label(
+            "运行时根据锚点配置的识别方式进行观测：OCR 读取文字、Template 比对模板图、"
+            "Color 检测颜色状态、Presence 判断元素是否存在。置信度 < 60% 时会触发重试。"
+        ))
         self._reading = rich_text(QLabel("尚无识别结果。"))
         obs_section.add(self._reading)
+
+        # Recognition explanation guide
+        guide = QLabel(
+            f"<div style='color:{t.INK_MUTED};font-size:12px;margin-top:4px;'>"
+            "<b>🔍 识别结果解读：</b>"
+            "<ul style='margin:4px 0;'>"
+            "<li><b>OCR 文本识别</b> — 从 ROI 截图读取文字。text=识别到的文本，confidence=PaddleOCR 置信度 (0-1)。"
+            "低置信度可能因截图模糊或文字被遮挡。</li>"
+            "<li><b>Template 模板匹配</b> — 与校准基准图比对。text=matched/no_match，confidence=相似度分数。"
+            "分数 ≥ 0.8 为匹配，低于阈值触发异常。</li>"
+            "<li><b>Color 颜色识别</b> — 采样 ROI 主色。text=matched/no_match 或色值(#RRGGBB)，"
+            "confidence=与参考色的近似度。distance 为 HSV 距离，≤ 容差即为匹配。</li>"
+            "<li><b>Presence 存在性检测</b> — 判断控件是否出现。text=present/missing，"
+            "confidence=前景像素占比。</li>"
+            "</ul></div>"
+        )
+        guide.setWordWrap(True)
+        guide.setTextFormat(Qt.TextFormat.RichText) if hasattr(Qt, "TextFormat") else None
+        obs_section.add(guide)
+
         self._shot = QLabel("最新截图会在真实 provider 执行后写入 run artifacts。")
         self._shot.setWordWrap(True)
         self._shot.setStyleSheet(
@@ -109,10 +139,17 @@ class MonitoringPage(QWidget):
     def _wire_vm(self) -> None:
         self._vm.steps_reset.connect(self._timeline.reset_steps)
         self._vm.step_changed.connect(self._timeline.set_step_status)
+        self._vm.clear_display.connect(self._clear_run_display)
         self._vm.log_line.connect(self._log.append_line)
         self._vm.run_state.connect(self._state.set_status)
         self._vm.reading.connect(self._reading.setText)
         self._vm.audit.connect(self._audit.setText)
+
+    def _clear_run_display(self) -> None:
+        self._log.clear_log()
+        self._reading.setText("尚无识别结果。")
+        self._audit.setText("暂无审计摘要。")
+        self._shot.setText("最新截图会在真实 provider 执行后写入 run artifacts。")
 
     def _reload(self) -> None:
         current = self._workflow.currentText()

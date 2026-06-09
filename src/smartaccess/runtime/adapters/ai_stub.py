@@ -28,6 +28,7 @@ class TemplatePromptWorkflowGenerator:
         instrument = context.get("instrument_profile") or "unknown_device"
         anchors = context.get("anchors") or []
         actions = context.get("actions") or []
+        prompt_references = context.get("prompt_references") or []
         roi_bindings = context.get("roi_bindings") or {
             "status_banner": "roi_status_text",
             "voltage_panel": "roi_voltage_value",
@@ -36,9 +37,29 @@ class TemplatePromptWorkflowGenerator:
             {"id": "open_method_editor", "action": "click", "target": "anchor_method_editor_button"},
             {"id": "input_target_voltage", "action": "type", "target": "anchor_voltage_input", "value": "4.20"},
             {"id": "start_run", "action": "click", "target": "anchor_start_button"},
-            {"id": "wait_running", "action": "wait_until", "target": "roi_status_text"},
+            {
+                "id": "wait_running",
+                "action": "wait_until",
+                "target": "roi_status_text",
+                "condition": {
+                    "source": "roi_status_text",
+                    "mode": "ocr",
+                    "operator": "contains",
+                    "expected": "Running",
+                    "timeout_seconds": 30.0,
+                    "poll_interval_seconds": 1.0,
+                },
+            },
         ]
-        self.last_reasoning = self._explain(prompt, instrument, anchors, actions, steps, roi_bindings)
+        self.last_reasoning = self._explain(
+            prompt,
+            instrument,
+            anchors,
+            actions,
+            steps,
+            roi_bindings,
+            prompt_references,
+        )
         return WorkflowContract(
             metadata=WorkflowMetadata(
                 workflow_id=context.get("workflow_id", "wf_draft"),
@@ -58,7 +79,7 @@ class TemplatePromptWorkflowGenerator:
         )
 
     @staticmethod
-    def _explain(prompt, instrument, anchors, actions, steps, roi_bindings) -> str:
+    def _explain(prompt, instrument, anchors, actions, steps, roi_bindings, prompt_references) -> str:
         """A human-readable trace of how this draft was assembled (item 13).
 
         The template generator is deterministic, so we narrate the same logic it
@@ -74,6 +95,16 @@ class TemplatePromptWorkflowGenerator:
             "### 1. 读取上下文",
             f"- 可用锚点 {len(anchor_ids)} 个：{', '.join(anchor_ids) if anchor_ids else '（未提供，使用占位锚点）'}",
             f"- 已声明能力：{', '.join(actions) if actions else '（未提供）'}",
+            "",
+            "### 1.1 已引用上下文",
+            *(
+                [
+                    f"- `{ref.get('token')}` → {ref.get('category')} / {ref.get('ref_id')}"
+                    for ref in prompt_references
+                ]
+                if prompt_references
+                else ["- 无显式引用，按完整设备上下文推断。"]
+            ),
             "",
             "### 2. 步骤编排依据",
             "- 先打开方法编辑器，确保参数面板可见；",

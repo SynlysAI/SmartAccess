@@ -5,6 +5,7 @@ from __future__ import annotations
 from PyQt6.QtCore import pyqtSignal
 
 from smartaccess.runtime.application.workflow_service import StandardizationResult
+from smartaccess.runtime.application.workflow_service import WorkflowDraftRecord
 from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 
@@ -33,11 +34,22 @@ class WorkflowViewModel(ViewModel):
         profile = self.get_instrument(device_id)
         return [anchor.id for anchor in profile.anchors] if profile else []
 
-    def generate(self, prompt: str, *, device_id: str | None, workflow_id: str) -> WorkflowContract:
+    def draft_record(self, workflow_id: str) -> WorkflowDraftRecord | None:
+        return self._facade.workflow_draft_record(workflow_id)
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        device_id: str | None,
+        workflow_id: str,
+        prompt_references: list[dict[str, str]] | None = None,
+    ) -> WorkflowContract:
         profile = self._facade.get_instrument(device_id) if device_id else None
         context = {
             "workflow_id": workflow_id,
             "instrument_profile": device_id or "unknown_device",
+            "prompt_references": list(prompt_references or []),
         }
         if profile is not None:
             context["anchors"] = [a.model_dump(mode="json", exclude_none=True) for a in profile.anchors]
@@ -50,6 +62,20 @@ class WorkflowViewModel(ViewModel):
 
     def standardize(self, workflow: WorkflowContract) -> StandardizationResult:
         return self._facade.standardize(workflow)
+
+    def list_workflows_projected(self):
+        return self._facade.list_workflows_projected()
+
+    def delete_workflow(self, workflow_id: str) -> None:
+        self._facade.delete_workflow(workflow_id)
+        self.changed.emit()
+
+    def delete_template_cloud_first(self, template_id: str, template_version: str, *, force: bool = False):
+        result = self._facade.delete_template_version_cloud_first(
+            template_id, template_version, force=force
+        )
+        self.changed.emit()
+        return result
 
     def save_workflow(self, workflow: WorkflowContract) -> WorkflowContract:
         saved = self._facade.update_workflow(workflow)

@@ -32,14 +32,17 @@
 | `metadata.experiment_type` | 目标实验类型 |
 | `metadata.lifecycle_state` | 当前模板生命周期状态，如 `Draft`、`Standardized`、`Published` |
 | `preconditions` | 执行前必须满足的条件 |
-| `roi_bindings` | 步骤依赖的视觉区域与读数绑定 |
+| `roi_bindings` | 工作流逻辑名到已校准仪器锚点/ROI 的映射，例如 `recipient_result -> contact_item` |
 | `steps` | 具体执行步骤序列 |
-| `outputs` | 期望输出的数据、文件、状态 |
+| `steps[].condition` | 步骤级观测条件，声明 `source`、`mode`、`operator`、`expected`、`timeout_seconds`、`poll_interval_seconds`；兼容旧 `timeout` 字段（自动转为秒） |
+| `outputs` | 期望保留的结果 key 与观测来源 |
 | `retry_policy` | 全局或步骤级重试规则 |
 
 ### 3.3 责任边界
 
-- workflow 负责描述意图、模板身份和顺序，不负责保存真实截图内容。
+- workflow 负责描述意图、模板身份、顺序和步骤级观测条件，不负责保存真实截图内容。
+- `roi_bindings` 的左侧是工作流内部语义别名，右侧是仪器画像中的锚点 ID；多个工作流复用同一批右侧锚点是正常现象。
+- `outputs` 声明运行后需要保留的结果，不应被误解为动作按钮或 UI 控件本身。
 - orchestrator 负责解释 workflow，并在执行前确认其来源于本地草稿还是平台回拉模板。
 - `template_id` 与 `template_version` 是发布态模板的稳定语义，不能用运行时 `request_id` 替代。
 
@@ -56,13 +59,16 @@
 | `device_id` | 仪器画像唯一标识 |
 | `supported_os` | 支持的操作系统 |
 | `window_signature` | 识别窗口所需的标题、尺寸、控件线索 |
-| `anchors` | 按钮、输入框、读数区等界面锚点 |
+| `anchors` | 按钮、输入框、读数区等界面锚点，包含 absolute ROI、normalized ROI、类型、动作绑定、识别模式和 `vision_config` |
 | `actions` | 允许使用的动作集合 |
 | `safety_limits` | 禁止或限制的参数范围与动作条件 |
 
 ### 4.3 责任边界
 
 - instrument profile 不保存一次性运行结果。
+- `normalized_roi` 是分辨率变化时的首选坐标来源；`roi` 是校准截图像素坐标和兼容回退。
+- `vision_mode` 取值包括 `ocr`、`presence`、`template`、`color`、`none`，决定 observer 如何读取或判断锚点。
+- `vision_config` 承载视觉基准数据：`template_asset_path`（模板图路径）、`template_threshold`（匹配阈值）、`color_reference_hex`（色值参考）、`color_tolerance`（容差）、`presence_threshold`（前景占比阈值）。
 - observer 和 executor 共享它，但不得绕过安全限制。
 
 ## 5. `platform_adapter.yaml`
@@ -83,6 +89,7 @@
 | `endpoint_map.publish_template` | 标准模板发布到 SpecLabOS 的接口 |
 | `endpoint_map.upload_status` | 运行状态上传接口 |
 | `endpoint_map.upload_logs` | 运行日志上传接口 |
+| `endpoint_map.delete_template` | 模板版本删除接口（`DELETE /smartaccess/templates/{id}/versions/{ver}`） |
 | `endpoint_map.upload_results` | 运行结果上传接口 |
 | `field_map` | 本地字段到平台字段的映射 |
 | `retry_policy` | 接口失败后的重试和补传规则 |
@@ -139,6 +146,10 @@
 | `action` | 本次动作或恢复动作 |
 | `result` | 执行结果与状态 |
 | `artifacts` | 截图、日志、结果文件等产物引用 |
+| `provider_mode` | 提供者模式（real/stub），用于审计真实链路 |
+| `poll_attempts` | `wait_until` 轮询次数 |
+| `elapsed_seconds` | 步骤实际耗时（秒） |
+| `normalization_note` | 标准化备注（如 ms→s 换算记录） |
 
 ### 7.3 责任边界
 

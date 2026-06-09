@@ -24,6 +24,14 @@ class CalibrationViewModel(ViewModel):
         """Load a specific instrument profile by device_id."""
         return self._facade.get_instrument(device_id)
 
+    def check_references(self, device_id: str):
+        """Check how many workflows/templates reference this instrument."""
+        return self._facade.check_instrument_references(device_id)
+
+    def delete_instrument(self, device_id: str, *, force: bool = False):
+        """Delete an instrument profile after pre-check."""
+        return self._facade.delete_instrument(device_id, force=force)
+
     def create_profile(
         self,
         *,

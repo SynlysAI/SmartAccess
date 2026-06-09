@@ -9,6 +9,7 @@ description: Calibrate SmartAccess ROI regions and visual recognition patterns f
 
 - 需要标注 ROI 或验证视觉识别可靠性。
 - 需要把截图区域绑定到状态字段或工作流步骤。
+- 需要处理窗口尺寸、分辨率、DPI 或布局变化导致的坐标漂移。
 
 ## 输入
 
@@ -18,16 +19,18 @@ description: Calibrate SmartAccess ROI regions and visual recognition patterns f
 
 ## 输出
 
-- ROI 定义
-- 视觉模式建议
-- 可靠性风险提示
+- ROI 定义，包括 absolute ROI 和 normalized ROI
+- 视觉模式建议（OCR / presence / template / color / none）
+- 坐标鲁棒性与窗口比例漂移风险提示
 
 ## 执行步骤
 
-1. 识别关键读数区、状态区和告警区。
-2. 为每个区域定义命名、识别方式和用途。
-3. 把 ROI 与工作流步骤和平台字段绑定。
-4. 标记容易误识别的区域和替代方案。
+1. 识别关键读数区、状态区、动作目标和告警区。
+2. 为每个区域定义命名、类型、识别方式和用途。
+3. 同时保存 absolute ROI 和 normalized ROI，用 normalized ROI 适配窗口尺寸变化。
+4. 为关键动作选择视觉反馈策略：OCR 用于动态文字，presence 用于元素出现，template 用于稳定图标，color 用于状态色，none 用于纯动作目标。
+5. 把 ROI 与工作流步骤、condition 和平台字段绑定。
+6. 标记容易误识别的区域和替代方案。
 
 ## 失败处理
 

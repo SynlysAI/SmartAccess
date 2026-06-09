@@ -40,3 +40,8 @@ class RunTraceRecord(ContractModel):
     action: ActionPayload
     result: ResultPayload
     artifacts: ArtifactPayload = Field(default_factory=ArtifactPayload)
+    # Audit fields for real-link tracing and wait normalization
+    provider_mode: str | None = None
+    poll_attempts: int | None = None
+    elapsed_seconds: float | None = None
+    normalization_note: str | None = None

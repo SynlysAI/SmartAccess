@@ -12,6 +12,7 @@ from pathlib import Path
 from smartaccess.runtime.adapters import (
     DeepSeekWorkflowGenerator,
     FileArtifactStore,
+    LocalVisionProvider,
     SpecLabOSPlatformClient,
     StubAutomationProvider,
     StubPlatformClient,
@@ -35,7 +36,8 @@ from smartaccess.runtime.application import (
     WorkflowService,
     WorkspaceService,
 )
-from smartaccess.runtime.application.facade import RuntimeFacade
+from smartaccess.runtime.application.ai_runtime_store import AIRuntimeStore
+from smartaccess.runtime.application.facade import AIAssistantStatus, RuntimeFacade
 from smartaccess.runtime.orchestration import Executor, Observer, RecoveryEngine
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.events import EventBus
@@ -93,23 +95,35 @@ def serve_edge_api(settings: AppSettings | None = None, *, use_udp: bool = True)
 def build_runtime_facade(
     settings: AppSettings | None = None,
     *,
-    use_real: bool = False,
+    automation_provider: str = "stub",
+    vision_provider: str = "stub",
+    platform_provider: str = "stub",
     eval_cases_dir: Path | None = None,
 ) -> RuntimeFacade:
-    """Compose the full runtime: adapters + services + orchestrator."""
+    """Compose the full runtime: adapters + services + orchestrator.
+
+    Each provider accepts ``"real"`` (default in desktop), ``"stub"`` (tests), or
+    ``"local"`` (vision).  If a real provider's dependencies are missing the call
+    raises ``RuntimeError`` immediately — no silent fallback.
+    """
 
     settings = settings or AppSettings.from_env()
     workspace_dir = Path(settings.workspace_dir)
     event_bus = EventBus()
 
-    automation = _build_automation(settings, use_real=use_real)
-    vision = StubVisionProvider()
-    platform = _build_platform(settings, use_real=use_real)
+    automation = _build_automation(settings, mode=automation_provider)
+    vision = _build_vision(settings, mode=vision_provider, workspace_dir=workspace_dir)
+    platform = _build_platform(settings, mode=platform_provider)
     artifact_store = FileArtifactStore(workspace_dir)
-    draft_generator = _build_workflow_generator(settings, use_real=use_real)
+    draft_generator = _build_workflow_generator(settings)
+
+    # AI runtime knowledge store — persistent learning across generations
+    ai_store = AIRuntimeStore(workspace_dir)
 
     calibration = CalibrationService(automation=automation, workspace_dir=workspace_dir)
-    workflow = WorkflowService(draft_generator=draft_generator, workspace_dir=workspace_dir)
+    workflow = WorkflowService(
+        draft_generator=draft_generator, workspace_dir=workspace_dir, ai_store=ai_store
+    )
     run_sessions = RunSessionService(artifact_store=artifact_store, event_bus=event_bus)
     incidents = IncidentService(event_bus=event_bus)
     template = TemplateService(
@@ -139,19 +153,44 @@ def build_runtime_facade(
         executor=Executor(automation),
         observer=Observer(vision),
         recovery=RecoveryEngine(),
+        ai_assistant_status=_build_ai_status(settings, draft_generator),
     )
 
     return facade
 
 
-def _build_automation(settings: AppSettings, *, use_real: bool):
-    if use_real or settings.automation_provider == "real":
+def _build_ai_status(settings: AppSettings, draft_generator) -> AIAssistantStatus:
+    label = "DeepSeek" if "DeepSeek" in type(draft_generator).__name__ else "模板生成器"
+    if label == "DeepSeek":
+        return AIAssistantStatus(
+            provider="DeepSeek",
+            model=settings.deepseek_model,
+            status="已配置" if settings.deepseek_configured else "未配置",
+            detail=f"base_url={settings.deepseek_base_url}",
+        )
+    return AIAssistantStatus(
+        provider="模板生成器",
+        model="内置模板规则",
+        status="模拟模式",
+        detail="未接入在线模型，使用本地模板生成草稿",
+    )
+
+
+def _build_automation(settings: AppSettings, *, mode: str):
+    if mode == "real" or settings.automation_provider == "real":
         return Win32AutomationProvider()
     return StubAutomationProvider()
 
 
-def _build_platform(settings: AppSettings, *, use_real: bool):
-    if (use_real or settings.platform_provider == "real") and settings.speclabos_base_url:
+def _build_vision(settings: AppSettings, *, mode: str, workspace_dir: Path):
+    if mode == "local":
+        # Fail fast if PaddleOCR or OpenCV is missing — never silently fall back.
+        return LocalVisionProvider(workspace_dir=workspace_dir)
+    return StubVisionProvider()
+
+
+def _build_platform(settings: AppSettings, *, mode: str):
+    if (mode == "real" or settings.platform_provider == "real") and settings.speclabos_base_url:
         return SpecLabOSPlatformClient(
             base_url=str(settings.speclabos_base_url),
             api_key=settings.speclabos_api_key,
@@ -160,8 +199,8 @@ def _build_platform(settings: AppSettings, *, use_real: bool):
     return StubPlatformClient()
 
 
-def _build_workflow_generator(settings: AppSettings, *, use_real: bool):
-    if (use_real or settings.workflow_generator_provider == "deepseek") and settings.deepseek_api_key:
+def _build_workflow_generator(settings: AppSettings):
+    if settings.workflow_generator_provider == "deepseek" and settings.deepseek_api_key:
         return DeepSeekWorkflowGenerator(
             api_key=settings.deepseek_api_key,
             base_url=settings.deepseek_base_url,
@@ -176,5 +215,19 @@ def run_desktop(settings: AppSettings | None = None) -> int:
 
     from smartaccess.desktop.shell.app import run_app
 
-    facade = build_runtime_facade(settings)
-    return run_app(facade)
+    settings = settings or AppSettings.from_env()
+    facade = build_runtime_facade(
+        settings,
+        automation_provider="real",
+        vision_provider="local",
+        platform_provider="real" if settings.speclabos_base_url else "stub",
+    )
+    llm_provider = "DeepSeek" if settings.deepseek_configured else "模板生成器"
+    return run_app(
+        facade,
+        provider_modes={
+            "automation": "real",
+            "vision": "local",
+            "llm": llm_provider,
+        },
+    )

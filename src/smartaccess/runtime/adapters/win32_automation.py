@@ -13,6 +13,7 @@ from ctypes import wintypes
 from typing import Any
 
 from smartaccess.runtime.application.ports import ActionOutcome, WindowInfo
+from smartaccess.runtime.application.roi_resolver import resolve_anchor_roi
 from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, InstrumentProfileContract
 
 from .window_scanner import WindowScanner, capture_window as _capture_real_window, user32
@@ -105,6 +106,8 @@ class Win32AutomationProvider:
             self._type_text(str(value or ""))
         elif action == "hotkey":
             self._hotkey(str(value or ""))
+        elif action == "press_enter":
+            self._hotkey("enter")
         elif action == "wait":
             try:
                 duration = float(str(value)) if value is not None else 1.0
@@ -112,7 +115,9 @@ class Win32AutomationProvider:
                 duration = 1.0
             time.sleep(max(0.0, duration))
         elif action in {"wait_until", "screenshot_check"}:
-            time.sleep(0.2)
+            # These are orchestration-level actions — the orchestrator handles
+            # the observation and polling loop, not the provider.
+            return ActionOutcome(ok=True, detail=f"{action} (coordinated by orchestrator)")
         else:
             return ActionOutcome(ok=False, detail=f"不支持的动作: {action}")
         return ActionOutcome(ok=True, detail=f"{action} {target or ''}".strip())
@@ -132,16 +137,33 @@ class Win32AutomationProvider:
         return next((a for a in self._profile.anchors if a.id == anchor_id), None)
 
     def _click_anchor(self, anchor: AnchorDefinition, *, double: bool = False) -> None:
-        if anchor.roi is None:
+        width, height = self._window_size()
+        roi = resolve_anchor_roi(
+            anchor,
+            self._profile.window_signature if self._profile else None,
+            current_width=width,
+            current_height=height,
+        )
+        if roi is None:
             raise RuntimeError(f"锚点缺少 ROI 坐标: {anchor.id}")
         left, top = self._window_origin()
-        x = int(left + anchor.roi.x + anchor.roi.width / 2)
-        y = int(top + anchor.roi.y + anchor.roi.height / 2)
+        rel_x = min(max(roi.x + roi.width / 2, 0), max(width - 1, 0)) if width else roi.x + roi.width / 2
+        rel_y = min(max(roi.y + roi.height / 2, 0), max(height - 1, 0)) if height else roi.y + roi.height / 2
+        x = int(left + rel_x)
+        y = int(top + rel_y)
         user32.SetCursorPos(x, y)
         for _ in range(2 if double else 1):
             user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
             user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
             time.sleep(0.05)
+
+    def _window_size(self) -> tuple[int, int]:
+        if not self._hwnd:
+            return 0, 0
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(self._hwnd, ctypes.byref(rect)):
+            return 0, 0
+        return max(0, rect.right - rect.left), max(0, rect.bottom - rect.top)
 
     def _window_origin(self) -> tuple[int, int]:
         if not self._hwnd:

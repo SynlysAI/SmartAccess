@@ -35,6 +35,7 @@ class SpecLabOSPlatformClient:
             "fetch_template": "/smartaccess/templates/{template_id}/versions/{template_version}",
             "list_templates": "/smartaccess/templates",
             "publish_template": "/smartaccess/templates/publish",
+            "delete_template": "/smartaccess/templates/{template_id}/versions/{template_version}",
             "upload_status": "/smartaccess/status",
             "upload_logs": "/smartaccess/logs",
             "upload_results": "/smartaccess/results",
@@ -74,6 +75,19 @@ class SpecLabOSPlatformClient:
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", self._endpoints["publish_template"], payload)
+
+    def delete_template(self, template_id: str, template_version: str) -> bool:
+        path = self._endpoints["delete_template"].format(
+            template_id=quote(template_id, safe=""),
+            template_version=quote(template_version, safe=""),
+        )
+        try:
+            self._request("DELETE", path)
+        except PlatformOffline as exc:
+            if "404" in exc.detail:
+                raise TemplateVersionMissing(template_id, template_version) from exc
+            raise
+        return True
 
     def upload_status(self, payload: dict[str, Any]) -> bool:
         self._request("POST", self._endpoints["upload_status"], payload)

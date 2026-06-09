@@ -37,7 +37,13 @@ _LABEL = {
 
 
 def _format_step_line(
-    idx: int, step_id: str, action: str = "", target: str = "", value: str = "", status: str = "pending"
+    idx: int,
+    step_id: str,
+    action: str = "",
+    target: str = "",
+    value: str = "",
+    status: str = "pending",
+    status_time: str = "",
 ) -> str:
     """Build a plain-text one-line summary for a timeline row.
 
@@ -49,6 +55,15 @@ def _format_step_line(
     """
     icon = _ICON.get(status, "○")
     label = _LABEL.get(status, status)
+    if status_time:
+        prefix = {
+            "running": "开始",
+            "observed": "观测",
+            "succeeded": "完成",
+            "blocked": "阻断",
+            "failed": "失败",
+        }.get(status, label)
+        label = f"{label}（{prefix} {status_time}）"
 
     # action: [click] / [type] / [wait] — padded to 12 chars for alignment
     action_part = f"[{action}]".ljust(14) if action else ""
@@ -104,7 +119,7 @@ class Timeline(QListWidget):
             self.addItem(item)
             self._rows[step_id] = item
 
-    def set_step_status(self, step_id: str, status: str) -> None:
+    def set_step_status(self, step_id: str, status: str, status_time: str = "") -> None:
         """Update a step's status icon and label, preserving its detail text."""
         item = self._rows.get(step_id)
         if item is None:
@@ -113,6 +128,8 @@ class Timeline(QListWidget):
             self._rows[step_id] = item
             self._meta[step_id] = {"action": "", "target": "", "value": ""}
         meta = self._meta.get(step_id, {"action": "", "target": "", "value": ""})
+        if status_time:
+            meta["status_time"] = status_time
         idx = list(self._rows).index(step_id) + 1
         text = _format_step_line(
             idx, step_id,
@@ -120,6 +137,7 @@ class Timeline(QListWidget):
             target=meta.get("target", ""),
             value=meta.get("value", ""),
             status=status,
+            status_time=str(meta.get("status_time", "")),
         )
         item.setText(text)
         item.setForeground(QColor(_COLOR.get(status, t.INK_MUTED)))

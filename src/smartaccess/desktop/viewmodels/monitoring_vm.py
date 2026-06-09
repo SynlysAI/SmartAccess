@@ -19,7 +19,8 @@ _STEP_STATUS = {
 
 class MonitoringViewModel(ViewModel):
     steps_reset = pyqtSignal(object)  # list[dict[str, str]]
-    step_changed = pyqtSignal(str, str)  # step_id, status
+    step_changed = pyqtSignal(str, str, str)  # step_id, status, HH:MM:SS
+    clear_display = pyqtSignal()
     log_line = pyqtSignal(str)
     run_state = pyqtSignal(str)
     reading = pyqtSignal(str)
@@ -37,7 +38,10 @@ class MonitoringViewModel(ViewModel):
             for s in workflow.steps
         ]
         print(f"[DEBUG] MonitoringViewModel.start: emitting steps_reset with {len(steps_data)} steps")
+        self.clear_display.emit()
+        self.run_state.emit("running")
         self.steps_reset.emit(steps_data)
+        self.log_line.emit("运行已开始，正在创建后台会话。")
         session = self._facade.start_run(workflow=workflow, background=True)
         self._session_id = session.session_id
         self.log_line.emit(f"启动运行 session={session.session_id}")
@@ -58,9 +62,11 @@ class MonitoringViewModel(ViewModel):
 
         step_id = payload.get("step_id")
         if name in _STEP_STATUS and step_id:
-            self.step_changed.emit(step_id, _STEP_STATUS[name])
+            self.step_changed.emit(step_id, _STEP_STATUS[name], stamp)
         elif name == RuntimeEventName.RUN_BLOCKED and step_id:
-            self.step_changed.emit(step_id, "blocked")
+            self.step_changed.emit(step_id, "blocked", stamp)
+        elif name == RuntimeEventName.RUN_FAILED and step_id:
+            self.step_changed.emit(step_id, "failed", stamp)
         if name == RuntimeEventName.RUN_STEP_OBSERVED and "min_confidence" in payload:
             self.reading.emit(f"最低置信度 {payload['min_confidence']:.2f}")
         if name in (RuntimeEventName.RUN_RECOVERED, RuntimeEventName.RUN_BLOCKED, RuntimeEventName.RUN_FAILED):
