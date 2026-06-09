@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -72,6 +73,7 @@ _VISION_MODES = [
 ]
 _ANCHOR_TYPE_KEYS = [k for k, _ in _ANCHOR_TYPES]
 _VISION_MODE_KEYS = [k for k, _ in _VISION_MODES]
+_DELETE_GLYPH = "×"
 
 
 class CalibrationPage(QWidget):
@@ -170,8 +172,10 @@ class CalibrationPage(QWidget):
         row.addWidget(self._capture_btn)
         layout.addLayout(row)
         layout.addWidget(section_title("已校准仪器"))
-        layout.addWidget(hint_label("双击列表中的仪器可加载其配置进行编辑"))
+        layout.addWidget(hint_label("双击可加载配置；右键可删除仪器"))
         self._instruments = QListWidget()
+        self._instruments.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._instruments.customContextMenuRequested.connect(self._on_instruments_context_menu)
         self._instruments.itemDoubleClicked.connect(self._load_instrument)
         layout.addWidget(self._instruments)
         return page
@@ -260,10 +264,20 @@ class CalibrationPage(QWidget):
         self._anchor_table.setHorizontalHeaderLabels(
             ["锚点", "类型 ⓘ", "ROI 坐标", "动作", "识别 ⓘ", "需确认", ""]
         )
-        self._anchor_table.verticalHeader().setDefaultSectionSize(38)
+        self._anchor_table.verticalHeader().setDefaultSectionSize(48)
         header = self._anchor_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self._anchor_table.setColumnWidth(1, 148)
+        self._anchor_table.setColumnWidth(3, 168)
+        self._anchor_table.setColumnWidth(4, 148)
+        self._anchor_table.setColumnWidth(5, 78)
+        self._anchor_table.setColumnWidth(6, 44)
         self._anchor_table.setToolTip(
             "类型/识别列的下拉项均有说明，选择后将鼠标悬停在单元格上查看含义。"
         )
@@ -271,6 +285,9 @@ class CalibrationPage(QWidget):
 
         # Help block explaining anchor types and vision modes (items 7 & 8).
         layout.addWidget(self._build_anchor_help())
+
+        # Feedback guidance: how to use OCR / template / color
+        layout.addWidget(self._build_vision_guidance())
 
         row = QHBoxLayout()
         add_btn = QPushButton("+ 添加锚点")
@@ -302,7 +319,7 @@ class CalibrationPage(QWidget):
         type_lines = "<br>".join(
             f"<span style='color:{t.INK};font-weight:600;'>{k}</span>"
             f"<span style='color:{t.INK_MUTED};'> — {desc.split('：',1)[-1]}</span>"
-            for k, desc in _ANCHOR_TYPES[:2]
+            for k, desc in _ANCHOR_TYPES
         )
         vision_lines = "<br>".join(
             f"<span style='color:{t.INK};font-weight:600;'>{k}</span>"
@@ -319,6 +336,32 @@ class CalibrationPage(QWidget):
         inner.addWidget(lbl_vision)
         return box
 
+    def _build_vision_guidance(self) -> QWidget:
+        """How to use OCR / template / color — friendly guidance next to the table."""
+        box = QFrame()
+        box.setObjectName("Card")
+        inner = QVBoxLayout(box)
+        inner.setContentsMargins(12, 10, 12, 10)
+        inner.setSpacing(4)
+        inner.addWidget(section_title("🔍 如何使用 OCR / Template / Color / Presence"))
+        tips = (
+            "<ul style='margin:4px 0;color:%s;'>"
+            "<li><b>OCR 文本识别</b> — 适用于读数区、状态文字。运行时用 PaddleOCR 读取 ROI 内文字，"
+            "可用于 <code>wait_until</code> 等待特定文字出现。</li>"
+            "<li><b>Template 模板匹配</b> — 适用于图标/按钮。先点击「采集模板基准」保存当前 ROI 截图，"
+            "运行时用 OpenCV matchTemplate 比对相似度。相似度 ≥ 阈值视为匹配成功。</li>"
+            "<li><b>Color 颜色识别</b> — 适用于状态指示灯。先点击「采集颜色基准」记录参考色，"
+            "运行时采样 ROI 主色并与参考色比较 HSV 距离。距离 ≤ 容差视为匹配。</li>"
+            "<li><b>Presence 存在性检测</b> — 适用于判断控件/窗口是否出现。"
+            "计算 ROI 前景像素占比，超过阈值视为存在。</li>"
+            "</ul>"
+        ) % t.INK_MUTED
+        lbl = QLabel(tips)
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setWordWrap(True)
+        inner.addWidget(lbl)
+        return box
+
     def _build_safety_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -328,9 +371,10 @@ class CalibrationPage(QWidget):
             hint_label("高风险步骤（如启动运行、超量程参数）在此声明后，运行时会暂停并"
                        "要求人工确认，确保危险动作不会被自动跳过。")
         )
-        self._safety_table = QTableWidget(0, 5)
-        self._safety_table.setHorizontalHeaderLabels(["字段/步骤", "显示名称", "类型", "风险", "需确认"])
+        self._safety_table = QTableWidget(0, 6)
+        self._safety_table.setHorizontalHeaderLabels(["字段/步骤", "显示名称", "类型", "风险", "需确认", ""])
         self._safety_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._safety_table.setColumnWidth(5, 44)
         layout.addWidget(self._safety_table, 1)
         row = QHBoxLayout()
         add_btn = QPushButton("+ 添加确认项")
@@ -403,6 +447,7 @@ class CalibrationPage(QWidget):
         self._anchor_table.setCellWidget(row, 1, type_box)
         self._anchor_table.setItem(row, 2, QTableWidgetItem(roi_name))
         action_box = QComboBox()
+        action_box.setMinimumHeight(34)
         for key, label, tip in _ALL_ACTIONS:
             action_box.addItem(f"{key} · {label}", key)
             action_box.setItemData(action_box.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
@@ -411,8 +456,7 @@ class CalibrationPage(QWidget):
         self._anchor_table.setCellWidget(row, 4, vision_box)
         confirm = QCheckBox()
         self._anchor_table.setCellWidget(row, 5, confirm)
-        del_btn = QPushButton("删除")
-        del_btn.setObjectName("Danger")
+        del_btn = self._make_delete_button("删除锚点")
         del_btn.clicked.connect(lambda _checked=False, r=row: self._delete_anchor(r))
         self._anchor_table.setCellWidget(row, 6, del_btn)
         self._refresh_anchor_coordinates()
@@ -421,6 +465,7 @@ class CalibrationPage(QWidget):
         """A combo whose items carry a tooltip and whose current value is its key."""
 
         box = QComboBox()
+        box.setMinimumHeight(34)
         for key, desc in options:
             box.addItem(key, key)
             box.setItemData(box.count() - 1, desc, Qt.ItemDataRole.ToolTipRole)
@@ -447,10 +492,17 @@ class CalibrationPage(QWidget):
 
     def _rebind_delete_buttons(self) -> None:
         for row in range(self._anchor_table.rowCount()):
-            btn = QPushButton("删除")
-            btn.setObjectName("Danger")
+            btn = self._make_delete_button("删除锚点")
             btn.clicked.connect(lambda _checked=False, r=row: self._delete_anchor(r))
             self._anchor_table.setCellWidget(row, 6, btn)
+
+    @staticmethod
+    def _make_delete_button(tooltip: str) -> QPushButton:
+        button = QPushButton(_DELETE_GLYPH)
+        button.setObjectName("Danger")
+        button.setToolTip(tooltip)
+        button.setFixedSize(32, 30)
+        return button
 
     def _refresh_anchor_coordinates(self) -> None:
         for row in range(self._anchor_table.rowCount()):
@@ -481,6 +533,19 @@ class CalibrationPage(QWidget):
         confirm = QCheckBox()
         confirm.setChecked(True)
         self._safety_table.setCellWidget(row, 4, confirm)
+        del_btn = self._make_delete_button("删除确认项")
+        del_btn.clicked.connect(lambda _checked=False, r=row: self._delete_safety_row(r))
+        self._safety_table.setCellWidget(row, 5, del_btn)
+
+    def _delete_safety_row(self, row: int) -> None:
+        self._safety_table.removeRow(row)
+        self._rebind_safety_delete_buttons()
+
+    def _rebind_safety_delete_buttons(self) -> None:
+        for row in range(self._safety_table.rowCount()):
+            btn = self._make_delete_button("删除确认项")
+            btn.clicked.connect(lambda _checked=False, r=row: self._delete_safety_row(r))
+            self._safety_table.setCellWidget(row, 5, btn)
 
     # ------------------------------------------------------------------ #
     def _save(self) -> None:
@@ -667,6 +732,7 @@ class CalibrationPage(QWidget):
 
             # Action (use first action binding if available)
             action_box = QComboBox()
+            action_box.setMinimumHeight(34)
             for key, label, tip in _ALL_ACTIONS:
                 action_box.addItem(f"{key} · {label}", key)
                 action_box.setItemData(action_box.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
@@ -691,8 +757,7 @@ class CalibrationPage(QWidget):
             self._anchor_table.setCellWidget(row, 5, confirm)
 
             # Delete button
-            del_btn = QPushButton("删除")
-            del_btn.setObjectName("Danger")
+            del_btn = self._make_delete_button("删除锚点")
             del_btn.clicked.connect(lambda _checked=False, r=row: self._delete_anchor(r))
             self._anchor_table.setCellWidget(row, 6, del_btn)
 
@@ -730,3 +795,66 @@ class CalibrationPage(QWidget):
             f"你可以在截图上调整锚点位置，修改后点击「生成 instrument_profile.yaml」保存。"
         )
 
+        # Rebind safety delete buttons after loading
+        self._rebind_safety_delete_buttons()
+
+    def _on_instruments_context_menu(self, pos) -> None:
+        item = self._instruments.itemAt(pos)
+        if item is None:
+            return
+        device_id = item.data(Qt.ItemDataRole.UserRole)
+        if not device_id:
+            return
+        menu = QMenu(self)
+        load_action = menu.addAction("加载配置")
+        menu.addSeparator()
+        delete_action = menu.addAction("删除仪器")
+        action = menu.exec(self._instruments.mapToGlobal(pos))
+        if action == load_action:
+            self._load_instrument(item)
+        elif action == delete_action:
+            self._delete_instrument(device_id)
+
+    def _delete_instrument(self, device_id: str) -> None:
+        """Delete an instrument profile with reference pre-check."""
+        try:
+            refs = self._vm.check_references(device_id)
+        except Exception as exc:
+            QMessageBox.critical(self, "引用检查失败", str(exc))
+            return
+
+        # Build warning message
+        parts = [f"即将删除仪器「{device_id}」"]
+        if refs.active_session_count > 0:
+            QMessageBox.warning(
+                self, "无法删除",
+                f"仪器 {device_id} 正被 {refs.active_session_count} 个运行中 session 使用，无法删除。\n请先停止相关运行。"
+            )
+            return
+        if refs.draft_count > 0:
+            wf_list = ", ".join(refs.referencing_workflow_ids or [])
+            parts.append(f"⚠ 被 {refs.draft_count} 个本地草稿引用：{wf_list}")
+        if refs.local_template_count > 0:
+            t_list = ", ".join(refs.referencing_template_ids or [])
+            parts.append(f"⚠ 被 {refs.local_template_count} 个本地模板引用：{t_list}")
+        if refs.draft_count > 0 or refs.local_template_count > 0:
+            parts.append("\n删除后相关工作流将显示「仪器缺失」，可重新校准后修复。不会级联删除工作流或模板。")
+
+        reply = QMessageBox.question(
+            self,
+            "确认删除仪器",
+            "\n".join(parts),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self._vm.delete_instrument(device_id, force=True)
+        except Exception as exc:
+            QMessageBox.critical(self, "删除失败", str(exc))
+            return
+
+        self._refresh_instruments()
+        QMessageBox.information(self, "已删除", f"仪器 {device_id} 已删除。")

@@ -44,6 +44,15 @@ class StubPlatformClient:
         self._templates[key] = payload
         return {"ok": True, "template_id": key[0], "template_version": key[1]}
 
+    def delete_template(self, template_id: str, template_version: str) -> bool:
+        if self.offline:
+            raise PlatformOffline("delete_template: platform offline")
+        key = (template_id, template_version)
+        if key not in self._templates:
+            raise TemplateVersionMissing(template_id, template_version)
+        del self._templates[key]
+        return True
+
     def upload_status(self, payload: dict[str, Any]) -> bool:
         return self._upload("status", payload)
 

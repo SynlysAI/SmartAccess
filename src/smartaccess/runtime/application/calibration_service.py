@@ -7,10 +7,15 @@ tracks the instrument lifecycle state.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
-from smartaccess.runtime.application.ports import AutomationProvider, WindowInfo
+from smartaccess.runtime.application.ports import (
+    AutomationProvider,
+    InstrumentReferenceInfo,
+    WindowInfo,
+)
 from smartaccess.runtime.domain.instrument import InstrumentStatus
 from smartaccess.shared.contracts.instrument_profile import (
     AnchorDefinition,
@@ -91,6 +96,84 @@ class CalibrationService:
 
     def list_profiles(self) -> list[InstrumentProfileContract]:
         return list(self._profiles.values())
+
+    def delete_instrument(self, device_id: str, *, active_sessions: list[str] | None = None, force: bool = False) -> InstrumentReferenceInfo | None:
+        """Delete an instrument profile and its YAML file.
+
+        Returns the reference info used for the pre-check decision, or ``None``
+        when the profile did not exist.
+        """
+        if device_id not in self._profiles:
+            return None
+
+        refs = self._check_references(device_id, active_sessions=active_sessions or [])
+
+        # Block if any active session is using this instrument
+        if refs.active_session_count > 0:
+            raise RuntimeError(
+                f"仪器 {device_id} 正被 {refs.active_session_count} 个运行中 session 使用，无法删除。"
+                f"请先停止相关运行。"
+            )
+
+        if not force and (refs.draft_count > 0 or refs.local_template_count > 0):
+            raise RuntimeError(
+                f"仪器 {device_id} 被 {refs.draft_count} 个本地草稿和 "
+                f"{refs.local_template_count} 个本地模板引用。"
+                f"请使用 force=True 确认删除（不级联删除工作流/模板）。"
+            )
+
+        # Remove from disk
+        profile_dir = self._profile_path(device_id).parent
+        if profile_dir.exists():
+            shutil.rmtree(profile_dir)
+
+        # Remove from memory
+        del self._profiles[device_id]
+        self._status.pop(device_id, None)
+
+        return refs
+
+    def check_instrument_references(self, device_id: str, *, active_sessions: list[str] | None = None) -> InstrumentReferenceInfo:
+        """Return reference counts for a pre-delete pre-check display."""
+        return self._check_references(device_id, active_sessions=active_sessions or [])
+
+    def _check_references(self, device_id: str, *, active_sessions: list[str]) -> InstrumentReferenceInfo:
+        """Scan local workspace for references to *device_id*."""
+        drafts: list[str] = []
+        templates: list[str] = []
+
+        # Scan local workflow drafts
+        for path in sorted((self._workspace_dir / "workflows").glob("*/draft.yaml")):
+            try:
+                wf = load_yaml_contract(path, type("Wf", (), {"model_validate": lambda d: d}))  # noqa: SIM115
+                if isinstance(wf, dict):
+                    meta = wf.get("metadata", {})
+                    if meta.get("instrument_profile") == device_id:
+                        drafts.append(meta.get("workflow_id", path.parent.name))
+            except Exception:
+                continue
+
+        # Scan local templates
+        for path in sorted((self._workspace_dir / "templates").glob("*/*/workflow.yaml")):
+            try:
+                wf = load_yaml_contract(path, type("Wf", (), {"model_validate": lambda d: d}))  # noqa: SIM115
+                if isinstance(wf, dict):
+                    meta = wf.get("metadata", {})
+                    if meta.get("instrument_profile") == device_id:
+                        tid = meta.get("template_id", path.parent.parent.name)
+                        tver = meta.get("template_version", path.parent.name)
+                        templates.append(f"{tid}@{tver}")
+            except Exception:
+                continue
+
+        return InstrumentReferenceInfo(
+            device_id=device_id,
+            draft_count=len(drafts),
+            local_template_count=len(templates),
+            active_session_count=len([s for s in active_sessions if device_id in s]),
+            referencing_workflow_ids=drafts if drafts else None,
+            referencing_template_ids=templates if templates else None,
+        )
 
     def _profile_path(self, device_id: str) -> Path:
         return (

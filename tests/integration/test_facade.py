@@ -24,7 +24,12 @@ def _demo_workflow(workflow_id: str = "wf_test") -> WorkflowContract:
             lifecycle_state="Draft",
         ),
         roi_bindings={"status_banner": "roi_status"},
-        steps=[WorkflowStep(id="wait_running", action="wait_until", target="roi_status")],
+        steps=[WorkflowStep(
+            id="wait_running",
+            action="wait_until",
+            target="roi_status",
+            condition={"source": "roi_status", "mode": "ocr", "operator": "contains", "expected": "Running", "timeout_seconds": 5.0, "poll_interval_seconds": 0.5},
+        )],
         outputs=[WorkflowOutput(key="run_status", source="roi_status")],
         retry_policy=WorkflowRetryPolicy(max_attempts=2),
     )

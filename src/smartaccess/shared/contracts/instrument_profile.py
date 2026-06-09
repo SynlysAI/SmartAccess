@@ -37,6 +37,16 @@ class NormalizedRoiRect(FlexibleContractModel):
     height: float = Field(default=0, ge=0, le=1)
 
 
+class VisionConfig(FlexibleContractModel):
+    """Calibrated visual references for template matching, color detection, and presence checks."""
+
+    template_asset_path: str | None = None
+    template_threshold: float = Field(default=0.8, ge=0, le=1)
+    color_reference_hex: str | None = None
+    color_tolerance: float = Field(default=0.1, ge=0, le=1)
+    presence_threshold: float = Field(default=0.05, ge=0, le=1)
+
+
 class ActionBinding(FlexibleContractModel):
     """An action primitive bound to a concrete anchor."""
 
@@ -58,6 +68,7 @@ class AnchorDefinition(FlexibleContractModel):
     action_bindings: list[ActionBinding] = Field(default_factory=list)
     vision_mode: Literal["ocr", "template", "presence", "color", "none"] = "none"
     confidence_threshold: float | None = Field(default=None, ge=0, le=1)
+    vision_config: VisionConfig | None = None
 
 
 class SafetyField(FlexibleContractModel):

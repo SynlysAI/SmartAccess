@@ -49,6 +49,12 @@ class StubVisionProvider:
     def detect_presence(self, roi: str) -> bool:
         return True
 
+    def match_template(self, roi: str) -> OcrReading:
+        return OcrReading(roi=roi, text="matched", confidence=0.92, detail="stub template match")
+
+    def sample_color(self, roi: str) -> OcrReading:
+        return OcrReading(roi=roi, text="green", confidence=0.9, detail="stub color sample")
+
     @staticmethod
     def _value_for(roi: str) -> str:
         lowered = roi.lower()

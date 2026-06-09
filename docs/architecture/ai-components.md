@@ -117,6 +117,7 @@ ai/
 | 执行中状态识别 | `vision-patterns` | `ui-automation-orchestrator`、`vision-calibrator` | executor、observer | runtime、eval case 03 |
 | 异常恢复 | `failure-recovery-rules` | `incident-recovery` | recovery、orchestrator | runtime、eval case 04 |
 | 平台数据回传 | `project-context`、`workflow-primitives` | `platform-mapper` | orchestrator | runtime、eval case 05 |
+| 文档同步 | `project-context`、`milestones` | `documentation-sync`、`prd-maintainer`、`readme-maintainer` | technical-writer、architecture-steward | eval harness / 文档审查 |
 
 ## 6. 组件验收要求
 
@@ -160,3 +161,4 @@ AI 组件必须围绕以下运行时契约协作：
 - 不要先写不可复用脚本再补文档；先更新契约和 AI 组件模板。
 - 新增仪器时，优先补 `memory/product/` 和 `harness/evals/cases/`。
 - 修改模块命名时，必须同步 PRD、README、架构文档和相关 skill/agent。
+- 完成功能实现或产品决策后，必须执行 `ai/skills/repo/documentation-sync`，把变更沉淀到功能日志、PRD、SPEC、契约、README、memory 和相关 skill。

@@ -1,9 +1,9 @@
-"""The right-hand context inspector.
+"""The right-hand toolbar inspector.
 
-Instead of a tab control, the four facets — 上下文详情 / AI 助手 / 风险提示 /
-审计摘要 — are stacked vertically as collapsible sections so several can be read
-at once, and any one can be folded away. Bodies render rich HTML for legible,
-high-contrast key/value text.
+The four facets — 工具详情 / AI 助手 / 风险提示 / 审计摘要 — are stacked
+vertically as collapsible sections so several can be read at once, and any one
+can be folded away. Bodies render rich HTML for legible, high-contrast key/value
+text.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ class RightContextPanel(QFrame):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        self.details = _Section("上下文详情", accent=t.PRIMARY)
+        self.details = _Section("工具详情", accent=t.PRIMARY)
         self.assistant = _Section("AI 助手", accent="#a5b4fc")
         self.risk = _Section("风险提示", accent=t.WARNING)
         self.audit = _Section("审计摘要", accent=t.SUCCESS, expanded=False)

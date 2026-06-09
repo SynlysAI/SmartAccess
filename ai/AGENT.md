@@ -17,6 +17,7 @@
 3. 一致性优先：模块命名在 README、PRD、架构和 AI 目录中保持一致。
 4. 场景驱动：优先围绕关键场景完善 memory、skill、agent、harness。
 5. 可评测：新增能力时同步补充 eval harness 场景。
+6. 文档同步：每次完成会影响产品行为、运行时契约、UI 语义、工作流字段或 AI 组件的改动后，必须执行 `ai/skills/repo/documentation-sync`，同步功能日志、PRD、SPEC、契约、README、memory 和相关 skill。
 
 ## 边界
 
@@ -39,6 +40,7 @@
 3. 更新 `docs/contracts/`
 4. 更新 `ai/memory/`
 5. 更新 `ai/skills/`
+   - 重大实现或产品决策后优先运行 `ai/skills/repo/documentation-sync`
 6. 更新 `ai/agents/`
 7. 更新 `ai/harness/`
 8. 回查 `README.md`

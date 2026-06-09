@@ -8,6 +8,7 @@ from .inmemory import EchoInstructionGenerator, StubProcessExecutorClient
 from .platform_stub import StubPlatformClient
 from .process_signal import UdpProcessExecutorClient
 from .speclabos_client import SpecLabOSPlatformClient
+from .local_vision import LocalVisionProvider
 from .vision_stub import StubVisionProvider
 from .win32_automation import Win32AutomationProvider
 
@@ -16,6 +17,7 @@ __all__ = [
     "EchoInstructionGenerator",
     "FileArtifactStore",
     "InMemoryArtifactStore",
+    "LocalVisionProvider",
     "SpecLabOSPlatformClient",
     "StubAutomationProvider",
     "StubPlatformClient",

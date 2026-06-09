@@ -7,12 +7,14 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -50,6 +52,19 @@ class TemplatePage(QWidget):
         summary.addStretch(1)
         summary.addWidget(refresh_cloud)
         root.addLayout(summary)
+
+        filters = QHBoxLayout()
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("查找模板 ID、版本、仪器、来源或错误")
+        self._search.textChanged.connect(self._reload_versions)
+        self._status_filter = QComboBox()
+        self._status_filter.addItems(["All", "Published", "Draft", "Superseded", "RolledBack", "Standardized"])
+        self._status_filter.currentTextChanged.connect(self._reload_versions)
+        filters.addWidget(QLabel("查找"))
+        filters.addWidget(self._search, 1)
+        filters.addWidget(QLabel("状态"))
+        filters.addWidget(self._status_filter)
+        root.addLayout(filters)
 
         body = QHBoxLayout()
         body.setSpacing(16)
@@ -106,15 +121,36 @@ class TemplatePage(QWidget):
     def _build_versions_card(self) -> QWidget:
         right = Card()
         right.add(section_title("模板版本"))
+        right.add(
+            hint_label("当前回滚支持在已加载版本间切换当前发布版本；它不是完整文件历史恢复。"
+                       "需要恢复内容时，请选择历史版本后重新发布或另存为新版本。")
+        )
         self._tree = QTreeWidget()
         self._tree.setColumnCount(6)
         self._tree.setHeaderLabels(["模板 ID", "版本", "状态", "来源", "适用仪器", "错误"])
         self._tree.setRootIsDecorated(False)
+        self._tree.itemSelectionChanged.connect(self._update_timeline)
         right.add(self._tree)
+        self._timeline = QTextBrowser()
+        self._timeline.setObjectName("LogView")
+        self._timeline.setMinimumHeight(150)
+        self._timeline.setMarkdown("_选择一个版本查看时间线。_")
+        right.add(self._timeline)
+        actions = QHBoxLayout()
         rollback = QPushButton("回滚到所选版本")
         rollback.setObjectName("Ghost")
         rollback.clicked.connect(self._rollback)
-        right.add(rollback)
+        update = QPushButton("更新仪器")
+        update.setObjectName("Ghost")
+        update.clicked.connect(self._update_selected)
+        delete = QPushButton("删除版本")
+        delete.setObjectName("Ghost")
+        delete.clicked.connect(self._delete_selected)
+        actions.addWidget(rollback)
+        actions.addWidget(update)
+        actions.addWidget(delete)
+        actions.addStretch(1)
+        right.body().addLayout(actions)
         return right
 
     def _reload(self) -> None:
@@ -129,8 +165,13 @@ class TemplatePage(QWidget):
             f"模板版本：本地 {stats.local_count} · 云端 {cloud} · 失败 {stats.failed_count}"
         )
 
+        self._reload_versions()
+
+    def _reload_versions(self) -> None:
         self._tree.clear()
-        for record in self._vm.list_templates():
+        query = self._search.text() if hasattr(self, "_search") else ""
+        status = self._status_filter.currentText() if hasattr(self, "_status_filter") else "All"
+        for record in self._vm.search_templates(query, status):
             item = QTreeWidgetItem(
                 self._tree,
                 [
@@ -147,6 +188,28 @@ class TemplatePage(QWidget):
                 item.setForeground(2, QColor(color))
             if record.error:
                 item.setForeground(5, QColor(t.DANGER))
+        self._update_timeline()
+
+    def _update_timeline(self) -> None:
+        item = self._tree.currentItem()
+        if item is None:
+            self._timeline.setMarkdown("_选择一个版本查看时间线。_")
+            return
+        template_id = item.text(0)
+        selected_version = item.text(1)
+        records = [r for r in self._vm.list_templates() if r.identity.template_id == template_id]
+        records.sort(key=lambda r: r.published_at or r.identity.template_version, reverse=True)
+        lines = [f"**{template_id} 版本时间线**", ""]
+        for record in records:
+            marker = "●" if record.identity.template_version == selected_version else "○"
+            published = record.published_at or "本地加载"
+            lines.append(
+                f"{marker} `{record.identity.template_version}` · {record.status.value} · "
+                f"{published} · {record.source} · {record.instrument_profile or '-'}"
+            )
+            if record.error:
+                lines.append(f"  错误: {record.error}")
+        self._timeline.setMarkdown("\n".join(lines))
 
     def _refresh_cloud(self) -> None:
         self._vm.refresh_cloud()
@@ -182,5 +245,41 @@ class TemplatePage(QWidget):
             self._vm.rollback(item.text(0), item.text(1))
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "回滚失败", str(exc))
+            return
+        self._reload()
+
+    def _update_selected(self) -> None:
+        item = self._tree.currentItem()
+        if item is None:
+            return
+        instrument = item.text(4).strip()
+        value, ok = QInputDialog.getText(self, "更新版本", "适用仪器", text=instrument)
+        if not ok:
+            return
+        try:
+            self._vm.update_version(item.text(0), item.text(1), instrument_profile=value.strip())
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "更新失败", str(exc))
+            return
+        self._reload()
+
+    def _delete_selected(self) -> None:
+        item = self._tree.currentItem()
+        if item is None:
+            return
+        force = False
+        if item.text(2) == "Published":
+            answer = QMessageBox.question(
+                self,
+                "确认删除",
+                "当前版本仍是 Published。确认删除会移除本地版本记录和 workflow.yaml。是否继续？",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            force = True
+        try:
+            self._vm.delete_version(item.text(0), item.text(1), force=force)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "删除失败", str(exc))
             return
         self._reload()

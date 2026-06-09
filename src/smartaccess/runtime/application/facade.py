@@ -8,11 +8,13 @@ on concrete providers (software-design §3.3, §4.4).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import threading
 from collections.abc import Callable
 from typing import Any
 
 from smartaccess.runtime.application.calibration_service import CalibrationService
+from smartaccess.runtime.application.ports import InstrumentReferenceInfo, WorkflowListEntry
 from smartaccess.runtime.application.evaluation_service import EvalResult, EvaluationService
 from smartaccess.runtime.application.incident_service import IncidentService
 from smartaccess.runtime.application.platform_sync_service import PlatformSyncService
@@ -20,6 +22,7 @@ from smartaccess.runtime.application.run_session_service import RunSessionServic
 from smartaccess.runtime.application.template_service import TemplateRecord, TemplateService
 from smartaccess.runtime.application.workflow_service import (
     StandardizationResult,
+    WorkflowDraftRecord,
     WorkflowService,
 )
 from smartaccess.runtime.application.workspace_service import (
@@ -39,6 +42,17 @@ from smartaccess.runtime.orchestration.orchestrator import ConfirmRequest
 from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 from smartaccess.shared.events import EventBus, Subscriber
+
+
+@dataclass(frozen=True, slots=True)
+class AIAssistantStatus:
+    """UI projection for the connected workflow assistant provider."""
+
+    provider: str
+    model: str
+    status: str
+    detail: str
+
 
 ConfirmHandler = Callable[[ConfirmRequest], bool]
 
@@ -61,6 +75,7 @@ class RuntimeFacade:
         executor: Executor,
         observer: Observer,
         recovery: RecoveryEngine,
+        ai_assistant_status: AIAssistantStatus | None = None,
         max_retries: int = 2,
     ) -> None:
         self._event_bus = event_bus
@@ -72,6 +87,7 @@ class RuntimeFacade:
         self._platform_sync = platform_sync
         self._workspace = workspace
         self._evaluation = evaluation
+        self._ai_assistant_status = ai_assistant_status
         self._confirm_handler: ConfirmHandler = lambda _request: True
         self._orchestrator = Orchestrator(
             executor=executor,
@@ -112,6 +128,12 @@ class RuntimeFacade:
     def get_instrument(self, device_id: str | None) -> InstrumentProfileContract | None:
         return self._calibration.get_profile(device_id) if device_id else None
 
+    def delete_instrument(self, device_id: str, *, force: bool = False) -> InstrumentReferenceInfo | None:
+        return self._calibration.delete_instrument(device_id, force=force)
+
+    def check_instrument_references(self, device_id: str) -> InstrumentReferenceInfo:
+        return self._calibration.check_instrument_references(device_id)
+
     # --- workflow ----------------------------------------------------- #
     def generate_workflow(self, prompt: str, context: dict[str, Any] | None = None) -> WorkflowContract:
         return self._workflow.draft_from_prompt(prompt, context or {})
@@ -122,6 +144,18 @@ class RuntimeFacade:
     def workflow_generator_label(self) -> str:
         return self._workflow.generator_label()
 
+    def ai_assistant_status(self) -> AIAssistantStatus:
+        if self._ai_assistant_status is not None:
+            return self._ai_assistant_status
+        label = self.workflow_generator_label()
+        status = "已配置" if label != "未配置" else "未配置"
+        return AIAssistantStatus(
+            provider=label,
+            model=label,
+            status=status,
+            detail="工作流草稿生成器可用" if label != "未配置" else "未配置工作流草稿生成器",
+        )
+
     def register_workflow(self, workflow: WorkflowContract) -> WorkflowContract:
         return self._workflow.register(workflow)
 
@@ -130,6 +164,15 @@ class RuntimeFacade:
 
     def list_workflows(self) -> list[WorkflowContract]:
         return self._workflow.list_workflows()
+
+    def workflow_draft_record(self, workflow_id: str) -> WorkflowDraftRecord | None:
+        return self._workflow.draft_record(workflow_id)
+
+    def list_workflows_projected(self) -> list[WorkflowListEntry]:
+        return self._workflow.list_workflows_projected()
+
+    def delete_workflow(self, workflow_id: str) -> None:
+        self._workflow.delete_workflow(workflow_id)
 
     def standardize(self, workflow: WorkflowContract) -> StandardizationResult:
         return self._workflow.standardize_check(workflow)
@@ -145,6 +188,28 @@ class RuntimeFacade:
 
     def list_templates(self) -> list[TemplateRecord]:
         return self._template.list_all()
+
+    def search_templates(self, query: str = "", status: str = "") -> list[TemplateRecord]:
+        return self._template.search_templates(query, status)
+
+    def update_template_version(
+        self, template_id: str, template_version: str, *, instrument_profile: str | None = None
+    ) -> TemplateRecord:
+        return self._template.update_version_metadata(
+            template_id, template_version, instrument_profile=instrument_profile
+        )
+
+    def delete_template_version(
+        self, template_id: str, template_version: str, *, force: bool = False
+    ) -> TemplateRecord:
+        return self._template.delete_version(template_id, template_version, force=force)
+
+    def delete_template_version_cloud_first(
+        self, template_id: str, template_version: str, *, force: bool = False
+    ) -> TemplateRecord:
+        return self._template.delete_version_cloud_first(
+            template_id, template_version, force=force
+        )
 
     def template_stats(self):
         return self._template.stats()

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, RoiRect
+from smartaccess.shared.contracts.workflow import WorkflowContract
 
 
 # --------------------------------------------------------------------------- #
@@ -127,6 +128,10 @@ class VisionProvider(Protocol):
 
     def detect_presence(self, roi: str) -> bool: ...
 
+    def match_template(self, roi: str) -> OcrReading: ...
+
+    def sample_color(self, roi: str) -> OcrReading: ...
+
 
 class PlatformClient(Protocol):
     """Isolates SpecLabOS interface differences (platform_adapter.yaml)."""
@@ -140,6 +145,8 @@ class PlatformClient(Protocol):
     def list_templates(self) -> list[dict[str, Any]]: ...
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    def delete_template(self, template_id: str, template_version: str) -> bool: ...
 
     def upload_status(self, payload: dict[str, Any]) -> bool: ...
 
@@ -179,3 +186,28 @@ class PlatformOffline(Exception):
     def __init__(self, detail: str = "platform offline") -> None:
         self.detail = detail
         super().__init__(detail)
+
+
+# --------------------------------------------------------------------------- #
+# Projection DTOs — UI-facing shapes derived from domain models
+# --------------------------------------------------------------------------- #
+@dataclass(slots=True)
+class WorkflowListEntry:
+    """Projection for the workflow list UI with source-kind differentiation."""
+
+    workflow: WorkflowContract
+    source_kind: str  # "draft" | "local_template"
+    storage_ref: str  # filesystem path or template identity
+    display_label: str
+
+
+@dataclass(slots=True)
+class InstrumentReferenceInfo:
+    """Pre-check result before deleting an instrument profile."""
+
+    device_id: str
+    draft_count: int = 0
+    local_template_count: int = 0
+    active_session_count: int = 0
+    referencing_workflow_ids: list[str] | None = None
+    referencing_template_ids: list[str] | None = None

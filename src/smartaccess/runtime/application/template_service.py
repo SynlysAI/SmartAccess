@@ -8,6 +8,7 @@ platform outage never strands a runnable template (SPEC §5.2, §5.6).
 from __future__ import annotations
 
 from dataclasses import dataclass
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -166,6 +167,104 @@ class TemplateService:
 
     def list_all(self) -> list[TemplateRecord]:
         return [record for records in self._records.values() for record in records]
+
+    def search_templates(self, query: str = "", status: str = "") -> list[TemplateRecord]:
+        needle = query.strip().lower()
+        wanted_status = status.strip().lower()
+        records = self.list_all()
+        if wanted_status and wanted_status != "all":
+            records = [r for r in records if r.status.value.lower() == wanted_status]
+        if not needle:
+            return records
+        return [
+            r for r in records
+            if needle in " ".join(
+                [
+                    r.identity.template_id,
+                    r.identity.template_version,
+                    r.status.value,
+                    r.instrument_profile,
+                    r.source,
+                    r.error,
+                ]
+            ).lower()
+        ]
+
+    def update_version_metadata(
+        self,
+        template_id: str,
+        template_version: str,
+        *,
+        instrument_profile: str | None = None,
+    ) -> TemplateRecord:
+        records = self._records.get(template_id, [])
+        target = next((r for r in records if r.identity.template_version == template_version), None)
+        if target is None:
+            raise TemplateVersionMissing(template_id, template_version)
+        if instrument_profile is not None:
+            target.instrument_profile = instrument_profile
+            path = self._template_path(target.identity)
+            if path.exists():
+                workflow = load_yaml_contract(path, WorkflowContract)
+                workflow.metadata.instrument_profile = instrument_profile
+                dump_yaml_contract(workflow, path)
+        return target
+
+    def delete_version(self, template_id: str, template_version: str, *, force: bool = False) -> TemplateRecord:
+        records = self._records.get(template_id, [])
+        target = next((r for r in records if r.identity.template_version == template_version), None)
+        if target is None:
+            raise TemplateVersionMissing(template_id, template_version)
+        if target.status == TemplateVersionStatus.PUBLISHED and not force:
+            raise ValueError("当前发布版本需要确认后才能删除")
+        records.remove(target)
+        path = self._template_path(target.identity)
+        if path.exists():
+            shutil.rmtree(path.parent)
+        if not records:
+            self._records.pop(template_id, None)
+        return target
+
+    def delete_version_cloud_first(
+        self, template_id: str, template_version: str, *, force: bool = False
+    ) -> TemplateRecord:
+        """Delete a template version: cloud first, then local.
+
+        If the cloud deletion fails the local copy is preserved (atomicity).
+        Use ``force=True`` to skip confirmation for published versions.
+        """
+        records = self._records.get(template_id, [])
+        target = next(
+            (r for r in records if r.identity.template_version == template_version),
+            None,
+        )
+        if target is None:
+            raise TemplateVersionMissing(template_id, template_version)
+
+        if target.status == TemplateVersionStatus.PUBLISHED and not force:
+            raise ValueError("当前发布版本需要 force=True 确认后才能删除")
+
+        # 1. Delete from cloud first
+        try:
+            self._platform.delete_template(template_id, template_version)
+        except TemplateVersionMissing:
+            # Already gone on cloud — proceed with local deletion
+            pass
+        except Exception:
+            # Cloud deletion failed — preserve local copy
+            raise RuntimeError(
+                f"云端删除模板 {template_id}@{template_version} 失败，本地副本已保留。"
+            )
+
+        # 2. Cloud success → delete local copy
+        records.remove(target)
+        path = self._template_path(target.identity)
+        if path.exists():
+            shutil.rmtree(path.parent)
+        if not records:
+            self._records.pop(template_id, None)
+
+        return target
 
     def rollback(self, template_id: str, template_version: str) -> TemplateRecord:
         """Roll the active template back to a previously published version."""

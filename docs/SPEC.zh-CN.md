@@ -63,8 +63,8 @@ MVP 页面：
 - 工作台首页：任务队列、设备状态、最近运行、异常提醒。
 - 设备接入与校准页：窗口识别、ROI 标注、锚点配置、字段映射。
 - 工作流设计页：模板选择、步骤编排、参数区、预检提示、版本说明。
-- 模板库页：模板列表、版本历史、发布状态、适用仪器、回滚和复用入口。
-- 运行监控页：当前步骤、截图/识别结果、日志流、异常恢复动作。
+- 模板库页：模板列表、版本时间线、发布状态、适用仪器、查找过滤、回滚和复用入口。
+- 运行监控页：左侧步骤时间线，右侧观测/审计与日志标签页，异常恢复动作。
 
 验收要点：页面之间共享同一任务上下文；执行中的状态变化能在运行监控页可见；高风险动作必须有明确确认点。
 
@@ -79,6 +79,8 @@ MVP 页面：
 关键规则：
 
 - `template_id` 和 `template_version` 只用于稳定模板身份，不能用运行时 `request_id` 替代。
+- `roi_bindings` 表示工作流逻辑名到仪器画像锚点的映射，多个工作流可以复用同一批锚点。
+- `outputs` 表示运行后需要保留的结果 key 与观测来源，不等同于动作目标本身。
 - 平台下发任务时，先解析任务上下文，再按模板 ID 和版本拉取模板内容。
 - 进入 `Standardized` 前，必须完成关键 ROI/锚点、字段映射、安全限制和复用性说明。
 - 发布到 SpecLabOS 后，本地保留最近可执行副本，用于平台断连时的可恢复运行。
@@ -96,46 +98,57 @@ MVP 页面：
 - 锚点必须区分动作目标和观察 ROI。
 - 安全限制必须绑定到动作或参数范围，例如电压、电流、温度、启动/停止动作。
 - MVP 优先覆盖单窗口、静态布局或轻微布局变化场景。
+- 校准时应保存 absolute ROI 与 normalized ROI；运行时优先用 normalized ROI 按当前窗口尺寸重映射坐标。
+- 固定窗口长宽比例只能作为辅助约束，不能替代锚点视觉反馈和运行前校验。
 - 识别不确定时，不得把低置信结果直接升级为可执行状态。
 
 ### 5.4 Automation Executor
 
 职责：把工作流步骤转换为 UI 级动作，并把动作结果写入运行轨迹。
 
-动作原语：
+动作原语（VER3 全部走真实 Win32 链路）：
 
-- `click`
-- `double_click`
-- `type`
-- `hotkey`
-- `wait`
-- `wait_until`
-- `screenshot_check`
-- `branch`
-- `retry`
+- `click` / `double_click`：SetCursorPos + mouse_event 定位锚点中心点击
+- `type`：SendInput + KEYEVENTF_UNICODE 逐字输入（支持 ASCII + CJK）
+- `hotkey`：keybd_event 组合键（ctrl/alt/shift + 字母/enter/tab/esc）
+- `press_enter`：keybd_event 发送回车键
+- `wait`：time.sleep 等待指定秒数
+- `wait_until`：编排器级轮询 observer 直到条件满足或超时
+- `screenshot_check`：编排器级一次性观测 + 条件判断
 
 关键规则：
 
 - 执行前必须校验窗口存在、目标锚点可定位、参数满足安全限制。
 - 每个动作必须生成可追踪事件，至少包含 `session_id`、`step_id`、动作、观察、结果和产物引用。
+- `wait_until` 基于步骤级观测条件按 `poll_interval_seconds` 轮询，超时按 `timeout_seconds` 判断。
+- `screenshot_check` 基于锚点识别模式执行一次观测判断。
+- 所有等待时间以秒为单位；AI 生成的 ms 值自动标准化。
 - `execute` 只能在成功 `trigger` 或已准备好的本地执行上下文之后发生。
-- 暂停、继续、终止属于桌面运行时控制语义，不由 MVP 的 `status` 轮询接口承载。
 
 ### 5.5 Observer
 
 职责：在运行中采集截图、识别状态并输出结构化观察结果。
 
-识别方式：
+识别方式（VER3 全部走本地 `LocalVisionProvider`）：
 
-- ROI OCR。
-- 颜色、图标或文本存在性检测。
-- 简单模板匹配。
-- 基于规则的状态收敛判断。
+- **OCR**：PaddleOCR 读取 ROI 内文字，返回文本与置信度。
+- **presence**：OpenCV 计算 ROI 前景像素占比，超过 `presence_threshold` 视为存在。
+- **template**：OpenCV `matchTemplate` (TM_CCOEFF_NORMED) 比对基准图，分数 ≥ `template_threshold` 视为匹配。
+- **color**：OpenCV 采样 ROI 均值色，计算与参考色 `color_reference_hex` 的 HSV 距离，≤ `color_tolerance` 视为匹配。
+- **none**：仅作为动作目标或定位区域，不参与观测。
+
+`AnchorDefinition.vision_config` 承载各模式的基准数据：
+- `template_asset_path`：模板基准图路径
+- `template_threshold`：匹配阈值（默认 0.8）
+- `color_reference_hex`：颜色参考值（如 #00FF00）
+- `color_tolerance`：HSV 距离容差（默认 0.1）
+- `presence_threshold`：前景占比阈值（默认 0.05）
 
 关键规则：
 
-- 观察结果必须带来源 ROI、置信度、时间戳和原始产物引用。
+- 观察结果必须带来源 ROI、识别模式、置信度、时间戳和原始产物引用。
 - 低置信结果进入重采样、等待或人工确认，而不是直接驱动下一步。
+- 工作流步骤的 `condition` 是动作识别闭环的主要输入，orchestrator 必须在执行后判断条件是否满足。
 - 关键状态变化需要写入 `run_trace.jsonl` 并可映射到平台字段。
 
 ### 5.6 Platform Adapter
@@ -148,6 +161,7 @@ MVP 端点能力：
 - 平台任务拉取。
 - 模板拉取。
 - 模板发布。
+- 模板删除（`DELETE /smartaccess/templates/{template_id}/versions/{template_version}`）。
 - 状态上传。
 - 日志上传。
 - 结果上传。
@@ -157,6 +171,7 @@ MVP 端点能力：
 - `fetch_task` 返回任务上下文和模板引用。
 - `fetch_template` 根据 `template_id + template_version` 返回模板内容。
 - `publish_template` 只接收标准化后的模板。
+- `delete_template` 云端删除模板版本，支持本地 `delete_version_cloud_first` 原子操作（云端成功才删本地）。
 - 认证配置只保存密钥引用，不保存明文令牌。
 - 平台断连时，本地缓存待补传事件和最近可执行模板副本。
 
@@ -171,6 +186,32 @@ MVP 端点能力：
 - observer 只产生观察和判断，不直接执行动作。
 - recovery 可以建议重试、回退、人工确认或终止，但高风险恢复必须等待确认。
 - 所有组件共享同一 `session_id` 和模板来源上下文。
+
+### 5.8 AI Runtime Knowledge Store（VER3 新增）
+
+职责：在工作流生成过程中持续学习，沉淀可复用知识和技能。
+
+目录结构：`workspace/ai-runtime/`
+
+| 目录 | 说明 |
+| --- | --- |
+| `episodes/` | 每次生成的完整记录（prompt、命中知识、生成结果、编辑 diff、运行结果） |
+| `memory/pending/` | 候选记忆（待人工审批） |
+| `memory/approved/` | 已批准记忆（参与后续生成检索） |
+| `skills/pending/` | 候选技能（待人工审批） |
+| `skills/approved/` | 已批准技能（参与后续生成检索） |
+| `index.json` | 可搜索索引 |
+
+Memory 记录：稳定规则、软件特性、风险提示。
+Skill 记录：可复用步骤模板、前置条件、推荐锚点和条件模式。
+
+关键规则：
+
+- 生成时仅检索 `approved` 项，注入到 DeepSeek system prompt。
+- 生成后自动从 workflow 数据提取候选 memory/skill 进入 `pending`。
+- 人工审批（approve/reject）后才从 pending 移入 approved。
+- 推理面板展示本次命中的 memory/skill ID，保证可追溯。
+- 提取失败不影响生成主流程。
 
 ## 6. 运行时主链路
 

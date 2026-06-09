@@ -1,4 +1,4 @@
-"""Workbench home: task queue, device status, recent runs, incident alerts."""
+"""Operations overview: device status, recent runs, and incidents."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class DashboardPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(16)
-        root.addWidget(page_header("工作台首页", "任务队列、设备状态、模板版本、最近运行与待处理异常"))
+        root.addWidget(page_header("运行概览", "设备状态、模板版本、最近运行与待处理异常"))
 
         stats = QHBoxLayout()
         stats.setSpacing(16)
