@@ -32,6 +32,14 @@ description: Calibrate SmartAccess ROI regions and visual recognition patterns f
 5. 把 ROI 与工作流步骤、condition 和平台字段绑定。
 6. 标记容易误识别的区域和替代方案。
 
+## 提示词与界面文案规则
+
+- 面向用户的接入建议必须描述可验证的结果，例如“建议锚点”“识别方式”“需要人工确认”，避免开发者调试说明。
+- 生成设备画像时，输出必须严格匹配 SmartAccess `InstrumentProfileContract`；不能自动保存或覆盖用户当前配置。
+- ROI 建议必须同时说明 absolute ROI 与 normalized ROI；缺少截图坐标时，明确要求用户标注，不要编造精确坐标。
+- Provider 名称只在配置、状态或错误定位场景出现；普通流程说明使用“AI 辅助接入”或“设备接入建议”。
+- 高风险动作、颜色/模板基准和 OCR 低置信度场景必须提示人工复核。
+
 ## 失败处理
 
 - 如果界面元素不稳定，建议增加多重观测或人工确认点。

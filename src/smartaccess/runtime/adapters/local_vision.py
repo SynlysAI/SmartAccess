@@ -14,12 +14,14 @@ can fail fast instead of silently falling back to stubs.
 from __future__ import annotations
 
 import io
+import inspect
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from smartaccess.runtime.application.ports import OcrReading
+from smartaccess.runtime.application.roi_resolver import resolve_anchor_roi
 from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, RoiRect, VisionConfig
 
 # --------------------------------------------------------------------------- #
@@ -78,11 +80,13 @@ class LocalVisionProvider:
         self._workspace_dir = workspace_dir
         self._screenshot: np.ndarray | None = None
         self._profile_anchors: dict[str, AnchorDefinition] = {}
+        self._window_signature = None
 
         # Lazy-init PaddleOCR — it's heavy to load
         self._ocr_lang = ocr_lang
         self._ocr_use_gpu = ocr_use_gpu
         self._ocr: Any = None
+        self._ocr_api = "legacy"
 
     # -- configuration ----------------------------------------------------- #
     def configure_screenshot(self, data: bytes | np.ndarray | None) -> None:
@@ -99,6 +103,7 @@ class LocalVisionProvider:
     def configure_profile(self, profile: Any | None) -> None:
         """Index anchors from an instrument profile for vision_config lookup."""
         self._profile_anchors.clear()
+        self._window_signature = getattr(profile, "window_signature", None)
         if profile is None:
             return
         for anchor in getattr(profile, "anchors", []) or []:
@@ -113,7 +118,7 @@ class LocalVisionProvider:
             return OcrReading(roi=roi, text="", confidence=0.0, detail="no screenshot cached")
         if roi in self._profile_anchors:
             anchor = self._profile_anchors[roi]
-            cropped = self._crop_roi(img, anchor.roi)
+            cropped = self._crop_roi(img, self._resolved_roi(anchor, img))
             if cropped is not None:
                 img = cropped
         return self._ocr_image(img, roi)
@@ -134,7 +139,7 @@ class LocalVisionProvider:
             img = self._screenshot
         else:
             return OcrReading(roi=anchor.id, text="", confidence=0.0, detail="no image available")
-        target_roi = roi or anchor.roi
+        target_roi = roi or self._resolved_roi(anchor, img)
         cropped = self._crop_roi(img, target_roi)
         if cropped is not None:
             img = cropped
@@ -256,32 +261,160 @@ class LocalVisionProvider:
     # -- helpers ----------------------------------------------------------- #
     def _ocr_image(self, img: np.ndarray, label: str) -> OcrReading:
         if self._ocr is None:
-            self._ocr = _PaddleOCR(lang=self._ocr_lang, use_gpu=self._ocr_use_gpu)
+            self._ocr = self._build_ocr()
         try:
-            results = self._ocr.ocr(img, cls=False)
+            results = self._run_ocr(img)
         except Exception as exc:
             return OcrReading(roi=label, text="", confidence=0.0, detail=f"OCR error: {exc}")
-        if not results or not results[0]:
+        texts, confs = self._extract_ocr_lines(results)
+        if not texts:
             return OcrReading(roi=label, text="", confidence=0.0, detail="no text detected")
-        # Collect all detected text with confidence
-        texts: list[str] = []
-        confs: list[float] = []
-        for line in results[0]:
-            text = str(line[1][0]) if len(line) > 1 else ""
-            conf = float(line[1][1]) if len(line) > 1 and len(line[1]) > 1 else 0.0
-            if text:
-                texts.append(text)
-                confs.append(conf)
         combined = " ".join(texts)
         avg_conf = float(np.mean(confs)) if confs else 0.0
         return OcrReading(roi=label, text=combined, confidence=avg_conf, detail="paddleocr")
+
+    def _build_ocr(self) -> Any:
+        init_params = inspect.signature(_PaddleOCR.__init__).parameters
+        kwargs: dict[str, Any] = {"lang": self._ocr_lang}
+        for option in (
+            "use_doc_orientation_classify",
+            "use_doc_unwarping",
+            "use_textline_orientation",
+        ):
+            if option in init_params:
+                kwargs[option] = False
+        if "enable_mkldnn" in init_params or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in init_params.values()):
+            kwargs["enable_mkldnn"] = False
+        if "use_gpu" in init_params:
+            kwargs["use_gpu"] = self._ocr_use_gpu
+            self._ocr_api = "legacy"
+        else:
+            kwargs["device"] = "gpu" if self._ocr_use_gpu else "cpu"
+            self._ocr_api = "predict"
+        return _PaddleOCR(**kwargs)
+
+    def _run_ocr(self, img: np.ndarray) -> Any:
+        attempts: list[tuple[str, Any]] = []
+        if self._ocr_api == "predict":
+            if hasattr(self._ocr, "predict"):
+                attempts.append(("predict(img)", lambda: self._ocr.predict(img)))
+            if hasattr(self._ocr, "ocr"):
+                attempts.append(("ocr(img)", lambda: self._ocr.ocr(img)))
+                attempts.append(("ocr(img, cls=False)", lambda: self._ocr.ocr(img, cls=False)))
+        else:
+            if hasattr(self._ocr, "ocr"):
+                attempts.append(("ocr(img, cls=False)", lambda: self._ocr.ocr(img, cls=False)))
+                attempts.append(("ocr(img)", lambda: self._ocr.ocr(img)))
+            if hasattr(self._ocr, "predict"):
+                attempts.append(("predict(img)", lambda: self._ocr.predict(img)))
+
+        errors: list[str] = []
+        for label, attempt in attempts:
+            try:
+                return attempt()
+            except TypeError as exc:
+                errors.append(f"{label}: {exc}")
+                continue
+        if errors:
+            raise TypeError("; ".join(errors))
+        raise RuntimeError("No OCR inference entrypoint available on PaddleOCR instance")
+
+    @staticmethod
+    def _extract_ocr_lines(results: Any) -> tuple[list[str], list[float]]:
+        texts: list[str] = []
+        confs: list[float] = []
+        if not results:
+            return texts, confs
+
+        # PaddleOCR 2.x: [[box, [text, score]], ...]
+        if isinstance(results, list) and results and isinstance(results[0], list):
+            legacy_lines = results[0]
+            if legacy_lines and isinstance(legacy_lines[0], (list, tuple)):
+                for line in legacy_lines:
+                    if len(line) <= 1:
+                        continue
+                    pair = line[1]
+                    if not isinstance(pair, (list, tuple)) or not pair:
+                        continue
+                    text = str(pair[0]) if pair[0] is not None else ""
+                    conf = float(pair[1]) if len(pair) > 1 else 0.0
+                    if text:
+                        texts.append(text)
+                        confs.append(conf)
+                if texts:
+                    return texts, confs
+
+        iterable = results if isinstance(results, list) else [results]
+        for item in iterable:
+            payload = LocalVisionProvider._result_payload(item)
+            if not payload:
+                continue
+            res = payload.get("res", payload) if isinstance(payload, dict) else {}
+            if not isinstance(res, dict):
+                continue
+            line_texts = LocalVisionProvider._as_list(res.get("rec_texts"))
+            line_scores = LocalVisionProvider._as_list(res.get("rec_scores"))
+            if line_texts:
+                for index, text in enumerate(line_texts):
+                    text_str = str(text or "").strip()
+                    if not text_str:
+                        continue
+                    texts.append(text_str)
+                    score = line_scores[index] if index < len(line_scores) else 0.0
+                    confs.append(float(score))
+                continue
+            single_text = res.get("rec_text") or res.get("text")
+            if single_text:
+                texts.append(str(single_text))
+                confs.append(float(res.get("rec_score", res.get("score", 0.0))))
+        return texts, confs
+
+    @staticmethod
+    def _result_payload(item: Any) -> dict[str, Any]:
+        if isinstance(item, dict):
+            return item
+        payload = getattr(item, "json", None)
+        if callable(payload):
+            payload = payload()
+        if isinstance(payload, dict):
+            return payload
+        to_dict = getattr(item, "to_dict", None)
+        if callable(to_dict):
+            payload = to_dict()
+            if isinstance(payload, dict):
+                return payload
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            payload = model_dump()
+            if isinstance(payload, dict):
+                return payload
+        raw = getattr(item, "__dict__", None)
+        return raw if isinstance(raw, dict) else {}
+
+    @staticmethod
+    def _as_list(value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        tolist = getattr(value, "tolist", None)
+        if callable(tolist):
+            converted = tolist()
+            if isinstance(converted, list):
+                return converted
+            if isinstance(converted, tuple):
+                return list(converted)
+            return [converted]
+        return [value]
 
     def _crop_roi_for_name(self, img: np.ndarray, roi_name: str) -> np.ndarray | None:
         """Look up an anchor by name and crop its ROI from the image."""
         anchor = self._profile_anchors.get(roi_name)
         if anchor is None:
             return None
-        return self._crop_roi(img, anchor.roi)
+        return self._crop_roi(img, self._resolved_roi(anchor, img))
 
     @staticmethod
     def _crop_roi(img: np.ndarray, roi: RoiRect | None) -> np.ndarray | None:
@@ -301,6 +434,15 @@ class LocalVisionProvider:
         if anchor is None:
             return None
         return anchor.vision_config
+
+    def _resolved_roi(self, anchor: AnchorDefinition, img: np.ndarray) -> RoiRect | None:
+        height, width = img.shape[:2]
+        return resolve_anchor_roi(
+            anchor,
+            self._window_signature,
+            current_width=width,
+            current_height=height,
+        )
 
 
 # --------------------------------------------------------------------------- #

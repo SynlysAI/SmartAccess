@@ -14,6 +14,8 @@ from smartaccess.shared.contracts import (
     load_yaml_contract,
 )
 
+from smartaccess.shared.contracts.workflow import normalize_condition
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -45,6 +47,19 @@ def test_load_core_contract_examples() -> None:
     assert eval_case.scenario.id == "eval_platform_sync_01"
     assert len(run_trace) == 2
     assert run_trace[1].result.status == "success"
+
+
+def test_normalize_condition_supports_legacy_and_invalid_shapes() -> None:
+    assert normalize_condition(None) is None
+    assert normalize_condition("roi_status") is None  # type: ignore[arg-type]
+
+    condition = normalize_condition({"roi": "status_banner", "equals": "Running", "timeout": 5000})
+
+    assert condition is not None
+    assert condition["source"] == "status_banner"
+    assert condition["operator"] == "equals"
+    assert condition["expected"] == "Running"
+    assert condition["timeout_seconds"] == 5.0
 
 
 def test_load_eval_harness_cases() -> None:

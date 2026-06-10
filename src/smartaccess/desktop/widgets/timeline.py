@@ -1,19 +1,24 @@
-"""A run-step timeline list for the monitoring page (dark, color-coded).
-
-Each row shows the step index, icon, action, target, value, and status label.
-"""
+"""A wrapped, color-coded step timeline for the monitoring page."""
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
+import html
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from smartaccess.desktop.shell import theme as t
 
 _ICON = {
     "pending": "○",
-    "running": "◐",
-    "observed": "◑",
+    "running": "◉",
+    "observed": "◌",
     "succeeded": "●",
     "blocked": "▲",
     "failed": "✕",
@@ -27,117 +32,144 @@ _COLOR = {
     "failed": t.DANGER,
 }
 _LABEL = {
-    "pending": "待执行",
-    "running": "执行中",
-    "observed": "已观测",
-    "succeeded": "成功",
-    "blocked": "已阻断",
-    "failed": "失败",
+    "pending": "Pending",
+    "running": "Running",
+    "observed": "Observed",
+    "succeeded": "Succeeded",
+    "blocked": "Blocked",
+    "failed": "Failed",
 }
 
 
-def _format_step_line(
-    idx: int,
-    step_id: str,
-    action: str = "",
-    target: str = "",
-    value: str = "",
-    status: str = "pending",
-    status_time: str = "",
-) -> str:
-    """Build a plain-text one-line summary for a timeline row.
+def _format_value(action: str, value: str) -> str:
+    if not value:
+        return "-"
+    if action == "wait":
+        return f"{value}s"
+    return value
 
-    Example outputs:
-      ○  1. step_1  [click]  → search_box                      · 待执行
-      ◐  2. step_2  [type]   → search_box   = "李建置"          · 执行中
-      ○  3. step_3  [wait]   = 3s                               · 待执行
-      ●  4. step_4  [click]  → contact_item                     · 成功
-    """
-    icon = _ICON.get(status, "○")
-    label = _LABEL.get(status, status)
-    if status_time:
-        prefix = {
-            "running": "开始",
-            "observed": "观测",
-            "succeeded": "完成",
-            "blocked": "阻断",
-            "failed": "失败",
-        }.get(status, label)
-        label = f"{label}（{prefix} {status_time}）"
 
-    # action: [click] / [type] / [wait] — padded to 12 chars for alignment
-    action_part = f"[{action}]".ljust(14) if action else ""
+class _TimelineRow(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
 
-    # target: → search_box
-    target_part = f" → {target}" if target else ""
+        self._title = QLabel()
+        self._title.setWordWrap(True)
+        self._title.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._title)
 
-    # value: context-aware formatting
-    value_part = ""
-    if value:
-        if action == "wait":
-            value_part = f"  = {value}s"
-        elif action in ("type", "hotkey"):
-            # Truncate long values for display
-            display = str(value)
-            if len(display) > 32:
-                display = display[:29] + "..."
-            value_part = f'  = "{display}"'
-        else:
-            value_part = f"  = {value}"
+        self._detail = QLabel()
+        self._detail.setWordWrap(True)
+        self._detail.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._detail)
 
-    # status
-    status_part = f"· {label}"
-
-    return f"{icon}  {idx}. {step_id}  {action_part}{target_part}{value_part}  {status_part}"
+    def update_row(
+        self,
+        *,
+        index: int,
+        step_id: str,
+        action: str,
+        target: str,
+        value: str,
+        status: str,
+        status_time: str = "",
+    ) -> None:
+        color = _COLOR.get(status, t.INK_MUTED)
+        icon = _ICON.get(status, "○")
+        label = _LABEL.get(status, status.title())
+        title = (
+            f"<span style='color:{color};font-weight:700;'>{icon}</span> "
+            f"<span style='font-weight:700;color:{t.INK};'>{index}. "
+            f"{html.escape(step_id)}</span> "
+            f"<span style='color:{color};'>[{html.escape(action or '-')} · {label}]</span>"
+        )
+        if status_time:
+            title += (
+                f" <span style='color:{t.INK_SUBTLE};'>at {html.escape(status_time)}</span>"
+            )
+        detail = (
+            f"<span style='color:{t.INK_MUTED};'><b>Target</b>: {html.escape(target or '-')}<br>"
+            f"<b>Value</b>: {html.escape(_format_value(action, value))}</span>"
+        )
+        self._title.setText(title)
+        self._detail.setText(detail)
 
 
 class Timeline(QListWidget):
-    """Shows ordered steps with action / target / value details and live status."""
+    """Shows ordered steps with wrapping detail rows and live status."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: dict[str, QListWidgetItem] = {}
-        # Store step metadata keyed by step_id for status updates.
-        self._meta: dict[str, dict] = {}
+        self._widgets: dict[str, _TimelineRow] = {}
+        self._meta: dict[str, dict[str, str]] = {}
+        self.setWordWrap(True)
+        self.setUniformItemSizes(False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSpacing(6)
 
     def reset_steps(self, steps: list[dict]) -> None:
-        """Accept a list of step dicts with keys: id, action, target, value."""
-        print(f"[DEBUG] Timeline.reset_steps called with {len(steps)} steps")
         self.clear()
         self._rows.clear()
+        self._widgets.clear()
         self._meta.clear()
-        for idx, step in enumerate(steps, start=1):
-            step_id = step.get("id", f"step_{idx}")
-            action = step.get("action", "")
-            target = step.get("target", "") or ""
-            value = str(step.get("value", "")) if step.get("value") is not None else ""
-            self._meta[step_id] = {"action": action, "target": target, "value": value}
-            text = _format_step_line(idx, step_id, action, target, value, "pending")
+        for index, step in enumerate(steps, start=1):
+            step_id = step.get("id", f"step_{index}")
+            meta = {
+                "action": str(step.get("action", "")),
+                "target": str(step.get("target", "") or ""),
+                "value": str(step.get("value", "") or ""),
+                "status": "pending",
+                "status_time": "",
+            }
+            self._meta[step_id] = meta
             item = QListWidgetItem()
-            item.setText(text)
-            item.setForeground(QColor(_COLOR["pending"]))
+            widget = _TimelineRow()
             self.addItem(item)
+            self.setItemWidget(item, widget)
             self._rows[step_id] = item
+            self._widgets[step_id] = widget
+            self._refresh_row(step_id, index=index)
 
     def set_step_status(self, step_id: str, status: str, status_time: str = "") -> None:
-        """Update a step's status icon and label, preserving its detail text."""
-        item = self._rows.get(step_id)
-        if item is None:
+        if step_id not in self._rows:
             item = QListWidgetItem()
+            widget = _TimelineRow()
             self.addItem(item)
+            self.setItemWidget(item, widget)
             self._rows[step_id] = item
-            self._meta[step_id] = {"action": "", "target": "", "value": ""}
-        meta = self._meta.get(step_id, {"action": "", "target": "", "value": ""})
+            self._widgets[step_id] = widget
+            self._meta[step_id] = {
+                "action": "",
+                "target": "",
+                "value": "",
+                "status": status,
+                "status_time": status_time,
+            }
+        meta = self._meta.setdefault(
+            step_id,
+            {"action": "", "target": "", "value": "", "status": status, "status_time": ""},
+        )
+        meta["status"] = status
         if status_time:
             meta["status_time"] = status_time
-        idx = list(self._rows).index(step_id) + 1
-        text = _format_step_line(
-            idx, step_id,
+        self._refresh_row(step_id)
+
+    def _refresh_row(self, step_id: str, *, index: int | None = None) -> None:
+        item = self._rows[step_id]
+        widget = self._widgets[step_id]
+        meta = self._meta[step_id]
+        row_index = index if index is not None else list(self._rows).index(step_id) + 1
+        widget.update_row(
+            index=row_index,
+            step_id=step_id,
             action=meta.get("action", ""),
             target=meta.get("target", ""),
             value=meta.get("value", ""),
-            status=status,
-            status_time=str(meta.get("status_time", "")),
+            status=meta.get("status", "pending"),
+            status_time=meta.get("status_time", ""),
         )
-        item.setText(text)
-        item.setForeground(QColor(_COLOR.get(status, t.INK_MUTED)))
+        item.setSizeHint(widget.sizeHint())

@@ -123,10 +123,23 @@ def test_workflow_page_shows_context_snapshot_and_saves_outputs(tmp_path: Path) 
     assert page._prompt_label.text() == "Prompt / 目标描述"
     assert page._workflow_id_label.text() == "工作流 ID"
     assert page._device_label.text() == "目标设备"
-    assert "ElectroChem Console" in page._context_card.toPlainText()
-    assert "roi_status" in page._context_card.toPlainText()
+    assert "ElectroChem Console" in page._reference_panel.toPlainText()
+    assert "roi_status" in page._reference_panel.toPlainText()
     assert "start_button" in page._reasoning.toPlainText()
     assert "本次生成读取的上下文快照" in page._reasoning.toPlainText()
+
+    page._step_conditions[0] = {
+        "source": "roi_status",
+        "mode": "ocr",
+        "operator": "contains",
+        "expected": "Running",
+        "timeout_seconds": 12.0,
+    }
+    condition_button = page._make_condition_button(0)
+    assert "roi_status" in condition_button.text()
+    assert "contains" in condition_button.text()
+    page._delete_step_row(0)
+    assert 0 not in page._step_conditions
 
     page._binding_table.setItem(0, 0, QTableWidgetItem("contact_result"))
     binding_combo = page._binding_table.cellWidget(0, 1)
@@ -256,9 +269,14 @@ def test_monitoring_vm_receives_runtime_events(tmp_path: Path) -> None:
     relay = EventRelay(facade)
     vm = MonitoringViewModel(facade, relay)
     logs: list[str] = []
+    readings: list[str] = []
     vm.log_line.connect(logs.append)
+    vm.reading.connect(readings.append)
 
     workflow = facade.list_workflows()[0]
     facade.start_run(workflow=workflow)
 
     assert logs
+    assert readings
+    assert "roi_status" in readings[-1]
+    assert "confidence" in readings[-1]

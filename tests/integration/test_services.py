@@ -17,7 +17,9 @@ from smartaccess.runtime.domain.incident import IncidentType
 from smartaccess.runtime.domain.instrument import InstrumentStatus
 from smartaccess.runtime.domain.template import TemplateVersionStatus
 from smartaccess.runtime.domain.workflow import WorkflowLifecycleState
-from smartaccess.shared.contracts.workflow import WorkflowOutput
+from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
+from smartaccess.shared.contracts.io import load_yaml_contract
+from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowOutput
 from smartaccess.shared.events import EventBus, RuntimeEventName
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -133,3 +135,31 @@ def test_evaluation_loads_five_key_cases() -> None:
     results = svc.run_all()
     assert len(results) == 5
     assert all(r.passed for r in results)
+
+
+def test_wechat_demo_assets_are_standardized() -> None:
+    profile = load_yaml_contract(
+        REPO_ROOT / "workspace/instruments/weixin_01/instrument_profile.yaml",
+        InstrumentProfileContract,
+    )
+    anchor_modes = {anchor.id: anchor.vision_mode for anchor in profile.anchors}
+    anchor_configs = {anchor.id: anchor.vision_config for anchor in profile.anchors}
+    assert anchor_modes["用户确认"] == "ocr"
+    assert anchor_modes["联系人头像模板"] == "template"
+    assert anchor_modes["会话存在"] == "presence"
+    assert anchor_configs["会话存在"].presence_threshold == pytest.approx(0.01)
+    assert anchor_modes["发送按钮颜色"] == "color"
+
+    workflow_paths = [
+        REPO_ROOT / "workspace/workflows/wf_wechat_basic_actions/draft.yaml",
+        REPO_ROOT / "workspace/workflows/wf_wechat_ocr_wait/draft.yaml",
+        REPO_ROOT / "workspace/workflows/wf_wechat_template_match/draft.yaml",
+        REPO_ROOT / "workspace/workflows/wf_wechat_color_presence/draft.yaml",
+        REPO_ROOT / "workspace/workflows/wf_wechat_screenshot_check/draft.yaml",
+        REPO_ROOT / "workspace/templates/wf_wechat_send_test_standard/1.0.1/workflow.yaml",
+    ]
+    svc = WorkflowService(draft_generator=None, workspace_dir=REPO_ROOT / "workspace")
+    for path in workflow_paths:
+        workflow = load_yaml_contract(path, WorkflowContract)
+        assert workflow.metadata.instrument_profile == "weixin_01"
+        assert svc.standardize_check(workflow).ok, workflow.metadata.workflow_id

@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -38,25 +39,26 @@ class MonitoringPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(16)
-        root.addWidget(page_header("运行监控", "当前步骤、真实截图/识别、日志流与异常恢复"))
+        root.addWidget(
+            page_header(
+                "运行监控",
+                "查看步骤时间线、识别结果、截图落盘位置、日志流与审计摘要。",
+            )
+        )
 
-        controls = self._build_controls()
-        root.addWidget(controls)
+        root.addWidget(self._build_controls())
 
-        body = QHBoxLayout()
-        body.setSpacing(16)
-
-        timeline_card = Card()
-        timeline_card.add(section_title("步骤时间线"))
-        timeline_card.add(hint_label("○ 待执行 · ◐ 执行中 · ◑ 已观测 · ● 成功 · ▲ 阻断 · ✕ 失败"))
-        self._timeline = Timeline()
-        timeline_card.add(self._timeline)
-
-        body.addWidget(timeline_card, 2)
-        body.addWidget(self._build_run_tabs(), 5)
-        root.addLayout(body, 1)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self._build_timeline_panel())
+        splitter.addWidget(self._build_run_tabs())
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 13)
+        splitter.setStretchFactor(1, 25)
+        splitter.setSizes([520, 980])
+        root.addWidget(splitter, 1)
 
         self._wire_vm()
+        self._set_running_controls(False)
         self._reload()
 
     def on_show(self) -> None:
@@ -67,16 +69,36 @@ class MonitoringPage(QWidget):
         row = QHBoxLayout()
         row.setSpacing(10)
         self._workflow = QComboBox()
-        self._start = QPushButton("发起运行")
+        self._start = QPushButton("开始")
         self._start.clicked.connect(self._on_start)
+        self._stop = QPushButton("停止")
+        self._stop.setObjectName("Ghost")
+        self._stop.clicked.connect(self._on_stop)
+        self._cancel = QPushButton("取消")
+        self._cancel.setObjectName("Ghost")
+        self._cancel.clicked.connect(self._on_cancel)
         self._state = StatusPill("idle")
         label = QLabel("工作流")
         label.setObjectName("Body")
         row.addWidget(label)
         row.addWidget(self._workflow, 1)
         row.addWidget(self._start)
+        row.addWidget(self._stop)
+        row.addWidget(self._cancel)
         row.addWidget(self._state)
         card.body().addLayout(row)
+        return card
+
+    def _build_timeline_panel(self) -> QWidget:
+        card = Card()
+        card.add(section_title("步骤时间线"))
+        card.add(
+            hint_label(
+                "左侧时间线已放宽，步骤详情会自动换行，方便查看 target、value 和状态时间。"
+            )
+        )
+        self._timeline = Timeline()
+        card.add(self._timeline)
         return card
 
     def _build_run_tabs(self) -> QWidget:
@@ -84,7 +106,7 @@ class MonitoringPage(QWidget):
         tabs.addTab(self._build_center(), "观测与审计")
 
         log_card = Card()
-        log_card.add(section_title("运行日志流"))
+        log_card.add(section_title("运行日志"))
         self._log = LogView()
         log_card.add(self._log)
         tabs.addTab(log_card, "日志")
@@ -94,37 +116,33 @@ class MonitoringPage(QWidget):
         center = Card(flush=True)
 
         obs_section = CollapsibleSection("观测结果", accent=t.PRIMARY)
-        obs_section.add(hint_label(
-            "运行时根据锚点配置的识别方式进行观测：OCR 读取文字、Template 比对模板图、"
-            "Color 检测颜色状态、Presence 判断元素是否存在。置信度 < 60% 时会触发重试。"
-        ))
-        self._reading = rich_text(QLabel("尚无识别结果。"))
+        obs_section.add(
+            hint_label(
+                "运行时会按锚点的 vision_mode 触发 OCR、template、color 或 presence，"
+                "并把结构化读数直接展示在这里。"
+            )
+        )
+        self._reading = rich_text(QLabel("暂无识别结果。"))
         obs_section.add(self._reading)
 
-        # Recognition explanation guide
         guide = QLabel(
             f"<div style='color:{t.INK_MUTED};font-size:12px;margin-top:4px;'>"
-            "<b>🔍 识别结果解读：</b>"
-            "<ul style='margin:4px 0;'>"
-            "<li><b>OCR 文本识别</b> — 从 ROI 截图读取文字。text=识别到的文本，confidence=PaddleOCR 置信度 (0-1)。"
-            "低置信度可能因截图模糊或文字被遮挡。</li>"
-            "<li><b>Template 模板匹配</b> — 与校准基准图比对。text=matched/no_match，confidence=相似度分数。"
-            "分数 ≥ 0.8 为匹配，低于阈值触发异常。</li>"
-            "<li><b>Color 颜色识别</b> — 采样 ROI 主色。text=matched/no_match 或色值(#RRGGBB)，"
-            "confidence=与参考色的近似度。distance 为 HSV 距离，≤ 容差即为匹配。</li>"
-            "<li><b>Presence 存在性检测</b> — 判断控件是否出现。text=present/missing，"
-            "confidence=前景像素占比。</li>"
+            "<b>识别结果说明</b>"
+            "<ul style='margin:6px 0 0 16px;'>"
+            "<li><b>OCR</b>: 读出 ROI 内文字，text 为识别内容，confidence 为置信度。</li>"
+            "<li><b>Template</b>: 结果常见为 matched / no_match，confidence 为匹配分数。</li>"
+            "<li><b>Color</b>: 结果常见为 matched / no_match 或具体色值，detail 会带参考色距离。</li>"
+            "<li><b>Presence</b>: 结果常见为 present / missing，confidence 反映前景占比判断。</li>"
             "</ul></div>"
         )
         guide.setWordWrap(True)
-        guide.setTextFormat(Qt.TextFormat.RichText) if hasattr(Qt, "TextFormat") else None
+        guide.setTextFormat(Qt.TextFormat.RichText)
         obs_section.add(guide)
 
-        self._shot = QLabel("最新截图会在真实 provider 执行后写入 run artifacts。")
-        self._shot.setWordWrap(True)
+        self._shot = rich_text(QLabel("最新截图路径会显示在这里。"))
         self._shot.setStyleSheet(
             f"background:{t.CANVAS}; border:1px dashed {t.HAIRLINE_STRONG};"
-            f" color:{t.INK_SUBTLE}; padding:28px; border-radius:8px;"
+            f" color:{t.INK_SUBTLE}; padding:20px; border-radius:8px;"
         )
         obs_section.add(self._shot)
         center.add(obs_section)
@@ -144,19 +162,33 @@ class MonitoringPage(QWidget):
         self._vm.run_state.connect(self._state.set_status)
         self._vm.reading.connect(self._reading.setText)
         self._vm.audit.connect(self._audit.setText)
+        self._vm.shot.connect(self._shot.setText)
+        self._vm.run_state.connect(self._on_run_state_changed)
+
+    def _set_running_controls(self, running: bool) -> None:
+        self._start.setEnabled(not running)
+        self._workflow.setEnabled(not running)
+        self._stop.setEnabled(running)
+        self._cancel.setEnabled(running)
+
+    def _on_run_state_changed(self, state: str) -> None:
+        running = state in {"running", "run.ready", "run.step.started", "stopping", "cancelling"}
+        if state in {"run.completed", "run.failed"}:
+            running = False
+        self._set_running_controls(running)
 
     def _clear_run_display(self) -> None:
         self._log.clear_log()
-        self._reading.setText("尚无识别结果。")
+        self._reading.setText("暂无识别结果。")
         self._audit.setText("暂无审计摘要。")
-        self._shot.setText("最新截图会在真实 provider 执行后写入 run artifacts。")
+        self._shot.setText("最新截图路径会显示在这里。")
 
     def _reload(self) -> None:
         current = self._workflow.currentText()
         self._workflow.clear()
         self._workflows = self._facade.list_workflows()
-        for wf in self._workflows:
-            self._workflow.addItem(wf.metadata.workflow_id)
+        for workflow in self._workflows:
+            self._workflow.addItem(workflow.metadata.workflow_id)
         if current:
             idx = self._workflow.findText(current)
             if idx >= 0:
@@ -165,7 +197,14 @@ class MonitoringPage(QWidget):
     def _on_start(self) -> None:
         idx = self._workflow.currentIndex()
         if idx < 0 or idx >= len(self._workflows):
-            self._log.append_line("没有可运行的工作流，请先在工作流设计页生成。")
+            self._log.append_line("没有可运行的工作流，请先到工作流设计页生成或保存。")
             return
         self._state.set_status("running")
+        self._set_running_controls(True)
         self._vm.start(self._workflows[idx])
+
+    def _on_stop(self) -> None:
+        self._vm.stop(cancel=False)
+
+    def _on_cancel(self) -> None:
+        self._vm.stop(cancel=True)

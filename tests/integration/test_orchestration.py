@@ -87,9 +87,55 @@ def test_low_confidence_triggers_recovery(tmp_path: Path) -> None:
     assert RuntimeEventName.RUN_RECOVERED in events
 
 
+def test_wait_until_missing_condition_fails_without_crashing(tmp_path: Path) -> None:
+    facade = _facade(tmp_path)
+    workflow = facade.register_workflow(_workflow(
+        "wf_missing_condition",
+        [{"id": "wait_for_status", "action": "wait_until", "target": "roi_voltage_value"}],
+    ))
+
+    session = facade.start_run(workflow=workflow)
+
+    assert session.status == RunSessionStatus.FAILED
+    assert session.steps[0].status == RunStepStatus.FAILED
+
+
+def test_observation_exception_fails_run_without_thread_crash(tmp_path: Path) -> None:
+    facade = _facade(tmp_path)
+    events: list[tuple[RuntimeEventName, dict]] = []
+    facade.subscribe(lambda e: events.append((e.name, e.payload)))
+
+    workflow = facade.register_workflow(_workflow(
+        "wf_observation_boom",
+        [
+            {
+                "id": "wait_for_status",
+                "action": "wait_until",
+                "target": "roi_voltage_value",
+                "condition": {
+                    "source": "voltage_panel",
+                    "operator": "not_empty",
+                    "timeout_seconds": 1,
+                    "poll_interval_seconds": 0.1,
+                },
+            }
+        ],
+    ))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("OCR init failed")
+
+    facade._orchestrator._observer._vision.read_roi_text = boom
+    session = facade.start_run(workflow=workflow)
+
+    assert session.status == RunSessionStatus.FAILED
+    assert session.steps[0].status == RunStepStatus.FAILED
+    failed_payloads = [payload for name, payload in events if name == RuntimeEventName.RUN_FAILED]
+    assert any("OCR init failed" in str(payload.get("detail")) for payload in failed_payloads)
+
+
 def test_safety_violation_blocks_run(tmp_path: Path) -> None:
     facade = _facade(tmp_path)
-    # A workflow that types a voltage above the instrument's 5.0V limit.
     workflow = facade.register_workflow(_workflow(
         "wf_unsafe",
         [{"id": "input_target_voltage", "action": "type", "target": "anchor_voltage_input", "value": "9.99"}],

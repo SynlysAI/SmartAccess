@@ -26,6 +26,7 @@ class RunSessionService:
         self._event_bus = event_bus
         self._sessions: dict[str, RunSession] = {}
         self._traces: dict[str, list[RunTraceRecord]] = {}
+        self._stop_requests: dict[str, str] = {}
         self._order: list[str] = []
 
     def create_session(
@@ -66,11 +67,28 @@ class RunSessionService:
             record.session_id, _TRACE_FILE, record.model_dump_json(exclude_none=True)
         )
 
+    def save_screenshot(self, session_id: str, name: str, data: bytes) -> str:
+        return self._artifacts.save_screenshot(session_id, name, data)
+
     def get_session(self, session_id: str) -> RunSession | None:
         return self._sessions.get(session_id)
 
     def get_trace(self, session_id: str) -> list[RunTraceRecord]:
         return list(self._traces.get(session_id, []))
+
+    def request_stop(self, session_id: str, *, reason: str = "stopped by user") -> bool:
+        session = self.get_session(session_id)
+        if session is None:
+            return False
+        self._stop_requests[session_id] = reason
+        self.emit_event(session, RuntimeEventName.RUN_FAILED, detail=reason, requested_by="user")
+        return True
+
+    def stop_requested(self, session_id: str) -> bool:
+        return session_id in self._stop_requests
+
+    def stop_reason(self, session_id: str) -> str:
+        return self._stop_requests.get(session_id, "stopped by user")
 
     def list_sessions(self) -> list[RunSession]:
         return [self._sessions[sid] for sid in self._order]

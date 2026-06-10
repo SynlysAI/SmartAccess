@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from smartaccess.runtime.application.calibration_service import CalibrationService
@@ -117,6 +118,19 @@ class RuntimeFacade:
     def capture_window(self, hwnd: int) -> bytes | None:
         return self._calibration.capture_window(hwnd)
 
+    def generate_instrument_profile(
+        self,
+        prompt: str,
+        context: dict[str, Any] | None = None,
+    ) -> InstrumentProfileContract:
+        return self._calibration.draft_profile_from_prompt(prompt, context or {})
+
+    def instrument_profile_reasoning(self) -> str:
+        return self._calibration.draft_reasoning()
+
+    def instrument_profile_generator_label(self) -> str:
+        return self._calibration.draft_generator_label()
+
     def create_calibration(self, **kwargs: Any) -> InstrumentProfileContract:
         profile = self._calibration.create_profile(**kwargs)
         self._calibration.activate(profile.device_id)
@@ -133,6 +147,9 @@ class RuntimeFacade:
 
     def check_instrument_references(self, device_id: str) -> InstrumentReferenceInfo:
         return self._calibration.check_instrument_references(device_id)
+
+    def workspace_dir(self) -> Path:
+        return Path(self._calibration._workspace_dir)
 
     # --- workflow ----------------------------------------------------- #
     def generate_workflow(self, prompt: str, context: dict[str, Any] | None = None) -> WorkflowContract:
@@ -258,6 +275,9 @@ class RuntimeFacade:
         else:
             self._orchestrator.run(workflow=wf, profile=profile, session=session)
         return session
+
+    def request_run_stop(self, session_id: str, *, reason: str = "stopped by user") -> bool:
+        return self._run_sessions.request_stop(session_id, reason=reason)
 
     def confirm_incident(self, incident_id: str, *, action: RecoveryAction | None = None):
         return self._incidents.confirm(incident_id, action=action)

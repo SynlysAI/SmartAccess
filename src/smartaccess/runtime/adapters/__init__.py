@@ -4,6 +4,7 @@ from .ai_stub import TemplatePromptWorkflowGenerator
 from .artifact_store import FileArtifactStore, InMemoryArtifactStore
 from .automation_stub import StubAutomationProvider
 from .deepseek_generator import DeepSeekWorkflowGenerator
+from .deepseek_instrument_generator import DeepSeekInstrumentProfileGenerator
 from .inmemory import EchoInstructionGenerator, StubProcessExecutorClient
 from .platform_stub import StubPlatformClient
 from .process_signal import UdpProcessExecutorClient
@@ -13,6 +14,7 @@ from .vision_stub import StubVisionProvider
 from .win32_automation import Win32AutomationProvider
 
 __all__ = [
+    "DeepSeekInstrumentProfileGenerator",
     "DeepSeekWorkflowGenerator",
     "EchoInstructionGenerator",
     "FileArtifactStore",

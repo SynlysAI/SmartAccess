@@ -67,3 +67,6 @@ class Executor:
         if not outcome.ok:
             raise ExecutorError(outcome.detail or "动作执行失败")
         return outcome
+
+    def screenshot(self, label: str) -> bytes:
+        return self._automation.screenshot(label)

@@ -35,6 +35,14 @@ description: Generate or refine SmartAccess experiment workflows from user inten
 5. 为 `wait_until`、`screenshot_check` 和关键动作补充 source/mode/operator/expected/timeout。
 6. 标出高风险步骤和需要人工确认的节点。
 
+## 提示词与界面文案规则
+
+- 面向用户的提示、按钮和说明必须使用产品化表达，避免出现开发者口吻、调试口吻或内部实现细节。
+- 生成工作流时，输出必须严格匹配 SmartAccess `WorkflowContract`；步骤使用 `target` 和 `value`，不要使用未定义字段替代。
+- Provider 名称只在配置、状态或错误定位场景出现；普通流程说明使用“AI 助手”“生成工作流草稿”等稳定表达。
+- 示例应贴近真实 SmartAccess 操作：选择设备、引用锚点、编排动作、配置观测条件、保存输出项。
+- 涉及等待、轮询和截图校验时，时间单位统一为秒，条件字段优先使用 `source/mode/operator/expected/timeout_seconds/poll_interval_seconds`。
+
 ## 失败处理
 
 - 如果步骤无法映射到原语，明确指出缺口而不是臆造动作。

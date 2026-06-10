@@ -68,9 +68,19 @@ def normalize_condition(condition: JsonMap | None) -> JsonMap | None:
     Reads legacy ``timeout`` (milliseconds) and converts to ``timeout_seconds``.
     Returns a new dict; never mutates the input.
     """
-    if not condition:
+    if not condition or not isinstance(condition, dict):
         return None
     normalized = dict(condition)
+    if "roi" in normalized and not normalized.get("source"):
+        normalized["source"] = normalized.get("roi")
+    legacy_operator_keys = ("equals", "contains", "not_empty", "exists")
+    if not normalized.get("operator"):
+        for key in legacy_operator_keys:
+            if key in normalized:
+                normalized["operator"] = key
+                if key not in {"exists", "not_empty"} and "expected" not in normalized:
+                    normalized["expected"] = normalized.get(key)
+                break
     # Backward-compat: old "timeout" (often in ms) → timeout_seconds
     if "timeout" in normalized and "timeout_seconds" not in normalized:
         legacy = normalized.pop("timeout")

@@ -268,10 +268,19 @@ class WorkflowJourneyGraph(QWidget):
         }.get(status, status)
 
     @staticmethod
-    def _font(size: int, weight: int) -> QFont:
+    def _font(size: int, weight: int | QFont.Weight) -> QFont:
         font = QFont("Segoe UI")
-        font.setPointSize(size)
-        font.setWeight(weight)
+        font.setPointSize(max(1, int(size)))
+        if isinstance(weight, QFont.Weight):
+            font.setWeight(weight)
+        elif weight >= 700:
+            font.setWeight(QFont.Weight.Bold)
+        elif weight >= 600:
+            font.setWeight(QFont.Weight.DemiBold)
+        elif weight >= 500:
+            font.setWeight(QFont.Weight.Medium)
+        else:
+            font.setWeight(QFont.Weight.Normal)
         return font
 
     @staticmethod
