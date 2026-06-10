@@ -11,12 +11,14 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QComboBox,
+    QDockWidget,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMainWindow,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
@@ -96,13 +98,58 @@ class WorkflowPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(16)
-        root.addWidget(page_header("工作流设计", "AI 生成、推理过程、锚点绑定、步骤编排与标准化"))
+        header_row = QHBoxLayout()
+        header_row.addWidget(
+            page_header("工作流设计", "通过设备信息生成、审阅并标准化可执行工作流。"),
+            1,
+        )
+        self._draft_panel_toggle = QPushButton("AI 助手")
+        self._draft_panel_toggle.setObjectName("Ghost")
+        self._draft_panel_toggle.setCheckable(True)
+        self._draft_panel_toggle.setChecked(True)
+        self._draft_panel_toggle.setToolTip("显示或隐藏左侧 AI 助手面板。")
+        header_row.addWidget(self._draft_panel_toggle)
+        self._review_panel_toggle = QPushButton("审阅面板")
+        self._review_panel_toggle.setObjectName("Ghost")
+        self._review_panel_toggle.setCheckable(True)
+        self._review_panel_toggle.setChecked(True)
+        self._review_panel_toggle.setToolTip("显示或隐藏右侧审阅面板。")
+        header_row.addWidget(self._review_panel_toggle)
+        root.addLayout(header_row)
 
-        body = QHBoxLayout()
-        body.setSpacing(16)
-        body.addWidget(self._build_left(), 2)
-        body.addWidget(self._build_right(), 3)
-        root.addLayout(body, 1)
+        self._inner = QMainWindow()
+        self._inner.setDockOptions(QMainWindow.DockOption.AnimatedDocks)
+        self._inner.setCentralWidget(self._build_right())
+
+        self._draft_dock = QDockWidget("AI 助手", self._inner)
+        self._draft_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self._draft_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self._draft_dock.setWidget(self._build_left())
+        self._inner.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._draft_dock)
+
+        self._review_dock = QDockWidget("审阅面板", self._inner)
+        self._review_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self._review_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self._review_dock.setWidget(self._build_review_panel())
+        self._inner.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._review_dock)
+        root.addWidget(self._inner, 1)
+
+        self._draft_panel_toggle.toggled.connect(self._draft_dock.setVisible)
+        self._draft_dock.visibilityChanged.connect(self._draft_panel_toggle.setChecked)
+        self._review_panel_toggle.toggled.connect(self._review_dock.setVisible)
+        self._review_dock.visibilityChanged.connect(self._review_panel_toggle.setChecked)
 
         self._reload()
         self._set_prompt_text(_DEFAULT_PROMPT)
@@ -131,12 +178,12 @@ class WorkflowPage(QWidget):
     # ------------------------------------------------------------------ #
     def _build_left(self) -> QWidget:
         left = Card()
-        left.add(section_title("AI 生成工作流"))
+        left.setMinimumWidth(420)
+        left.add(section_title("AI 助手"))
         left.add(self._build_left_mode_toggle())
 
         self._left_stack = QStackedWidget()
         self._left_stack.addWidget(self._build_draft_mode())
-        self._left_stack.addWidget(self._build_review_mode())
         left.body().addWidget(self._left_stack, 1)
         self._set_left_mode(_LEFT_MODE_DRAFT)
         return left
@@ -204,26 +251,31 @@ class WorkflowPage(QWidget):
         meta_row.addWidget(device_box, 1)
         layout.addWidget(meta)
 
-        self._prompt_label = QLabel("Prompt / 目标描述")
+        self._prompt_label = QLabel("自动化目标")
         self._prompt_label.setObjectName("Body")
         layout.addWidget(self._prompt_label)
         self._prompt = QPlainTextEdit()
-        self._prompt.setPlaceholderText("用自然语言描述实验步骤，也可以点击下方上下文 token 进行引用。")
+        self._prompt.setPlaceholderText("描述要完成的实验或操作流程，可插入下方设备信息引用以明确目标区域。")
         self._prompt.setMaximumHeight(150)
         self._prompt.textChanged.connect(self._on_prompt_changed)
         layout.addWidget(self._prompt)
 
-        layout.addWidget(section_title("已引用上下文"))
-        layout.addWidget(hint_label("Prompt 中识别出的引用 token 会显示在这里，可直接移除。"))
+        layout.addWidget(section_title("已引用设备信息"))
+        layout.addWidget(hint_label("自动化目标中使用的设备信息会显示在这里，可直接移除。"))
         self._reference_bar = QTextBrowser()
         self._reference_bar.setOpenLinks(False)
         self._reference_bar.setOpenExternalLinks(False)
         self._reference_bar.anchorClicked.connect(self._handle_reference_bar_link)
         self._reference_bar.setMaximumHeight(96)
         layout.addWidget(self._reference_bar)
+        self._actual_reference_bar = QTextBrowser()
+        self._actual_reference_bar.setOpenLinks(False)
+        self._actual_reference_bar.setOpenExternalLinks(False)
+        self._actual_reference_bar.setMaximumHeight(92)
+        layout.addWidget(self._actual_reference_bar)
 
-        layout.addWidget(section_title("设备上下文引用"))
-        layout.addWidget(hint_label("按类别筛选设备上下文。点击 token 会插入到 Prompt 光标处。"))
+        layout.addWidget(section_title("设备信息引用"))
+        layout.addWidget(hint_label("按类别筛选设备信息。点击引用项会插入到自动化目标中。"))
         layout.addWidget(self._build_reference_filters())
 
         self._reference_panel = QTextBrowser()
@@ -265,8 +317,8 @@ class WorkflowPage(QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(10)
 
-        self._reasoning_section = CollapsibleSection("AI 分析与推理", expanded=True)
-        self._reasoning_section.add(hint_label("展示模型/生成器如何读取上下文并编排步骤。"))
+        self._reasoning_section = CollapsibleSection("生成说明", expanded=True)
+        self._reasoning_section.add(hint_label("展示 AI 助手使用了哪些设备信息，以及生成了哪些步骤。"))
         self._reasoning = QTextBrowser()
         self._reasoning.setObjectName("LogView")
         self._reasoning_section.add(self._reasoning)
@@ -281,6 +333,13 @@ class WorkflowPage(QWidget):
         layout.addWidget(self._workflows_section, 1)
         return page
 
+    def _build_review_panel(self) -> QWidget:
+        review = Card()
+        review.setMinimumWidth(360)
+        review.add(section_title("生成记录"))
+        review.add(self._build_review_mode())
+        return review
+
     def _build_right(self) -> QWidget:
         right = Card(flush=True)
 
@@ -291,22 +350,23 @@ class WorkflowPage(QWidget):
         steps_layout.setContentsMargins(12, 12, 12, 12)
         steps_layout.setSpacing(8)
         steps_layout.addWidget(
-            hint_label("AI 生成的步骤可在此手动修改、调整顺序或删除。确认无误后保存工作流。")
+            hint_label("生成的步骤可在此手动修改、调整顺序或删除。确认无误后保存工作流。")
         )
         self._steps_table = QTableWidget(0, 7)
         self._steps_table.setHorizontalHeaderLabels(["步骤 ID", "动作", "目标", "值", "条件", "上移/下移", ""])
         self._steps_table.verticalHeader().setDefaultSectionSize(52)
         steps_header = self._steps_table.horizontalHeader()
-        steps_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        steps_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        steps_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        steps_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        steps_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        steps_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        steps_header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        self._steps_table.setColumnWidth(4, 64)
-        self._steps_table.setColumnWidth(5, 86)
-        self._steps_table.setColumnWidth(6, 44)
+        steps_header.setStretchLastSection(False)
+        steps_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._steps_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._steps_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._steps_table.setColumnWidth(0, 190)
+        self._steps_table.setColumnWidth(1, 170)
+        self._steps_table.setColumnWidth(2, 260)
+        self._steps_table.setColumnWidth(3, 280)
+        self._steps_table.setColumnWidth(4, 240)
+        self._steps_table.setColumnWidth(5, 92)
+        self._steps_table.setColumnWidth(6, 48)
         self._steps_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._steps_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         steps_layout.addWidget(self._steps_table, 1)
@@ -420,7 +480,7 @@ class WorkflowPage(QWidget):
             if idx >= 0:
                 self._device.setCurrentIndex(idx)
         self._loading = False
-        self._gen_label.setText(f"当前生成器：{self._vm.generator_label()}")
+        self._gen_label.setText(f"当前 AI 助手：{self._vm.generator_label()}")
         selected_id = self._current.metadata.workflow_id if self._current else ""
         self._workflows.clear()
         selected_row = -1
@@ -580,15 +640,16 @@ class WorkflowPage(QWidget):
         self._active_reference_tokens = [token for token in tokens if token in refs]
         self._invalid_reference_tokens = [token for token in tokens if token not in refs]
         self._refresh_reference_bar()
+        self._refresh_actual_reference_bar()
         self._refresh_reference_panel()
         self._refresh_reasoning_view()
 
     def _set_left_mode(self, mode: int) -> None:
-        self._left_stack.setCurrentIndex(mode)
+        self._left_stack.setCurrentIndex(_LEFT_MODE_DRAFT)
         draft_blocker = QSignalBlocker(self._draft_mode_btn)
         review_blocker = QSignalBlocker(self._review_mode_btn)
-        self._draft_mode_btn.setChecked(mode == _LEFT_MODE_DRAFT)
-        self._review_mode_btn.setChecked(mode == _LEFT_MODE_REVIEW)
+        self._draft_mode_btn.setChecked(True)
+        self._review_mode_btn.setChecked(False)
         del draft_blocker
         del review_blocker
 
@@ -642,7 +703,7 @@ class WorkflowPage(QWidget):
     def _refresh_reference_bar(self) -> None:
         if not self._active_reference_tokens and not self._invalid_reference_tokens:
             self._reference_bar.setHtml(
-                f"<span style='color:{t.INK_SUBTLE};'>尚未引用设备上下文。点击下方 token 可快速插入。</span>"
+                f"<span style='color:{t.INK_SUBTLE};'>尚未引用设备信息。点击下方引用项可快速插入。</span>"
             )
             return
         refs = self._context_snapshot.reference_map()
@@ -674,6 +735,46 @@ class WorkflowPage(QWidget):
             f"<span style='color:{title_fg};'> · {html.escape(title)}</span>"
             f"{remove_html}</span>"
         )
+
+    def _refresh_actual_reference_bar(self) -> None:
+        refs = self._context_snapshot.reference_map()
+        rows = self._record_reference_rows()
+        if not rows:
+            self._actual_reference_bar.setHtml(
+                f"<span style='color:{t.INK_SUBTLE};'>暂无本次生成实际带入的引用记录。</span>"
+            )
+            return
+        chips: list[str] = []
+        for row in rows:
+            token = row.get("token", "")
+            title = row.get("ref_id", token)
+            if token in refs:
+                title = refs[token].title
+            chips.append(
+                self._render_reference_chip(token, title, invalid=False, removable=False)
+            )
+        self._actual_reference_bar.setHtml(
+            f"<div style='color:{t.INK_SUBTLE};margin-bottom:4px;'>本次生成实际带入：</div>"
+            + "".join(chips)
+        )
+
+    def _record_reference_rows(self) -> list[dict[str, str]]:
+        if self._current is None:
+            return []
+        record = self._vm.draft_record(self._current.metadata.workflow_id)
+        if record is None:
+            return []
+        rows: list[dict[str, str]] = []
+        for row in record.context.get("prompt_references") or []:
+            if isinstance(row, dict):
+                rows.append(
+                    {
+                        "token": str(row.get("token") or ""),
+                        "category": str(row.get("category") or ""),
+                        "ref_id": str(row.get("ref_id") or ""),
+                    }
+                )
+        return rows
 
     def _handle_reference_panel_link(self, url) -> None:
         text = url.toString()
@@ -796,13 +897,7 @@ class WorkflowPage(QWidget):
         self._steps_table.setItem(row, 2, QTableWidgetItem(target))
         self._steps_table.setItem(row, 3, QTableWidgetItem(str(value)))
 
-        # Condition edit button
-        cond_btn = QPushButton("⚙")
-        cond_btn.setObjectName("Ghost")
-        cond_btn.setToolTip("编辑观测条件 (source/mode/operator/timeout_seconds)")
-        cond_btn.setFixedSize(40, 30)
-        cond_btn.clicked.connect(lambda _checked=False, r=row: self._edit_condition(r))
-        self._steps_table.setCellWidget(row, 4, cond_btn)
+        self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
 
         move_widget = QWidget()
         move_layout = QHBoxLayout(move_widget)
@@ -837,13 +932,7 @@ class WorkflowPage(QWidget):
         self._steps_table.setItem(row, 2, QTableWidgetItem(target))
         self._steps_table.setItem(row, 3, QTableWidgetItem(str(value)))
 
-        # Condition edit button
-        cond_btn = QPushButton("⚙")
-        cond_btn.setObjectName("Ghost")
-        cond_btn.setToolTip("编辑观测条件 (source/mode/operator/timeout_seconds)")
-        cond_btn.setFixedSize(40, 30)
-        cond_btn.clicked.connect(lambda _checked=False, r=row: self._edit_condition(r))
-        self._steps_table.setCellWidget(row, 4, cond_btn)
+        self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
 
         move_widget = QWidget()
         move_layout = QHBoxLayout(move_widget)
@@ -863,6 +952,11 @@ class WorkflowPage(QWidget):
 
     def _delete_step_row(self, row: int) -> None:
         self._steps_table.removeRow(row)
+        self._step_conditions = {
+            (idx - 1 if idx > row else idx): condition
+            for idx, condition in self._step_conditions.items()
+            if idx != row
+        }
         self._rebind_step_buttons()
         self._renumber_steps()
 
@@ -904,7 +998,35 @@ class WorkflowPage(QWidget):
         current = self._step_conditions.get(row)
         dlg = ConditionEditorDialog(current, available_sources=sources, parent=self)
         if dlg.exec() == ConditionEditorDialog.DialogCode.Accepted:
-            self._step_conditions[row] = dlg.condition_dict()
+            condition = dlg.condition_dict()
+            self._step_conditions[row] = condition
+            self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
+
+    def _make_condition_button(self, row: int) -> QPushButton:
+        summary = self._condition_summary(self._step_conditions.get(row))
+        button = QPushButton(summary)
+        button.setObjectName("Ghost")
+        button.setToolTip("编辑观测条件 (source/mode/operator/timeout_seconds)")
+        button.setMinimumHeight(30)
+        button.setMaximumWidth(210)
+        button.clicked.connect(lambda _checked=False, r=row: self._edit_condition(r))
+        return button
+
+    @staticmethod
+    def _condition_summary(condition: dict | None) -> str:
+        if not condition:
+            return "未配置"
+        source = str(condition.get("source") or condition.get("roi") or "-")
+        mode = str(condition.get("mode") or "ocr")
+        operator = str(condition.get("operator") or "exists")
+        expected = str(condition.get("expected") or "")
+        timeout = condition.get("timeout_seconds") or condition.get("timeout") or ""
+        main = f"{source} · {mode} · {operator}"
+        if expected:
+            main = f"{main} {expected}"
+        if timeout:
+            main = f"{main} · {timeout}s"
+        return main
 
     def _collect_step_row_data(self, row: int) -> tuple[str, str, str, str]:
         step_id = self._table_text(self._steps_table, row, 0)
@@ -927,13 +1049,7 @@ class WorkflowPage(QWidget):
 
     def _rebind_step_buttons(self) -> None:
         for row in range(self._steps_table.rowCount()):
-            # Condition button
-            cond_btn = QPushButton("⚙")
-            cond_btn.setObjectName("Ghost")
-            cond_btn.setToolTip("编辑观测条件 (source/mode/operator/timeout_seconds)")
-            cond_btn.setFixedSize(40, 30)
-            cond_btn.clicked.connect(lambda _checked=False, r=row: self._edit_condition(r))
-            self._steps_table.setCellWidget(row, 4, cond_btn)
+            self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
 
             move_widget = QWidget()
             move_layout = QHBoxLayout(move_widget)

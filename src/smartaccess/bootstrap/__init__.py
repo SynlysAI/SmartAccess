@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from smartaccess.runtime.adapters import (
+    DeepSeekInstrumentProfileGenerator,
     DeepSeekWorkflowGenerator,
     FileArtifactStore,
     LocalVisionProvider,
@@ -116,11 +117,16 @@ def build_runtime_facade(
     platform = _build_platform(settings, mode=platform_provider)
     artifact_store = FileArtifactStore(workspace_dir)
     draft_generator = _build_workflow_generator(settings)
+    instrument_draft_generator = _build_instrument_profile_generator(settings)
 
     # AI runtime knowledge store — persistent learning across generations
     ai_store = AIRuntimeStore(workspace_dir)
 
-    calibration = CalibrationService(automation=automation, workspace_dir=workspace_dir)
+    calibration = CalibrationService(
+        automation=automation,
+        workspace_dir=workspace_dir,
+        draft_generator=instrument_draft_generator,
+    )
     workflow = WorkflowService(
         draft_generator=draft_generator, workspace_dir=workspace_dir, ai_store=ai_store
     )
@@ -208,6 +214,17 @@ def _build_workflow_generator(settings: AppSettings):
             timeout_seconds=settings.deepseek_timeout_seconds,
         )
     return TemplatePromptWorkflowGenerator()
+
+
+def _build_instrument_profile_generator(settings: AppSettings):
+    if settings.workflow_generator_provider == "deepseek" and settings.deepseek_api_key:
+        return DeepSeekInstrumentProfileGenerator(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url,
+            model=settings.deepseek_model,
+            timeout_seconds=settings.deepseek_timeout_seconds,
+        )
+    return None
 
 
 def run_desktop(settings: AppSettings | None = None) -> int:

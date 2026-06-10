@@ -171,6 +171,12 @@ class WorkflowDraftGenerator(Protocol):
     def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> Any: ...
 
 
+class InstrumentProfileDraftGenerator(Protocol):
+    """Turns onboarding context into a reviewable instrument profile draft."""
+
+    def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> Any: ...
+
+
 class TemplateVersionMissing(Exception):
     """Raised by a platform client when a requested template version is absent."""
 

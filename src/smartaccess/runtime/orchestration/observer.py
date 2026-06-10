@@ -29,6 +29,11 @@ class Observer:
         self._vision = vision
         self._threshold = confidence_threshold
 
+    def configure_screenshot(self, data: bytes | None) -> None:
+        configure = getattr(self._vision, "configure_screenshot", None)
+        if callable(configure):
+            configure(data)
+
     def observe(self, rois: list[str]) -> Observation:
         readings = [self._vision.read_text(roi) for roi in rois]
         min_conf = min((r.confidence for r in readings), default=1.0)
@@ -58,7 +63,7 @@ class Observer:
             return self._vision.sample_color(anchor.id)
         if mode == "none":
             return OcrReading(roi=anchor.id, text="not_observed", confidence=1.0, detail="none")
-        return self._vision.read_roi_text(screenshot=None, anchor=anchor, roi=anchor.roi)
+        return self._vision.read_roi_text(screenshot=None, anchor=anchor, roi=None)
 
     def condition_passed(self, observation: Observation, condition: dict | None) -> bool:
         if not condition:

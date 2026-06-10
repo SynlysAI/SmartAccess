@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from smartaccess.runtime.application.ports import WindowInfo
@@ -24,6 +25,9 @@ class CalibrationViewModel(ViewModel):
         """Load a specific instrument profile by device_id."""
         return self._facade.get_instrument(device_id)
 
+    def workspace_dir(self) -> Path:
+        return self._facade.workspace_dir()
+
     def check_references(self, device_id: str):
         """Check how many workflows/templates reference this instrument."""
         return self._facade.check_instrument_references(device_id)
@@ -31,6 +35,15 @@ class CalibrationViewModel(ViewModel):
     def delete_instrument(self, device_id: str, *, force: bool = False):
         """Delete an instrument profile after pre-check."""
         return self._facade.delete_instrument(device_id, force=force)
+
+    def generate_profile_suggestion(self, prompt: str, context: dict[str, Any]) -> InstrumentProfileContract:
+        return self._facade.generate_instrument_profile(prompt, context)
+
+    def profile_suggestion_reasoning(self) -> str:
+        return self._facade.instrument_profile_reasoning()
+
+    def profile_generator_label(self) -> str:
+        return self._facade.instrument_profile_generator_label()
 
     def create_profile(
         self,

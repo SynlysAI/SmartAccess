@@ -267,18 +267,23 @@ class TemplatePage(QWidget):
         item = self._tree.currentItem()
         if item is None:
             return
-        force = False
-        if item.text(2) == "Published":
-            answer = QMessageBox.question(
-                self,
-                "确认删除",
-                "当前版本仍是 Published。确认删除会移除本地版本记录和 workflow.yaml。是否继续？",
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            force = True
+        template_id = item.text(0)
+        template_version = item.text(1)
+        status = item.text(2)
+        force = status == "Published"
+        warning = "\n当前版本仍是 Published，将会强制删除。" if force else ""
+        answer = QMessageBox.question(
+            self,
+            "确认删除",
+            f"将删除模板版本 {template_id}@{template_version}。{warning}\n"
+            "此操作会移除本地版本记录和 workflow.yaml，且不可撤销。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
         try:
-            self._vm.delete_version(item.text(0), item.text(1), force=force)
+            self._vm.delete_version(template_id, template_version, force=force)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "删除失败", str(exc))
             return

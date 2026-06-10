@@ -13,6 +13,7 @@ from typing import Any
 
 from smartaccess.runtime.application.ports import (
     AutomationProvider,
+    InstrumentProfileDraftGenerator,
     InstrumentReferenceInfo,
     WindowInfo,
 )
@@ -29,9 +30,17 @@ from smartaccess.shared.contracts.io import dump_yaml_contract, load_yaml_contra
 class CalibrationService:
     """Creates and stores calibrated instrument profiles."""
 
-    def __init__(self, *, automation: AutomationProvider, workspace_dir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        automation: AutomationProvider,
+        workspace_dir: Path,
+        draft_generator: InstrumentProfileDraftGenerator | None = None,
+    ) -> None:
         self._automation = automation
         self._workspace_dir = Path(workspace_dir)
+        self._draft_generator = draft_generator
+        self._last_reasoning = ""
         self._profiles: dict[str, InstrumentProfileContract] = {}
         self._status: dict[str, InstrumentStatus] = {}
         self.load_all()
@@ -83,6 +92,22 @@ class CalibrationService:
         self._status[device_id] = InstrumentStatus.CALIBRATED
         dump_yaml_contract(profile, self._profile_path(device_id))
         return profile
+
+    def draft_profile_from_prompt(self, prompt: str, context: dict[str, Any]) -> InstrumentProfileContract:
+        if self._draft_generator is None:
+            raise RuntimeError("未配置设备接入 AI 助手，无法生成校准建议")
+        profile = self._draft_generator.draft_from_prompt(prompt, context)
+        self._last_reasoning = getattr(self._draft_generator, "last_reasoning", "") or ""
+        return profile
+
+    def draft_reasoning(self) -> str:
+        return self._last_reasoning
+
+    def draft_generator_label(self) -> str:
+        if self._draft_generator is None:
+            return "未配置"
+        name = type(self._draft_generator).__name__
+        return "DeepSeek" if "DeepSeek" in name else "模板生成器"
 
     def activate(self, device_id: str) -> None:
         if device_id in self._profiles:
