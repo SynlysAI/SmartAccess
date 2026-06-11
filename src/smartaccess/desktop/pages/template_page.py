@@ -55,7 +55,7 @@ class TemplatePage(QWidget):
 
         filters = QHBoxLayout()
         self._search = QLineEdit()
-        self._search.setPlaceholderText("查找模板 ID、版本、仪器、来源或错误")
+        self._search.setPlaceholderText("查找模板 ID、版本、anchor_profile、来源或错误")
         self._search.textChanged.connect(self._reload_versions)
         self._status_filter = QComboBox()
         self._status_filter.addItems(["All", "Published", "Draft", "Superseded", "RolledBack", "Standardized"])
@@ -127,7 +127,7 @@ class TemplatePage(QWidget):
         )
         self._tree = QTreeWidget()
         self._tree.setColumnCount(6)
-        self._tree.setHeaderLabels(["模板 ID", "版本", "状态", "来源", "适用仪器", "错误"])
+        self._tree.setHeaderLabels(["模板 ID", "版本", "状态", "来源", "anchor_profile", "错误"])
         self._tree.setRootIsDecorated(False)
         self._tree.itemSelectionChanged.connect(self._update_timeline)
         right.add(self._tree)
@@ -179,7 +179,7 @@ class TemplatePage(QWidget):
                     record.identity.template_version,
                     record.status.value,
                     record.source,
-                    record.instrument_profile,
+                    record.anchor_profile,
                     record.error,
                 ],
             )
@@ -205,7 +205,7 @@ class TemplatePage(QWidget):
             published = record.published_at or "本地加载"
             lines.append(
                 f"{marker} `{record.identity.template_version}` · {record.status.value} · "
-                f"{published} · {record.source} · {record.instrument_profile or '-'}"
+                f"{published} · {record.source} · {record.anchor_profile or '-'}"
             )
             if record.error:
                 lines.append(f"  错误: {record.error}")
@@ -252,12 +252,16 @@ class TemplatePage(QWidget):
         item = self._tree.currentItem()
         if item is None:
             return
-        instrument = item.text(4).strip()
-        value, ok = QInputDialog.getText(self, "更新版本", "适用仪器", text=instrument)
+        anchor_profile = item.text(4).strip()
+        value, ok = QInputDialog.getText(
+            self, "更新版本", "anchor_profile", text=anchor_profile
+        )
         if not ok:
             return
         try:
-            self._vm.update_version(item.text(0), item.text(1), instrument_profile=value.strip())
+            self._vm.update_version(
+                item.text(0), item.text(1), anchor_profile=value.strip()
+            )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "更新失败", str(exc))
             return

@@ -1,0 +1,88 @@
+profile_id: potentiostat_win_01
+window_signature:
+  title_contains: "ElectroChem Console"
+  process_name: electrochem.exe
+  screenshot_size:
+    width: 1280
+    height: 900
+anchors:
+  - id: method_editor
+    label: Method editor
+    action_region:
+      pixel:
+        x: 88
+        y: 742
+        width: 160
+        height: 44
+      normalized:
+        x: 0.0688
+        y: 0.8244
+        width: 0.125
+        height: 0.0489
+    supported_actions:
+      - click
+    default_wait_seconds: 1.0
+    action_bindings:
+      - action: click
+        requires_confirmation: false
+    notes: Opens the method configuration panel.
+  - id: voltage_input
+    label: Voltage input
+    action_region:
+      pixel:
+        x: 402
+        y: 214
+        width: 180
+        height: 36
+      normalized:
+        x: 0.3141
+        y: 0.2378
+        width: 0.1406
+        height: 0.04
+    supported_actions:
+      - click
+      - type
+      - hotkey
+      - press_enter
+    default_wait_seconds: 0.5
+    action_bindings:
+      - action: click
+        requires_confirmation: false
+      - action: type
+        requires_confirmation: false
+      - action: hotkey
+        requires_confirmation: false
+      - action: press_enter
+        requires_confirmation: false
+  - id: start_run
+    label: Start run
+    action_region:
+      pixel:
+        x: 1010
+        y: 742
+        width: 132
+        height: 44
+      normalized:
+        x: 0.7891
+        y: 0.8244
+        width: 0.1031
+        height: 0.0489
+    observe_region:
+      pixel:
+        x: 930
+        y: 96
+        width: 230
+        height: 44
+      normalized:
+        x: 0.7266
+        y: 0.1067
+        width: 0.1797
+        height: 0.0489
+    supported_actions:
+      - click
+    default_wait_seconds: 2.0
+    action_bindings:
+      - action: click
+        requires_confirmation: true
+    vision_mode: ocr
+    notes: Observe region reads the status banner after starting.

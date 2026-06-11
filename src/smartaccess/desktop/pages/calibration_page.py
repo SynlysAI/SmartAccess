@@ -41,33 +41,11 @@ from smartaccess.desktop.widgets.roi_canvas import RoiCanvas
 
 _ALL_ACTIONS = [
     ("click", "单击", "在锚点中心点击一次。"),
-    ("double_click", "双击", "在锚点中心快速双击。"),
     ("type", "输入文字", "先聚焦目标，再输入 value。"),
-    ("press_enter", "按回车", "向当前焦点发送 Enter。"),
     ("hotkey", "快捷键", "发送组合键，如 ctrl+s、ctrl+a。"),
-    ("wait", "固定等待", "按秒等待固定时长。"),
-    ("wait_until", "等待条件", "轮询观测源直到条件满足。"),
-    ("screenshot_check", "截图校验", "截图一次并判断识别条件是否成立。"),
+    ("press_enter", "按回车", "向当前焦点发送 Enter。"),
 ]
-_DEFAULT_ACTIONS = {"click", "type", "press_enter", "hotkey", "wait_until"}
-_ANCHOR_TYPES = [
-    ("action_target", "动作目标：要被点击或输入的控件。"),
-    ("observation", "观测区：只读，不操作。"),
-    ("button", "按钮：强调可点击。"),
-    ("input", "输入框：强调可输入。"),
-    ("readout", "读数区：读取文本或数值。"),
-    ("status", "状态区：读取运行状态、提示信息。"),
-    ("region", "通用区域：用于截图比对或模板匹配。"),
-]
-_VISION_MODES = [
-    ("none", "不识别：仅用于动作，不做读值。"),
-    ("ocr", "OCR：读取区域内文字或数字。"),
-    ("template", "Template：与预存模板图比较。"),
-    ("presence", "Presence：判断控件/区域是否出现。"),
-    ("color", "Color：判断区域颜色状态。"),
-]
-_ANCHOR_TYPE_KEYS = [key for key, _ in _ANCHOR_TYPES]
-_VISION_MODE_KEYS = [key for key, _ in _VISION_MODES]
+_DEFAULT_ACTIONS = {"click", "type", "press_enter", "hotkey"}
 _DELETE_GLYPH = "×"
 _DEFAULT_VISION_CONFIG = {
     "template_threshold": 0.8,
@@ -83,7 +61,7 @@ class CalibrationPage(QWidget):
         self._windows_data: list[dict] = []
         self._selected_hwnd: int | None = None
         self._selected_title = ""
-        self._capability_confirmed = False
+        self._capability_confirmed = True
         self._latest_capture_bytes: bytes | None = None
 
         root = QVBoxLayout(self)
@@ -101,7 +79,7 @@ class CalibrationPage(QWidget):
         self._panel_toggle.setChecked(True)
         self._panel_toggle.setToolTip("显示或隐藏右侧配置面板。")
         header_row.addWidget(self._panel_toggle)
-        save_btn = QPushButton("生成 instrument_profile.yaml")
+        save_btn = QPushButton("生成 anchors.yaml")
         save_btn.clicked.connect(self._save)
         header_row.addWidget(save_btn)
         root.addLayout(header_row)
@@ -134,7 +112,6 @@ class CalibrationPage(QWidget):
         tabs.addTab(self._build_window_tab(), "窗口")
         tabs.addTab(self._build_profile_tab(), "画像")
         tabs.addTab(self._build_anchor_tab(), "锚点")
-        tabs.addTab(self._build_safety_tab(), "确认")
         tabs.setMinimumWidth(520)
         self._config_dock.setWidget(tabs)
         self._inner.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._config_dock)
@@ -195,22 +172,12 @@ class CalibrationPage(QWidget):
         form.addRow("窗口标题包含 *", self._title)
         layout.addLayout(form)
 
-        layout.addWidget(section_title("设备能力"))
-        layout.addWidget(
-            hint_label(
-                "这里只声明这类软件真正支持的动作原语；锚点页再把动作原语绑定到具体控件。"
-            )
-        )
         self._actions: dict[str, QCheckBox] = {}
         for key, label, tip in _ALL_ACTIONS:
             checkbox = QCheckBox(f"{key} - {label}")
             checkbox.setToolTip(tip)
             checkbox.setChecked(key in _DEFAULT_ACTIONS)
-            checkbox.toggled.connect(self._invalidate_capability)
             self._actions[key] = checkbox
-            layout.addWidget(checkbox)
-
-        layout.addWidget(self._build_capability_confirm())
         layout.addStretch(1)
         return page
 
@@ -240,12 +207,12 @@ class CalibrationPage(QWidget):
         layout.addWidget(section_title("2. 锚点、ROI 与识别配置"))
         layout.addWidget(
             hint_label(
-                "表格只放锚点编辑；说明改成下方 tab。这样上方可编辑区域更大，适合长列表。"
+                "动作区域用于点击、输入和聚焦；观察区域用于动作后的 OCR 校验。需要人工确认的高风险动作直接在锚点行勾选“需确认”。"
             )
         )
         self._anchor_table = QTableWidget(0, 7)
         self._anchor_table.setHorizontalHeaderLabels(
-            ["锚点", "类型", "ROI 坐标", "动作", "识别", "需确认", ""]
+            ["锚点ID", "动作区域", "主要动作", "OCR观测", "观测区域", "需确认", ""]
         )
         self._anchor_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._anchor_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -265,7 +232,7 @@ class CalibrationPage(QWidget):
         self._anchor_table.setColumnWidth(5, 78)
         self._anchor_table.setColumnWidth(6, 44)
         self._anchor_table.setMinimumHeight(320)
-        self._anchor_table.setToolTip("选中某一行后，可在下方采集模板/颜色基准并调整阈值。")
+        self._anchor_table.setToolTip("每个锚点包含一个动作区域，可选一个 OCR 观测区域。")
         layout.addWidget(self._anchor_table, 1)
 
         row = QHBoxLayout()
@@ -280,11 +247,9 @@ class CalibrationPage(QWidget):
         row.addStretch(1)
         layout.addLayout(row)
 
-        layout.addWidget(self._build_vision_config_panel())
-        layout.addWidget(self._build_anchor_help_tabs())
         layout.addWidget(
             hint_label(
-                "同一个控件如果既要被点击又要被识别，建议拆成两行：动作锚点 + 观测锚点。"
+                "OCR 观测开启后，系统会在动作执行后轮询观测区域；固定等待和 OCR 期望在工作流步骤中配置。"
             )
         )
         return page
@@ -375,7 +340,7 @@ class CalibrationPage(QWidget):
         inner.setSpacing(6)
         inner.addWidget(section_title("识别方式"))
         vision_items = [
-            ("ocr", "读取联系人名、数字、状态文案，常配 wait_until。"),
+            ("ocr", "读取联系人名、数字、状态文案，配合步骤 expected_text 轮询。"),
             ("template", "先采集模板基准，再做图样匹配。"),
             ("color", "先采集颜色基准，再按容差判断匹配。"),
             ("presence", "用前景占比判断 present / missing。"),
@@ -413,30 +378,6 @@ class CalibrationPage(QWidget):
             f"<span style='color:{t.INK_MUTED};'> - {escape(desc)}</span>"
             "</div>"
         )
-
-    def _build_safety_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setSpacing(8)
-        layout.addWidget(section_title("3. 人工确认与安全项"))
-        layout.addWidget(
-            hint_label("高风险步骤可以在这里声明，运行时会先停下来等待人工确认。")
-        )
-        self._safety_table = QTableWidget(0, 6)
-        self._safety_table.setHorizontalHeaderLabels(
-            ["字段/步骤", "显示名称", "类型", "风险", "需确认", ""]
-        )
-        self._safety_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._safety_table.setColumnWidth(5, 44)
-        layout.addWidget(self._safety_table, 1)
-        row = QHBoxLayout()
-        add_btn = QPushButton("+ 添加确认项")
-        add_btn.setObjectName("Ghost")
-        add_btn.clicked.connect(self._add_safety_field)
-        row.addWidget(add_btn)
-        row.addStretch(1)
-        layout.addLayout(row)
-        return page
 
     def _discover(self) -> None:
         self._windows_list.clear()
@@ -508,8 +449,8 @@ class CalibrationPage(QWidget):
             "window_title": self._selected_title,
             "capture_width": width,
             "capture_height": height,
-            "actions": [key for key, checkbox in self._actions.items() if checkbox.isChecked()],
-            "anchors": self._collect_anchors(),
+            "actions": list(_DEFAULT_ACTIONS),
+            "anchors": self._collect_anchors_for_context(),
         }
         try:
             profile = self._vm.generate_profile_suggestion(prompt.strip(), context)
@@ -517,16 +458,11 @@ class CalibrationPage(QWidget):
             QMessageBox.critical(
                 self,
                 "生成失败",
-                f"AI 助手暂时无法生成接入建议：{exc}\n\n请检查模型配置，或继续手动校准。",
+                f"{self._friendly_ai_error(exc)}\n\n请检查模型配置，或继续手动校准。",
             )
             return
         reasoning = self._vm.profile_suggestion_reasoning()
-        summary = (
-            f"设备 ID：{profile.device_id}\n"
-            f"窗口标题：{profile.window_signature.title_contains or '-'}\n"
-            f"建议锚点：{len(profile.anchors)} 个\n\n"
-            "是否将建议填入当前页面？填入后仍需人工检查 ROI 和识别配置，再手动保存。"
-        )
+        summary = self._profile_suggestion_summary(profile)
         if reasoning:
             summary += f"\n\n{reasoning[:800]}"
         reply = QMessageBox.question(
@@ -538,49 +474,87 @@ class CalibrationPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             self._apply_profile_draft(profile)
 
+    @staticmethod
+    def _friendly_ai_error(exc: Exception) -> str:
+        text = str(exc)
+        blocked = ("pydantic.dev", "validation errors for", "input_value=", "input_type=")
+        if any(item in text for item in blocked):
+            return (
+                "AI 辅助接入建议暂时不可用：模型返回的锚点字段不完整。\n"
+                "请继续手动标注动作区域和观察区域，或调整提示让 AI 只给出锚点名称建议。"
+            )
+        return f"AI 辅助接入建议暂时不可用：{text}"
+
+    @staticmethod
+    def _profile_suggestion_summary(profile) -> str:
+        missing_roi = 0
+        rows = [
+            f"设备 ID：{profile.device_id}",
+            f"窗口标题：{profile.window_signature.title_contains or '-'}",
+            f"建议锚点：{len(profile.anchors)} 个",
+            "",
+            "锚点建议：",
+        ]
+        for anchor in profile.anchors:
+            action_roi = anchor.action_region.pixel
+            has_action = bool(action_roi and action_roi.width > 0 and action_roi.height > 0)
+            has_observe = bool(anchor.observe_region)
+            confirm = any(binding.requires_confirmation for binding in anchor.action_bindings)
+            if not has_action:
+                missing_roi += 1
+            rows.append(
+                f"- {anchor.id}: 动作区域={'已给出' if has_action else '待标注'}，"
+                f"观察区域={'有' if has_observe else '无'}，"
+                f"需确认={'是' if confirm else '否'}"
+            )
+        rows.extend(
+            [
+                "",
+                f"待人工补 ROI：{missing_roi} 个",
+                "是否将建议填入当前页面？填入后仍需人工检查 ROI 和识别配置，再手动保存。",
+            ]
+        )
+        return "\n".join(rows)
+
     def _apply_profile_draft(self, profile) -> None:
         self._device_id.setText(profile.device_id)
         self._title.setText(profile.window_signature.title_contains or "")
-        for key, checkbox in self._actions.items():
-            checkbox.setChecked(key in profile.actions)
         self._anchor_table.setRowCount(0)
         for anchor in profile.anchors:
-            roi = anchor.roi
+            roi = anchor.action_region.pixel
             if roi and roi.width > 0 and roi.height > 0:
                 self._canvas.add_roi(anchor.id, roi.x, roi.y, roi.width, roi.height)
-            first_action = anchor.action_bindings[0].action if anchor.action_bindings else "click"
+            first_action = self._main_action_for_supported(list(anchor.supported_actions))
             requires_confirmation = (
                 anchor.action_bindings[0].requires_confirmation if anchor.action_bindings else False
             )
+            observe_roi_name = None
+            if anchor.observe_region is not None:
+                observe_roi_name = f"{anchor.id}_observe"
+                observe = anchor.observe_region.pixel
+                self._canvas.add_roi(
+                    observe_roi_name,
+                    observe.x,
+                    observe.y,
+                    observe.width,
+                    observe.height,
+                )
             self._insert_anchor_row(
                 name=anchor.id,
                 roi_name=anchor.id,
-                anchor_type=anchor.type,
                 action=first_action,
-                vision_mode=anchor.vision_mode,
+                vision_mode=anchor.vision_mode or "none",
+                observe_roi_name=observe_roi_name,
                 requires_confirmation=requires_confirmation,
-                vision_config=anchor.vision_config.model_dump(mode="json", exclude_none=True)
-                if anchor.vision_config
-                else None,
             )
-        self._capability_confirmed = False
-        self._invalidate_capability()
+        self._capability_confirmed = True
         self._refresh_anchor_coordinates()
 
     def _confirm_capability(self) -> None:
-        selected = [key for key, checkbox in self._actions.items() if checkbox.isChecked()]
-        if not selected:
-            QMessageBox.warning(self, "未选择能力", "请至少勾选一个设备支持的动作原语。")
-            return
         self._capability_confirmed = True
-        self._capability_status.setText(f"✓ 已确认：{', '.join(selected)}")
-        self._capability_status.setStyleSheet(f"color:{t.SUCCESS};font-weight:600;")
 
     def _invalidate_capability(self) -> None:
-        if self._capability_confirmed:
-            self._capability_confirmed = False
-            self._capability_status.setText("● 动作能力已修改，请重新确认")
-            self._capability_status.setStyleSheet(f"color:{t.WARNING};font-weight:600;")
+        self._capability_confirmed = True
 
     def _make_help_combo(self, options: list[tuple[str, str]]) -> QComboBox:
         combo = QComboBox()
@@ -612,6 +586,7 @@ class CalibrationPage(QWidget):
         anchor_type: str = "action_target",
         action: str = "click",
         vision_mode: str = "none",
+        observe_roi_name: str | None = None,
         requires_confirmation: bool = False,
         vision_config: dict | None = None,
     ) -> None:
@@ -624,12 +599,7 @@ class CalibrationPage(QWidget):
         )
         self._anchor_table.setItem(row, 0, name_item)
 
-        type_box = self._make_help_combo(_ANCHOR_TYPES)
-        if anchor_type in _ANCHOR_TYPE_KEYS:
-            type_box.setCurrentText(anchor_type)
-        self._anchor_table.setCellWidget(row, 1, type_box)
-
-        self._anchor_table.setItem(row, 2, QTableWidgetItem(roi_name))
+        self._anchor_table.setItem(row, 1, QTableWidgetItem(roi_name))
 
         action_box = QComboBox()
         action_box.setMinimumHeight(34)
@@ -644,13 +614,17 @@ class CalibrationPage(QWidget):
         action_index = action_box.findData(action)
         if action_index >= 0:
             action_box.setCurrentIndex(action_index)
-        self._anchor_table.setCellWidget(row, 3, action_box)
+        self._anchor_table.setCellWidget(row, 2, action_box)
 
-        vision_box = self._make_help_combo(_VISION_MODES)
-        if vision_mode in _VISION_MODE_KEYS:
-            vision_box.setCurrentText(vision_mode)
-        vision_box.currentIndexChanged.connect(self._refresh_selected_anchor_tools)
-        self._anchor_table.setCellWidget(row, 4, vision_box)
+        observe_enabled = bool(observe_roi_name) or vision_mode == "ocr"
+        observe_name = observe_roi_name or (f"{name}_observe" if observe_enabled else "")
+        ocr = QCheckBox()
+        ocr.setChecked(observe_enabled)
+        ocr.toggled.connect(lambda checked, r=row: self._on_ocr_toggled(r, checked))
+        self._anchor_table.setCellWidget(row, 3, ocr)
+        self._anchor_table.setItem(row, 4, QTableWidgetItem(observe_name))
+        if observe_enabled and observe_name and observe_name not in self._canvas.roi_names():
+            self._canvas.add_roi(observe_name)
 
         confirm = QCheckBox()
         confirm.setChecked(requires_confirmation)
@@ -662,19 +636,32 @@ class CalibrationPage(QWidget):
         self._refresh_anchor_coordinates()
 
     def _delete_anchor(self, row: int) -> None:
-        roi_item = self._anchor_table.item(row, 2)
+        roi_item = self._anchor_table.item(row, 1)
         if roi_item:
             self._canvas.remove_roi(roi_item.text().split("  ")[0].strip())
+        observe_item = self._anchor_table.item(row, 4)
+        if observe_item:
+            observe_name = observe_item.text().split("  ")[0].strip()
+            if observe_name:
+                self._canvas.remove_roi(observe_name)
         self._anchor_table.removeRow(row)
         self._rebind_anchor_delete_buttons()
         self._refresh_selected_anchor_tools()
 
     def _on_canvas_roi_deleted(self, roi_name: str) -> None:
         for row in range(self._anchor_table.rowCount()):
-            item = self._anchor_table.item(row, 2)
+            item = self._anchor_table.item(row, 1)
             if item and item.text().split("  ")[0].strip() == roi_name:
                 self._anchor_table.removeRow(row)
                 self._rebind_anchor_delete_buttons()
+                self._refresh_selected_anchor_tools()
+                return
+            observe_item = self._anchor_table.item(row, 4)
+            if observe_item and observe_item.text().split("  ")[0].strip() == roi_name:
+                observe_item.setText("")
+                ocr = self._anchor_table.cellWidget(row, 3)
+                if isinstance(ocr, QCheckBox):
+                    ocr.setChecked(False)
                 self._refresh_selected_anchor_tools()
                 return
 
@@ -683,10 +670,17 @@ class CalibrationPage(QWidget):
             button = self._make_delete_button("删除锚点")
             button.clicked.connect(lambda _checked=False, r=row: self._delete_anchor(r))
             self._anchor_table.setCellWidget(row, 6, button)
+            ocr = self._anchor_table.cellWidget(row, 3)
+            if isinstance(ocr, QCheckBox):
+                checked = ocr.isChecked()
+                replacement = QCheckBox()
+                replacement.setChecked(checked)
+                replacement.toggled.connect(lambda checked, r=row: self._on_ocr_toggled(r, checked))
+                self._anchor_table.setCellWidget(row, 3, replacement)
 
     def _refresh_anchor_coordinates(self) -> None:
         for row in range(self._anchor_table.rowCount()):
-            roi_item = self._anchor_table.item(row, 2)
+            roi_item = self._anchor_table.item(row, 1)
             if not roi_item:
                 continue
             roi_name = roi_item.text().split("  ")[0].strip()
@@ -695,6 +689,33 @@ class CalibrationPage(QWidget):
                 roi_item.setText(
                     f"{roi_name}  ({rect['x']:.0f},{rect['y']:.0f},{rect['width']:.0f},{rect['height']:.0f})"
                 )
+            observe_item = self._anchor_table.item(row, 4)
+            if observe_item is None:
+                continue
+            observe_name = observe_item.text().split("  ")[0].strip()
+            observe_rect = self._canvas.roi_rect(observe_name) if observe_name else None
+            if observe_rect:
+                observe_item.setText(
+                    f"{observe_name}  ({observe_rect['x']:.0f},{observe_rect['y']:.0f},{observe_rect['width']:.0f},{observe_rect['height']:.0f})"
+                )
+
+    def _on_ocr_toggled(self, row: int, checked: bool) -> None:
+        item = self._anchor_table.item(row, 0)
+        if item is None:
+            return
+        observe_item = self._anchor_table.item(row, 4)
+        if observe_item is None:
+            observe_item = QTableWidgetItem("")
+            self._anchor_table.setItem(row, 4, observe_item)
+        observe_name = observe_item.text().split("  ")[0].strip()
+        if checked:
+            observe_name = observe_name or f"{item.text().strip()}_observe"
+            observe_item.setText(observe_name)
+            if observe_name not in self._canvas.roi_names():
+                self._canvas.add_roi(observe_name)
+        elif observe_name:
+            observe_item.setText("")
+        self._refresh_anchor_coordinates()
 
     def _selected_anchor_row(self) -> int:
         selection = self._anchor_table.selectionModel()
@@ -704,44 +725,7 @@ class CalibrationPage(QWidget):
         return rows[0].row() if rows else -1
 
     def _refresh_selected_anchor_tools(self) -> None:
-        row = self._selected_anchor_row()
-        enabled = row >= 0
-        for widget in (
-            self._capture_template_btn,
-            self._capture_color_btn,
-            self._clear_vision_btn,
-            self._template_threshold,
-            self._color_tolerance,
-            self._presence_threshold,
-        ):
-            widget.setEnabled(enabled)
-        if not enabled:
-            self._vision_anchor_label.setText("未选中锚点")
-            self._vision_summary.setText("模板路径、颜色参考和阈值会跟随当前选中锚点保存。")
-            return
-
-        anchor_name = self._table_text(self._anchor_table, row, 0)
-        vision_mode = self._combo_data(self._anchor_table, row, 4)
-        config = self._anchor_config_for_row(row)
-        self._template_threshold.blockSignals(True)
-        self._color_tolerance.blockSignals(True)
-        self._presence_threshold.blockSignals(True)
-        self._template_threshold.setValue(float(config.get("template_threshold", 0.8)))
-        self._color_tolerance.setValue(float(config.get("color_tolerance", 0.1)))
-        self._presence_threshold.setValue(float(config.get("presence_threshold", 0.05)))
-        self._template_threshold.blockSignals(False)
-        self._color_tolerance.blockSignals(False)
-        self._presence_threshold.blockSignals(False)
-
-        self._vision_anchor_label.setText(f"当前锚点：{anchor_name}  ·  mode={vision_mode}")
-        template_path = config.get("template_asset_path") or "-"
-        color_ref = config.get("color_reference_hex") or "-"
-        self._vision_summary.setText(
-            f"模板：{template_path}\n颜色参考：{color_ref}\n"
-            f"Template 阈值={config.get('template_threshold', 0.8):.2f}，"
-            f"Color 容差={config.get('color_tolerance', 0.1):.2f}，"
-            f"Presence 阈值={config.get('presence_threshold', 0.05):.2f}"
-        )
+        return
 
     def _persist_selected_anchor_config(self) -> None:
         row = self._selected_anchor_row()
@@ -805,7 +789,7 @@ class CalibrationPage(QWidget):
         if row < 0:
             QMessageBox.warning(self, "未选中锚点", "请先在表格中选中一个锚点。")
             return None
-        roi_name = self._table_text(self._anchor_table, row, 2).split("  ")[0].strip()
+        roi_name = self._table_text(self._anchor_table, row, 1).split("  ")[0].strip()
         rect = self._canvas.roi_rect(roi_name)
         if not rect:
             QMessageBox.warning(self, "缺少 ROI", "当前锚点没有有效 ROI。")
@@ -887,94 +871,73 @@ class CalibrationPage(QWidget):
         anchors: list[dict] = []
         for row in range(self._anchor_table.rowCount()):
             name = self._table_text(self._anchor_table, row, 0)
-            roi_name = self._table_text(self._anchor_table, row, 2).split("  ")[0].strip()
+            roi_name = self._table_text(self._anchor_table, row, 1).split("  ")[0].strip()
             rect = self._canvas.roi_rect(roi_name)
             norm = self._canvas.normalized_roi_rect(roi_name)
-            type_value = self._combo_data(self._anchor_table, row, 1) or "action_target"
-            action_value = self._combo_data(self._anchor_table, row, 3) or "click"
-            vision_mode = self._combo_data(self._anchor_table, row, 4) or "none"
+            action_value = self._combo_data(self._anchor_table, row, 2) or "click"
+            ocr_enabled = self._checkbox_value(self._anchor_table, row, 3)
+            observe_name = self._table_text(self._anchor_table, row, 4).split("  ")[0].strip()
+            observe_rect = self._canvas.roi_rect(observe_name) if observe_name else None
+            observe_norm = self._canvas.normalized_roi_rect(observe_name) if observe_name else None
             confirm = self._checkbox_value(self._anchor_table, row, 5)
-            config = self._anchor_config_for_row(row)
             if not name or not rect:
                 continue
+            if ocr_enabled and not observe_rect:
+                raise ValueError(f"锚点 {name} 已开启 OCR 观测，但缺少观测 ROI")
+            action_region = {"pixel": rect, "normalized": norm}
+            supported_actions = self._supported_actions_for_main(action_value)
             anchors.append(
                 {
                     "id": name,
-                    "type": type_value,
-                    "locator_hint": roi_name,
-                    "roi": rect,
-                    "normalized_roi": norm,
+                    "action_region": action_region,
+                    "observe_region": (
+                        {"pixel": observe_rect, "normalized": observe_norm}
+                        if ocr_enabled and observe_rect
+                        else None
+                    ),
+                    "supported_actions": supported_actions,
+                    "default_wait_seconds": 2.0,
                     "action_bindings": [
-                        {
-                            "action": action_value,
-                            "requires_confirmation": confirm,
-                        }
+                        {"action": action, "requires_confirmation": confirm}
+                        for action in supported_actions
                     ],
-                    "vision_mode": vision_mode,
-                    "confidence_threshold": 0.7,
-                    "vision_config": config if config else None,
                 }
             )
         return anchors
 
-    def _add_safety_field(self) -> None:
-        row = self._safety_table.rowCount()
-        self._safety_table.insertRow(row)
-        self._safety_table.setItem(row, 0, QTableWidgetItem("start_run"))
-        self._safety_table.setItem(row, 1, QTableWidgetItem("启动运行"))
-        type_box = QComboBox()
-        type_box.addItems(["string", "number", "bool", "choice"])
-        type_box.setCurrentText("bool")
-        self._safety_table.setCellWidget(row, 2, type_box)
-        risk_box = QComboBox()
-        risk_box.addItems(["low", "medium", "high"])
-        risk_box.setCurrentText("high")
-        self._safety_table.setCellWidget(row, 3, risk_box)
-        confirm = QCheckBox()
-        confirm.setChecked(True)
-        self._safety_table.setCellWidget(row, 4, confirm)
-        delete_btn = self._make_delete_button("删除确认项")
-        delete_btn.clicked.connect(lambda _checked=False, r=row: self._delete_safety_row(r))
-        self._safety_table.setCellWidget(row, 5, delete_btn)
+    def _collect_anchors_for_context(self) -> list[dict]:
+        try:
+            return self._collect_anchors()
+        except ValueError:
+            return []
 
-    def _delete_safety_row(self, row: int) -> None:
-        self._safety_table.removeRow(row)
-        self._rebind_safety_delete_buttons()
+    @staticmethod
+    def _supported_actions_for_main(action: str) -> list[str]:
+        if action == "type":
+            return ["click", "type", "hotkey", "press_enter"]
+        if action == "hotkey":
+            return ["click", "hotkey"]
+        if action == "press_enter":
+            return ["click", "press_enter"]
+        return ["click"]
 
-    def _rebind_safety_delete_buttons(self) -> None:
-        for row in range(self._safety_table.rowCount()):
-            button = self._make_delete_button("删除确认项")
-            button.clicked.connect(lambda _checked=False, r=row: self._delete_safety_row(r))
-            self._safety_table.setCellWidget(row, 5, button)
+    @staticmethod
+    def _main_action_for_supported(actions: list[str]) -> str:
+        if "type" in actions:
+            return "type"
+        if "hotkey" in actions:
+            return "hotkey"
+        if "press_enter" in actions:
+            return "press_enter"
+        return "click"
 
     def _collect_safety_fields(self, anchors: list[dict]) -> tuple[list[dict], list[str]]:
-        fields: list[dict] = []
         confirm_steps: list[str] = []
         for anchor in anchors:
             for binding in anchor.get("action_bindings", []):
                 if binding.get("requires_confirmation"):
                     confirm_steps.append(anchor["id"])
-        for row in range(self._safety_table.rowCount()):
-            field_id = self._table_text(self._safety_table, row, 0)
-            label = self._table_text(self._safety_table, row, 1) or field_id
-            if not field_id:
-                continue
-            field_type = self._combo_text(self._safety_table, row, 2) or "string"
-            risk_level = self._combo_text(self._safety_table, row, 3) or "medium"
-            requires_confirmation = self._checkbox_value(self._safety_table, row, 4)
-            if requires_confirmation:
-                confirm_steps.append(field_id)
-            fields.append(
-                {
-                    "field_id": field_id,
-                    "label": label,
-                    "value_type": field_type,
-                    "risk_level": risk_level,
-                    "requires_confirmation": requires_confirmation,
-                    "applies_to_steps": [field_id],
-                }
-            )
-        return fields, sorted(set(confirm_steps))
+        return [], sorted(set(confirm_steps))
 
     def _save(self) -> None:
         device_id = self._device_id.text().strip()
@@ -985,20 +948,15 @@ class CalibrationPage(QWidget):
         if not title:
             QMessageBox.warning(self, "缺少窗口标题", "请输入或选择窗口标题关键字。")
             return
-        anchors = self._collect_anchors()
+        try:
+            anchors = self._collect_anchors()
+        except ValueError as exc:
+            QMessageBox.warning(self, "锚点未完成", str(exc))
+            return
         if not anchors:
             QMessageBox.warning(self, "缺少锚点", "请至少添加一个锚点并保存 ROI 坐标。")
             return
-        actions = [key for key, checkbox in self._actions.items() if checkbox.isChecked()] or list(_DEFAULT_ACTIONS)
-        if not self._capability_confirmed:
-            reply = QMessageBox.question(
-                self,
-                "能力尚未确认",
-                "设备能力还没有点击确认，仍然继续保存吗？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
+        actions = list(_DEFAULT_ACTIONS)
         safety_fields, confirm_steps = self._collect_safety_fields(anchors)
         width, height = self._canvas.source_size()
         try:
@@ -1016,11 +974,10 @@ class CalibrationPage(QWidget):
             QMessageBox.critical(self, "保存失败", str(exc))
             return
         self._refresh_instruments()
-        suffix = "" if self._capability_confirmed else "\n（注意：本次保存未进行能力确认）"
         QMessageBox.information(
             self,
             "校准完成",
-            f"已生成设备画像 {profile.device_id}\n锚点数：{len(profile.anchors)}{suffix}",
+            f"已生成锚点画像 {profile.device_id}\n锚点数：{len(profile.anchors)}",
         )
 
     def _refresh_instruments(self) -> None:
@@ -1045,64 +1002,46 @@ class CalibrationPage(QWidget):
 
         self._canvas.clear_all()
         self._anchor_table.setRowCount(0)
-        self._safety_table.setRowCount(0)
 
         self._device_id.setText(profile.device_id)
         self._title.setText(profile.window_signature.title_contains or "")
-        for key, checkbox in self._actions.items():
-            checkbox.setChecked(key in profile.actions)
 
         self._capability_confirmed = True
-        self._capability_status.setText(f"✓ 已确认：{', '.join(profile.actions)}")
-        self._capability_status.setStyleSheet(f"color:{t.SUCCESS};font-weight:600;")
 
         for anchor in profile.anchors:
-            if anchor.roi:
+            if anchor.action_region.pixel:
                 self._canvas.add_roi(
                     anchor.id,
-                    anchor.roi.x,
-                    anchor.roi.y,
-                    anchor.roi.width,
-                    anchor.roi.height,
+                    anchor.action_region.pixel.x,
+                    anchor.action_region.pixel.y,
+                    anchor.action_region.pixel.width,
+                    anchor.action_region.pixel.height,
                 )
-            first_action = anchor.action_bindings[0].action if anchor.action_bindings else "click"
+            first_action = self._main_action_for_supported(list(anchor.supported_actions))
             requires_confirmation = (
                 anchor.action_bindings[0].requires_confirmation if anchor.action_bindings else False
             )
+            observe_roi_name = None
+            if anchor.observe_region is not None:
+                observe_roi_name = f"{anchor.id}_observe"
+                observe = anchor.observe_region.pixel
+                self._canvas.add_roi(
+                    observe_roi_name,
+                    observe.x,
+                    observe.y,
+                    observe.width,
+                    observe.height,
+                )
             self._insert_anchor_row(
                 name=anchor.id,
                 roi_name=anchor.id,
-                anchor_type=anchor.type,
                 action=first_action,
-                vision_mode=anchor.vision_mode,
+                vision_mode=anchor.vision_mode or "none",
+                observe_roi_name=observe_roi_name,
                 requires_confirmation=requires_confirmation,
-                vision_config=anchor.vision_config.model_dump(mode="json", exclude_none=True)
-                if anchor.vision_config
-                else None,
             )
 
-        for field in profile.safety_limits.fields:
-            row = self._safety_table.rowCount()
-            self._safety_table.insertRow(row)
-            self._safety_table.setItem(row, 0, QTableWidgetItem(field.field_id))
-            self._safety_table.setItem(row, 1, QTableWidgetItem(field.label or field.field_id))
-            type_box = QComboBox()
-            type_box.addItems(["string", "number", "bool", "choice"])
-            type_box.setCurrentText(field.value_type or "string")
-            self._safety_table.setCellWidget(row, 2, type_box)
-            risk_box = QComboBox()
-            risk_box.addItems(["low", "medium", "high"])
-            risk_box.setCurrentText(field.risk_level or "medium")
-            self._safety_table.setCellWidget(row, 3, risk_box)
-            confirm = QCheckBox()
-            confirm.setChecked(field.requires_confirmation or False)
-            self._safety_table.setCellWidget(row, 4, confirm)
-            delete_btn = self._make_delete_button("删除确认项")
-            delete_btn.clicked.connect(lambda _checked=False, r=row: self._delete_safety_row(r))
-            self._safety_table.setCellWidget(row, 5, delete_btn)
-
         self._rebind_anchor_delete_buttons()
-        self._rebind_safety_delete_buttons()
         self._refresh_anchor_coordinates()
         self._refresh_selected_anchor_tools()
         QMessageBox.information(

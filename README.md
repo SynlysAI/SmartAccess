@@ -4,31 +4,31 @@
   <img src="resource/icon.png" alt="SmartAccess icon" width="128">
 </p>
 
-SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接入与执行助手。它通过 `AI Agent + UI 自动化 + 视觉识别 + 平台适配` 的组合，把原本分散、手工、异构的实验操作流程沉淀为可执行、可回放、可审计的标准工作流。
+SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接入与执行助手。它通过 `AI Agent + UI 自动化 + OCR 观测 + 平台适配` 的组合，把原本分散、手工、异构的实验操作流程沉淀为可执行、可回放、可审计的标准工作流。
 
-当前仓库定位为`产品与架构基线`，并已进入桌面端实现阶段，包含完整的 PyQt6 工作台、Win32 真实自动化、PaddleOCR+OpenCV 本地视觉识别、DeepSeek AI 编排和 SpecLabOS 平台对接。
+当前仓库定位为`产品与架构基线`，并已进入桌面端实现阶段。下一阶段主模型收敛为“锚点 -> 工作流 -> 执行”：锚点是可操作区域，每个锚点最多绑定一个可选 OCR 观测区域；工作流步骤执行动作后，有预期 OCR 就轮询判断，没有观测就等待默认秒数。
 
 ## 产品定位
 
 ### 是什么
 
-- 一个运行在实验室侧的桌面执行层，默认按 `PyQt` 桌面端规划。
-- 一个连接 SpecLabOS 的非侵入式仪器接入方案，核心依赖 UI 模拟操作、截图感知和结构化数据回传。
-- 一个把“仪器接入、工作流设计、状态感知、异常恢复、数据同步”串成闭环的 AI 运行时。
+- 一个运行在实验室侧的 PyQt 桌面执行层。
+- 一个连接 SpecLabOS 的非侵入式仪器接入方案，核心依赖 UI 模拟操作、截图裁剪、OCR 读取和结构化 trace 回传。
+- 一个把“锚点配置、工作流设计、模板发布、运行执行”串成闭环的 AI 运行时。
 
 ### 不是什么
 
 - 不是直接替代仪器原生控制软件的驱动层或固件层。
 - 不是默认要求每台仪器开放 SDK、串口协议或私有 API 的深度集成方案。
-- 不是现阶段就承诺支持全部品牌、全部系统、全部自动化能力的通用控制平台。
+- 不是首版支持复杂流程编排或多模式视觉识别的通用 RPA 平台。
 
 ## 核心价值
 
 - 非侵入式接入：尽量不改动现有上位机软件和实验流程。
-- AI 辅助配置：通过 DeepSeek 对话生成标准工作流，配备运行时知识库持续学习。
-- 视觉感知补齐接口缺口：PaddleOCR 文字识别、OpenCV 模板匹配、HSV 颜色检测、前景占比存在性检测。
+- AI 辅助配置：通过单 prompt 对话生成标准工作流，结合已保存锚点和运行时知识库。
+- OCR 观测闭环：截图、裁剪、OCR 读取、文本匹配补齐接口缺口。
 - 真实 UI 自动化：Win32 SendInput/SetCursorPos 驱动点击、输入、快捷键等动作原语。
-- 数据统一回传：把状态、参数、日志和异常统一上传到 SpecLabOS。
+- 数据统一回传：运行结果从 `run_trace.jsonl` 的步骤级事实提取并上传到 SpecLabOS。
 - 可追溯和可扩展：以模板、契约和评测用例支撑后续仪器扩展。
 
 ## 核心文档
@@ -58,66 +58,46 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 │   │   ├── software-design.md
 │   │   └── ai-components.md
 │   └── contracts/
-│       └── interfaces.md
+│       ├── interfaces.md
+│       └── examples/        # anchors/workflow/platform/run_trace/eval 样例
 ├── src/smartaccess/
-│   ├── bootstrap/          # 依赖注入与桌面启动
-│   ├── desktop/            # PyQt6 工作台
-│   │   ├── pages/          # 流程引导/校准/工作流/模板库/监控/概览
-│   │   ├── shell/          # 主窗口/主题/应用入口
-│   │   ├── viewmodels/     # UI 状态与数据绑定
-│   │   └── widgets/        # 可复用组件（ROI画布/条件编辑器/时间线等）
+│   ├── bootstrap/           # 依赖注入与桌面启动
+│   ├── desktop/             # PyQt6 工作台
+│   │   ├── pages/           # 锚点/工作流/模板平台/执行
+│   │   ├── shell/           # 主窗口/主题/应用入口
+│   │   ├── viewmodels/      # UI 状态与数据绑定
+│   │   └── widgets/         # 可复用组件（截图画布/步骤表/日志视图等）
 │   ├── runtime/
-│   │   ├── adapters/       # Win32自动化/PaddleOCR+OpenCV/DeepSeek/SpecLabOS
-│   │   ├── application/    # 服务层（校准/工作流/模板/运行/AI知识库）
-│   │   └── orchestration/  # 编排器/执行器/观测器/恢复引擎
+│   │   ├── adapters/        # Win32自动化/OCR/DeepSeek/SpecLabOS
+│   │   ├── application/     # 服务层（锚点/工作流/模板平台/运行/AI知识库）
+│   │   └── orchestration/   # 编排器/执行器/观测器/恢复引擎
 │   └── shared/
-│       ├── config/         # 应用配置
-│       ├── contracts/      # YAML契约模型（仪器画像/工作流/运行轨迹）
-│       └── events/         # 事件总线与运行时事件
+│       ├── config/          # 应用配置
+│       ├── contracts/       # YAML契约模型（anchors/workflow/run_trace）
+│       └── events/          # 事件总线与运行时事件
 ├── tests/
-│   ├── contract/           # 契约样例验证
-│   ├── integration/        # 服务/编排/外观集成测试
-│   └── desktop/            # 桌面冒烟测试
-├── workspace/              # 运行时工作区（仪器画像/工作流草稿/模板/AI知识库）
-└── ai/
-    ├── AGENT.md
-    ├── memory/
-    ├── skills/
-    ├── agents/
-    └── harness/
+│   ├── contract/            # 契约样例验证
+│   ├── integration/         # 服务/编排/外观集成测试
+│   └── desktop/             # 桌面冒烟测试
+├── workspace/               # 运行时工作区（锚点集/工作流草稿/模板/AI知识库）
+└── ai/                      # memory/skills/agents/harness
 ```
-
-### `docs/`
-
-- `PRD.zh-CN.md`：SmartAccess 的规范 PRD 主文件。
-- `SPEC.zh-CN.md`：SmartAccess 的技术规格基线。
-- `architecture/system-overview.md`：架构图文字化说明。
-- `architecture/software-design.md`：软件蓝图与设计决策。
-- `architecture/ai-components.md`：AI 组件边界和协作方式。
-- `contracts/interfaces.md`：运行时契约、字段含义和最小样例。
-- `CHANGELOG.zh-CN.md`：功能更新日志与验证记录。
 
 ### `src/smartaccess/`
 
 - `bootstrap/`：依赖注入、提供者装配与桌面启动入口。
-- `desktop/`：PyQt6 工作台（6 个页面、QSS 暗色主题、Dock 布局）。
-- `runtime/adapters/`：Win32 真实自动化、PaddleOCR+OpenCV 本地视觉、DeepSeek AI 生成器、SpecLabOS HTTP 客户端及对应 stub。
-- `runtime/application/`：CalibrationService、WorkflowService、TemplateService、AIRuntimeStore 等服务层。
+- `desktop/`：PyQt6 工作台，主导航为 `锚点`、`工作流`、`模板/平台`、`执行` 四个一级页面。
+- `runtime/adapters/`：Win32 真实自动化、本地 OCR、DeepSeek AI 生成器、SpecLabOS HTTP 客户端及对应 stub。
+- `runtime/application/`：AnchorService、WorkflowService、TemplateService、PlatformSyncService、RunService、AIRuntimeStore 等服务层。
 - `runtime/orchestration/`：Orchestrator 编排器、Executor 执行器、Observer 观测器、RecoveryEngine 恢复引擎。
-- `shared/`：应用配置、Pydantic 契约模型（instrument_profile / workflow / run_trace）、事件总线。
-
-### `ai/`
-
-- `memory/`：沉淀稳定知识和长期上下文（产品级 + 仓库级）。
-- `skills/`：沉淀可复用执行能力（运行时技能 + 仓库协作技能）。
-- `agents/`：运行时代理和仓库协作代理的职责边界。
-- `harness/`：运行时装配方式与回归评测基线。
+- `shared/`：应用配置、Pydantic 契约模型（anchors / workflow / run_trace）、事件总线。
 
 ### `workspace/`
 
-- `instruments/`：已校准仪器画像（`instrument_profile.yaml`）。
+- `anchors/`：已保存锚点集（`anchors.yaml`）。
 - `workflows/`：工作流草稿（`draft.yaml`）。
 - `templates/`：本地模板副本（`{template_id}/{version}/workflow.yaml`）。
+- `runs/`：运行轨迹、截图和导出产物。
 - `ai-runtime/`：AI 运行时知识库（episodes / memory / skills / index.json）。
 
 ## 体系总览
@@ -126,16 +106,16 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 
 上图中的关键关系已经在 [系统架构总览](docs/architecture/system-overview.md) 中文字化，重点包括：
 
-- `Action Flow`：用户意图经 AI Agent 生成工作流，再驱动 UI 自动化执行。
-- `Data Flow`：上位机状态、识别结果、运行日志、实验参数回流到 SmartAccess 和 SpecLabOS。
-- `API Flow`：SmartAccess 通过 FastAPI 适配层与 SpecLabOS 双向同步任务、参数和执行状态。
+- `Action Flow`：用户意图经 AI Agent 生成线性工作流，再驱动 UI 自动化执行。
+- `Data Flow`：上位机状态、OCR 事实、运行日志、截图路径回流到 SmartAccess 和 SpecLabOS。
+- `API Flow`：SmartAccess 通过 FastAPI 适配层与 SpecLabOS 双向同步任务、模板和执行状态。
 
 ## AI 组件分层
 
 ### 产品运行时 AI
 
-- `memory/product/`：工作流原语、仪器画像、视觉模式、恢复规则。
-- `skills/runtime/`：工作流设计、UI 编排、视觉校准、平台映射、异常恢复。
+- `memory/product/`：动作原语、锚点配置、OCR 观测、恢复规则。
+- `skills/runtime/`：工作流设计、UI 编排、锚点标注、平台映射、异常恢复。
 - `agents/runtime/`：orchestrator、executor、observer、recovery。
 - `harness/runtime/`：运行时装配、事件总线、会话边界、审计约束。
 
@@ -150,32 +130,97 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 
 每次完成会影响产品行为、运行时契约、UI 语义、工作流字段或 AI 组件的改动后，都需要执行项目级 `ai/skills/repo/documentation-sync`：同步更新功能日志、PRD、SPEC、契约说明、README、memory 和相关 skill，避免实现与文档脱节。
 
+## 环境配置
+
+推荐使用 Conda 环境名 `smartaccess`：
+
+```bash
+conda env create -f environment.yml
+conda activate smartaccess
+pip install -e ".[desktop,serve,dev]"
+```
+
+开发态配置从 `.env` 读取，可从示例复制：
+
+```bash
+copy .envexample .env
+```
+
+关键变量：
+
+- `SMARTACCESS_WORKSPACE_DIR`：运行时工作区，默认 `workspace`。
+- `SMARTACCESS_VISION_PROVIDER`：桌面真实 OCR 使用 `local`，测试可用 `stub`。
+- `SMARTACCESS_UDP_HOST` / `SMARTACCESS_UDP_PORT`：Edge API 下发 UDP 执行信号的目标。
+- `SMARTACCESS_WORKFLOW_GENERATOR`、`DEEPSEEK_API_KEY`：配置在线工作流/锚点生成能力。
+
 ## 新增一个仪器接入的最小步骤
 
-1. 在 `docs/contracts/` 明确该仪器的 `instrument_profile`、平台字段映射和预期输出。
-2. 在 `ai/memory/product/` 补充仪器画像、界面锚点、状态识别模式和安全限制。
-3. 在 `ai/skills/runtime/` 选择或新增对应的工作流设计、视觉校准、平台映射技能。
+1. 在 `docs/contracts/` 明确该仪器的 `anchors.yaml`、平台字段映射和运行 trace 读取方式。
+2. 在 `ai/memory/product/` 补充锚点、动作能力、OCR 观测和安全限制。
+3. 在 `ai/skills/runtime/` 选择或新增对应的工作流设计、锚点标注、平台映射技能。
 4. 在 `ai/agents/runtime/` 明确 orchestrator、executor、observer、recovery 的职责分配。
-5. 在 `ai/harness/evals/cases/` 新增回归用例，覆盖首次接入、执行、异常和回传。
+5. 在 `ai/harness/evals/cases/` 新增回归用例，覆盖首次接入、执行、OCR 命中/超时、异常和回传。
 
-## VER3 实现特性
+## 观察区域锚点编辑
 
-- ✅ 真实 Win32 UI 自动化（click/double_click/type/hotkey/press_enter/wait）
-- ✅ PaddleOCR 文字识别 + OpenCV 模板匹配 + HSV 颜色检测 + 前景占比存在性检测
-- ✅ DeepSeek AI 工作流编排，含秒制强制约束与后处理标准化
-- ✅ AI 运行时知识库：pending/approved memory & skill，生成时可检索命中知识
-- ✅ 仪器删除（引用预检 + 高风险确认）+ 工作流删除（草稿本地 / 模板云端优先）
-- ✅ 观测条件编辑器（source/mode/operator/expected/timeout_seconds/poll_interval_seconds）
-- ✅ 状态栏实时显示 Automation / Vision / LLM 提供者模式
-- ✅ `wait_until` 真实轮询 + `screenshot_check` 一次性观测判断
-- ✅ Provider 独立装配：fail fast 依赖缺失，不静默回退 stub
+1. 在设备接入页先选择目标窗口并捕获截图。
+2. 为可点击或输入位置添加动作锚点，例如 `搜索框`、`文本输入`、`发送按钮`。
+3. 如果某个动作后需要 OCR 校验，勾选该锚点的 `OCR观测`，系统会创建或使用 `{锚点ID}_observe` 观察区域。
+4. 动作区域用于点击、输入和聚焦；观察区域只用于 OCR 读取。两者可以重合，也可以分开拖拽。
+5. 保存后 `anchors.yaml` 会同时写入 pixel 和 normalized 坐标，运行时按当前窗口尺寸映射。
+
+## OCR 配置与执行逻辑
+
+- 本地 OCR provider 是 `LocalVisionProvider`，依赖 `opencv-python`、`paddleocr` 和 `paddlepaddle`。
+- 锚点配置在 `anchors.yaml`：`action_region` 用于点击/聚焦，`observe_region` 用于动作后的 OCR 读取。
+- 工作流配置在 `workflow.yaml`：步骤用 `expected_text`、`match_mode`、`timeout_seconds` 声明 OCR 预期；`match_mode: none` 表示不做 OCR。
+- Orchestrator 先执行动作；无 OCR 时按 `step.wait_seconds -> anchor.default_wait_seconds -> 0` 固定等待；有 OCR 时每 0.5 秒截图、裁剪 observe region、识别并匹配文本。
+- 每步都会写入 `run_trace.jsonl`，包含期望 OCR、实际 OCR、匹配结果、尝试次数、耗时、截图路径和错误详情。
+
+## 能力示例
+
+受版本控制的示例位于 `docs/contracts/examples/`，用于证明系统能力和作为导入 workspace 前的模板。
+
+### 串口调试助手 UDP
+
+- 锚点集：`docs/contracts/examples/serial_debug_assistant_udp/anchors.yaml`
+- 工作流：`docs/contracts/examples/serial_debug_assistant_udp/workflow.yaml`
+- 覆盖能力：选择 UDP 模式、设置本地端口、打开 UDP 服务、输入并发送 `SmartAccess UDP validation`，再用 OCR 检查收发日志。
+- 运行前打开目标“串口调试助手/网络调试助手”，把示例锚点导入或按示例重新框选坐标，确认窗口标题包含“串口调试助手”。
+
+### Windows 计算器
+
+- 锚点集：`docs/contracts/examples/windows_calculator/anchors.yaml`
+- 工作流：`docs/contracts/examples/windows_calculator/workflow.yaml`
+- 覆盖能力：聚焦计算器、输入 `12+34`、回车计算，并用 OCR 检查结果区包含 `46`。
+- 运行前打开 Windows 计算器标准模式，确保窗口可见、无遮挡，并按当前窗口尺寸校准结果显示区和按键焦点锚点。
+
+### 运行方法
+
+1. 启动桌面端：`python run_desktop.py`。
+2. 在“设备接入与校准”页扫描目标窗口，按示例创建或导入锚点集，保存到 `workspace/anchors/{profile_id}/anchors.yaml`。
+3. 在“工作流设计”页选择锚点集，载入或按示例保存 workflow 到 `workspace/workflows/{workflow_id}/draft.yaml`。
+4. 运行标准化检查，通过后切到“运行监控”页选择工作流并开始。
+5. 查看步骤时间线、步骤审计、OCR 文本、截图链接和 `run_trace.jsonl`。
+
+## v2 简化模型特性
+
+- ✅ 四页主导航：锚点、工作流、模板/平台、执行
+- ✅ `anchors.yaml` 作为唯一锚点配置
+- ✅ 简化 `workflow.yaml`：线性步骤 + anchor_id + action + expected_text/match_mode
+- ✅ OCR-only 观测链路：截图、裁剪、OCR 读取、文本匹配
+- ✅ 真实 Win32 UI 自动化（click/type/hotkey/press_enter；双击用两个连续 click 步骤表达）
+- ✅ `run_trace.jsonl` 自动记录每步 OCR 事实、截图路径、等待策略和错误详情
+- ✅ 平台从 trace 提取结果
+- ✅ 模板/平台仍为一级入口，但只发布和回拉新简化 workflow
 
 ## 推荐开发顺序
 
-1. 先固化契约：工作流、仪器画像、平台适配、运行轨迹、评测用例。
-2. 再实现桌面端基础能力：截图采集、窗口锚点定位、输入事件执行、日志落盘。
-3. 接着实现 AI 运行时编排：工作流生成、校准会话、状态观察和恢复策略。
-4. 最后补平台闭环：FastAPI 适配、状态上报、模板管理、评测自动化。
+1. 先固化契约：`anchors.yaml`、`workflow.yaml`、`platform_adapter.yaml`、`run_trace.jsonl`、`eval_case.yaml`。
+2. 再实现锚点页：窗口扫描、截图、画布、action/observe 区域保存。
+3. 接着实现工作流页：锚点集选择、单 prompt 生成、步骤表和标准化检查。
+4. 然后实现执行页：开始/停止/取消、OCR 轮询、截图、日志和 trace。
+5. 最后补模板/平台闭环：模板发布、回拉、状态/trace 上传、评测自动化。
 
 ## 验证
 
@@ -184,12 +229,16 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 python -m pytest tests/ -v
 
 # 启动桌面工作台（需 PyQt6 + opencv-python + paddleocr）
-python -m smartaccess
+python run_desktop.py
+
+# 启动 Edge API，向串口/流程执行主机发送 UDP 执行信号
+smartaccess-edge
 ```
 
 ## 当前默认假设
 
 - MVP 以 `Windows` 上位机场景为主，`Linux` 支持进入 V1。
-- 部署优先考虑实验室内网，可接外部模型，但必须保留本地替代策略。
-- 桌面端默认使用真实 Win32 自动化 + 本地视觉识别；测试显式使用 stub。
-- 研发工作以”文档先行、契约先行、评测先行”为原则。
+- v2 只支持线性顺序工作流，复杂流程控制进入后续版本评估。
+- 平台需要结果时从 run trace 中读取每步 OCR 事实。
+- 工作流 AI 界面只有一个 prompt 输入；锚点集选择属于工作流上下文，不作为 prompt token/reference 暴露给用户。
+- 研发工作以“文档先行、契约先行、评测先行”为原则。

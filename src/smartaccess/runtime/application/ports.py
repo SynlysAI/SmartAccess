@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, RoiRect
+from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
 from smartaccess.shared.contracts.workflow import WorkflowContract
 
 
@@ -123,8 +123,8 @@ class VisionProvider(Protocol):
         *,
         screenshot: bytes | None,
         anchor: AnchorDefinition,
-        roi: RoiRect | None = None,
-    ) -> OcrReading: ...
+        roi: PixelRegion | None = None,
+    ) -> OcrReading: ... 
 
     def detect_presence(self, roi: str) -> bool: ...
 

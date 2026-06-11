@@ -40,7 +40,7 @@ from smartaccess.runtime.orchestration import (
     RecoveryEngine,
 )
 from smartaccess.runtime.orchestration.orchestrator import ConfirmRequest
-from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
+from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 from smartaccess.shared.events import EventBus, Subscriber
 
@@ -122,24 +122,37 @@ class RuntimeFacade:
         self,
         prompt: str,
         context: dict[str, Any] | None = None,
-    ) -> InstrumentProfileContract:
+    ) -> AnchorsContract:
         return self._calibration.draft_profile_from_prompt(prompt, context or {})
+
+    def generate_anchor_profile(
+        self,
+        prompt: str,
+        context: dict[str, Any] | None = None,
+    ) -> AnchorsContract:
+        return self.generate_instrument_profile(prompt, context)
 
     def instrument_profile_reasoning(self) -> str:
         return self._calibration.draft_reasoning()
 
+    def anchor_profile_reasoning(self) -> str:
+        return self.instrument_profile_reasoning()
+
     def instrument_profile_generator_label(self) -> str:
         return self._calibration.draft_generator_label()
 
-    def create_calibration(self, **kwargs: Any) -> InstrumentProfileContract:
+    def anchor_profile_generator_label(self) -> str:
+        return self.instrument_profile_generator_label()
+
+    def create_calibration(self, **kwargs: Any) -> AnchorsContract:
         profile = self._calibration.create_profile(**kwargs)
-        self._calibration.activate(profile.device_id)
+        self._calibration.activate(profile.profile_id)
         return profile
 
-    def list_instruments(self) -> list[InstrumentProfileContract]:
+    def list_instruments(self) -> list[AnchorsContract]:
         return self._calibration.list_profiles()
 
-    def get_instrument(self, device_id: str | None) -> InstrumentProfileContract | None:
+    def get_instrument(self, device_id: str | None) -> AnchorsContract | None:
         return self._calibration.get_profile(device_id) if device_id else None
 
     def delete_instrument(self, device_id: str, *, force: bool = False) -> InstrumentReferenceInfo | None:
@@ -210,10 +223,17 @@ class RuntimeFacade:
         return self._template.search_templates(query, status)
 
     def update_template_version(
-        self, template_id: str, template_version: str, *, instrument_profile: str | None = None
+        self,
+        template_id: str,
+        template_version: str,
+        *,
+        anchor_profile: str | None = None,
+        instrument_profile: str | None = None,
     ) -> TemplateRecord:
         return self._template.update_version_metadata(
-            template_id, template_version, instrument_profile=instrument_profile
+            template_id,
+            template_version,
+            anchor_profile=anchor_profile if anchor_profile is not None else instrument_profile,
         )
 
     def delete_template_version(
@@ -254,7 +274,7 @@ class RuntimeFacade:
             raise ValueError("start_run 需要 workflow 或可解析的 workflow_id")
 
         profile = None
-        target_device = device_id or wf.metadata.instrument_profile
+        target_device = device_id or wf.metadata.anchor_profile
         if target_device:
             profile = self._calibration.get_profile(target_device)
 

@@ -1,39 +1,26 @@
 metadata:
-  workflow_id: wf_battery_cycle_v1
-  template_id: tpl_battery_cycle_standard
-  template_version: 1.2.0
+  workflow_id: wf_battery_cycle_v2
+  anchor_profile: potentiostat_win_01
   author: smartaccess
-  instrument_profile: potentiostat_win_01
-  experiment_type: battery_cycle_test
   lifecycle_state: Published
-preconditions:
-  - window_present: main_console
-  - platform_task_bound: true
-roi_bindings:
-  voltage_panel: roi_voltage_value
-  status_banner: roi_status_text
+  template_id: tpl_battery_cycle_standard
+  template_version: 2.0.0
 steps:
   - id: open_method_editor
+    anchor_id: method_editor
     action: click
-    target: anchor_method_editor_button
+    match_mode: none
+    wait_seconds: 1.0
   - id: input_target_voltage
+    anchor_id: voltage_input
     action: type
-    target: anchor_voltage_input
     value: "4.20"
+    match_mode: none
+    wait_seconds: 0.5
   - id: start_run
+    anchor_id: start_run
     action: click
-    target: anchor_start_button
-  - id: wait_running
-    action: wait_until
-    condition:
-      roi: status_banner
-      equals: Running
-outputs:
-  - key: final_voltage
-    source: roi_voltage_value
-  - key: run_status
-    source: roi_status_text
-retry_policy:
-  max_attempts: 2
-  on_window_miss: relocate_window
-  on_ocr_failure: resample_roi
+    expected_text: Running
+    match_mode: contains
+    timeout_seconds: 10.0
+    requires_confirmation: true

@@ -34,9 +34,9 @@ class TemplateViewModel(ViewModel):
         self.changed.emit()
         return record
 
-    def update_version(self, template_id: str, template_version: str, *, instrument_profile: str) -> TemplateRecord:
+    def update_version(self, template_id: str, template_version: str, *, anchor_profile: str) -> TemplateRecord:
         record = self._facade.update_template_version(
-            template_id, template_version, instrument_profile=instrument_profile
+            template_id, template_version, anchor_profile=anchor_profile
         )
         self.changed.emit()
         return record

@@ -1,16 +1,20 @@
 scenario:
   id: runtime_observation
-  title: 执行中状态识别
+  title: 执行中 OCR 观测
 inputs:
   required_docs:
-    - instrument_profile.yaml
+    - anchors.yaml
     - run_trace.jsonl
 expected_events:
-  - roi_detected
-  - observation_written_to_trace
+  - observe_region_cropped
+  - ocr_text_read
+  - match_result_written_to_trace
+  - screenshot_path_recorded
 pass_criteria:
-  - observer_has_defined_inputs_outputs
-  - vision_mode_referenced
+  - observer_has_defined_inputs_and_trace_facts
+  - ocr_hit_success_path_defined
+  - ocr_timeout_failure_path_defined
+  - default_wait_without_observe_region_defined
 fixtures:
   related_memory:
     - ai/memory/product/vision-patterns.md

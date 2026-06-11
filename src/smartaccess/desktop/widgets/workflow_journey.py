@@ -54,6 +54,7 @@ class WorkflowJourneyGraph(QWidget):
 
     def set_projection(self, projection: JourneyProjection) -> None:
         self._projection = projection
+        self._refresh_geometries()
         self.update()
 
     def projection(self) -> JourneyProjection | None:
@@ -64,6 +65,10 @@ class WorkflowJourneyGraph(QWidget):
             if geometry.circle.contains(point) or geometry.card.contains(point):
                 return geometry.stage_id
         return ""
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        self._refresh_geometries()
+        super().resizeEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         stage_id = self.stage_at(event.position())
@@ -101,12 +106,7 @@ class WorkflowJourneyGraph(QWidget):
             self._draw_empty(painter)
             return
 
-        (
-            self._logical_geometries,
-            self._geometries,
-            self._layout_origin,
-            self._layout_scale,
-        ) = self._compute_geometries(self._projection.stages)
+        self._refresh_geometries()
 
         painter.save()
         painter.translate(self._layout_origin)
@@ -115,6 +115,15 @@ class WorkflowJourneyGraph(QWidget):
         for stage, geometry in zip(self._projection.stages, self._logical_geometries, strict=True):
             self._draw_stage(painter, stage, geometry)
         painter.restore()
+
+    def _refresh_geometries(self) -> None:
+        stages = self._projection.stages if self._projection is not None else []
+        (
+            self._logical_geometries,
+            self._geometries,
+            self._layout_origin,
+            self._layout_scale,
+        ) = self._compute_geometries(stages)
 
     def _compute_geometries(
         self,

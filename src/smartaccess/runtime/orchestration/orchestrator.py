@@ -1,10 +1,4 @@
-"""Orchestrator: the runtime decision center.
-
-Drives a run session step by step: executor runs the action, observer reads
-state, and on failure the incident/recovery path decides retry, rollback,
-manual confirmation, or abort. Every step emits runtime events and writes a
-``run_trace.jsonl`` record.
-"""
+"""Orchestrator: runtime decision center for v2 anchor-first execution."""
 
 from __future__ import annotations
 
@@ -18,36 +12,23 @@ from smartaccess.runtime.application.ports import ActionOutcome
 from smartaccess.runtime.application.run_session_service import RunSessionService
 from smartaccess.runtime.domain.incident import IncidentType, RecoveryAction
 from smartaccess.runtime.domain.run_session import RunSession, RunStep, RunStepStatus
-from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
+from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.run_trace import (
     ActionPayload,
-    ArtifactPayload,
-    ObservationPayload,
-    ResultPayload,
+    ErrorPayload,
     RunTraceRecord,
+    WaitStrategyPayload,
 )
-from smartaccess.shared.contracts.workflow import (
-    WorkflowContract,
-    WorkflowStep,
-    normalize_condition,
-)
+from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowStep
 from smartaccess.shared.events import RuntimeEventName
 
-from .executor import (
-    AnchorMissingError,
-    Executor,
-    ExecutorError,
-    SafetyViolationError,
-    WindowMissingError,
-)
+from .executor import AnchorMissingError, Executor, ExecutorError, SafetyViolationError, WindowMissingError
 from .observer import Observation, Observer
 from .recovery import RecoveryEngine
 
 
 @dataclass(slots=True)
 class ConfirmRequest:
-    """A request for human confirmation at a gate or high-risk recovery."""
-
     session_id: str
     step_id: str
     reason: str
@@ -83,42 +64,23 @@ class Orchestrator:
         self,
         *,
         workflow: WorkflowContract,
-        profile: InstrumentProfileContract | None,
+        profile: AnchorsContract | None,
         session: RunSession,
     ) -> RunSession:
-        run_sessions = self._run_sessions
-        self._executor.configure_profile(profile)
-        safety = profile.safety_limits if profile else None
-        title = profile.window_signature.title_contains if profile else None
-        bindings = workflow.roi_bindings
-
         try:
-            run_sessions.emit_event(session, RuntimeEventName.RUN_READY)
+            self._executor.configure_profile(profile)
+            title = profile.window_signature.title_contains if profile else None
+            self._run_sessions.emit_event(session, RuntimeEventName.RUN_READY)
             self._executor.ensure_window(title)
-        except WindowMissingError as exc:
-            if not self._handle_incident(
-                session, "<window>", IncidentType.WINDOW_MISSING, str(exc)
-            ):
-                run_sessions.emit_event(session, RuntimeEventName.RUN_FAILED, detail=str(exc))
-                return session
-        except Exception as exc:  # noqa: BLE001
-            return self._fail_run(session, detail=f"Window bootstrap failed: {exc}")
-
-        try:
             for step in workflow.steps:
-                if run_sessions.stop_requested(session.session_id):
-                    run_sessions.emit_event(
+                if self._run_sessions.stop_requested(session.session_id):
+                    return self._fail_run(
                         session,
-                        RuntimeEventName.RUN_FAILED,
-                        detail=run_sessions.stop_reason(session.session_id),
+                        step_id=step.id,
+                        detail=self._run_sessions.stop_reason(session.session_id),
                     )
+                if not self._run_step(session, workflow, profile, step):
                     return session
-                if not self._run_step(session, step, safety, profile, bindings):
-                    run_sessions.emit_event(session, RuntimeEventName.RUN_FAILED, step_id=step.id)
-                    return session
-
-            run_sessions.emit_event(session, RuntimeEventName.RUN_COMPLETED)
-            return session
         except Exception as exc:  # noqa: BLE001
             current_step = next(
                 (existing for existing in session.steps if existing.status == RunStepStatus.RUNNING),
@@ -126,290 +88,243 @@ class Orchestrator:
             )
             return self._fail_run(
                 session,
+                detail=str(exc),
                 step_id=current_step.step_id if current_step else None,
-                detail=f"Unhandled runtime error: {exc}",
             )
+
+        self._run_sessions.emit_event(session, RuntimeEventName.RUN_COMPLETED)
+        return session
 
     def _run_step(
         self,
         session: RunSession,
+        workflow: WorkflowContract,
+        profile: AnchorsContract | None,
         step: WorkflowStep,
-        safety,
-        profile: InstrumentProfileContract | None,
-        bindings: dict[str, str],
     ) -> bool:
-        run_sessions = self._run_sessions
         self._set_step_status(session, step, RunStepStatus.RUNNING)
-        run_sessions.emit_event(
+        requires_confirmation = self._executor.requires_confirm(step, getattr(profile, "safety_limits", None))
+        self._run_sessions.emit_event(
             session,
             RuntimeEventName.RUN_STEP_STARTED,
             step_id=step.id,
             action=step.action,
+            anchor_id=step.anchor_id,
+            value=step.value,
+            requires_confirmation=requires_confirmation,
+            expected_text=step.expected_text,
+            match_mode=step.match_mode,
+            wait_seconds=step.wait_seconds,
+            timeout_seconds=step.timeout_seconds,
         )
 
-        if self._executor.requires_confirm(step, safety):
-            if not self._confirm_gate(
-                session,
-                step.id,
-                f"Step {step.id} requires manual confirmation before execution.",
-            ):
+        if requires_confirmation:
+            if not self._confirm_gate(session, step.id, f"{step.id} requires confirmation"):
                 self._set_step_status(session, step, RunStepStatus.BLOCKED)
                 return False
 
-        if step.action in {"wait_until", "screenshot_check"}:
-            return self._run_observation_action(session, step, profile, bindings)
-
-        outcome = self._run_with_recovery(session, step, safety)
+        outcome = self._run_with_recovery(session, step)
         if outcome is None:
             self._set_step_status(session, step, RunStepStatus.FAILED)
+            self._run_sessions.emit_event(
+                session,
+                RuntimeEventName.RUN_FAILED,
+                step_id=step.id,
+                detail="step execution failed",
+            )
             return False
 
-        observation_sources = self._step_observation_sources(step, bindings)
-        observation = Observation()
-        screenshot_path = None
-        if observation_sources:
-            observation, screenshot_path = self._observe_sources(
-                session, step, profile, observation_sources
+        observation, wait_strategy, attempts, elapsed_seconds, screenshot_path = self._post_action_observation(
+            session=session,
+            workflow=workflow,
+            profile=profile,
+            step=step,
+        )
+        reading = observation.readings[0] if observation.readings else None
+        if self._observer.is_low_confidence(observation):
+            self._run_sessions.emit_event(
+                session,
+                RuntimeEventName.RUN_RECOVERED,
+                step_id=step.id,
+                recovery="resample_after_low_confidence",
             )
-            if self._observer.is_low_confidence(observation):
-                if not self._handle_incident(
-                    session,
-                    step.id,
-                    IncidentType.OCR_LOW_CONFIDENCE,
-                    f"Low-confidence observation: {observation.min_confidence:.2f}",
-                ):
-                    self._set_step_status(session, step, RunStepStatus.FAILED)
-                    return False
-                observation, screenshot_path = self._observe_sources(
-                    session, step, profile, observation_sources
-                )
+            observation, wait_strategy, attempts, elapsed_seconds, screenshot_path = self._post_action_observation(
+                session=session,
+                workflow=workflow,
+                profile=profile,
+                step=step,
+            )
+            reading = observation.readings[0] if observation.readings else None
+        matched = (
+            self._observer.matches(
+                reading,
+                expected_text=step.expected_text,
+                match_mode=step.match_mode,
+            )
+            if reading is not None
+            else None
+        )
+        if step.match_mode != "none" and matched is not True:
+            detail = "OCR expectation not met"
+            self._record_trace(
+                session=session,
+                workflow=workflow,
+                step=step,
+                observation=observation,
+                wait_strategy=wait_strategy,
+                attempts=attempts,
+                elapsed_seconds=elapsed_seconds,
+                screenshot_path=screenshot_path,
+                status="timeout" if matched is False else "failed",
+                error=ErrorPayload(type="ocr_mismatch", message=detail),
+            )
+            self._handle_incident(session, step.id, IncidentType.EXECUTOR_FAILED, detail)
+            self._set_step_status(session, step, RunStepStatus.FAILED)
+            self._run_sessions.emit_event(
+                session,
+                RuntimeEventName.RUN_FAILED,
+                step_id=step.id,
+                detail=detail,
+            )
+            return False
 
-        self._set_step_status(session, step, RunStepStatus.OBSERVED)
         self._emit_observation_event(
             session,
             step,
             observation,
-            observation_sources,
+            wait_strategy=wait_strategy,
+            attempts=attempts,
+            elapsed_seconds=elapsed_seconds,
+            matched=matched,
             screenshot_path=screenshot_path,
         )
-
-        condition = normalize_condition(step.condition)
-        if condition and not self._observer.condition_passed(observation, condition):
-            detail = f"Observation condition not met: {condition}"
-            if not self._handle_incident(
-                session, step.id, IncidentType.EXECUTOR_FAILED, detail
-            ):
-                self._set_step_status(session, step, RunStepStatus.FAILED)
-                return False
-
         self._record_trace(
-            session,
-            step,
-            outcome,
-            observation,
-            provider_mode="real",
+            session=session,
+            workflow=workflow,
+            step=step,
+            observation=observation,
+            wait_strategy=wait_strategy,
+            attempts=attempts,
+            elapsed_seconds=elapsed_seconds,
             screenshot_path=screenshot_path,
+            status="success",
+            error=None,
         )
         self._set_step_status(session, step, RunStepStatus.SUCCEEDED)
-        run_sessions.emit_event(
-            session, RuntimeEventName.RUN_STEP_SUCCEEDED, step_id=step.id
-        )
+        self._run_sessions.emit_event(session, RuntimeEventName.RUN_STEP_SUCCEEDED, step_id=step.id)
         return True
 
-    def _run_observation_action(
+    def _post_action_observation(
         self,
+        *,
         session: RunSession,
+        workflow: WorkflowContract,
+        profile: AnchorsContract | None,
         step: WorkflowStep,
-        profile: InstrumentProfileContract | None,
-        bindings: dict[str, str],
-    ) -> bool:
-        """Handle wait_until (polling) and screenshot_check (one-shot) actions."""
+    ) -> tuple[Observation, WaitStrategyPayload, int, float, str | None]:
+        anchor = self._executor.anchor_for_step(step)
+        if anchor is None:
+            return Observation(), WaitStrategyPayload(type="fixed_wait", wait_seconds=0.0), 1, 0.0, None
 
-        run_sessions = self._run_sessions
-        condition = normalize_condition(step.condition)
-        if not condition:
-            run_sessions.emit_event(
-                session,
-                RuntimeEventName.RUN_FAILED,
-                step_id=step.id,
-                detail="wait_until/screenshot_check missing condition",
+        if step.match_mode == "none":
+            wait_seconds = (
+                step.wait_seconds
+                if step.wait_seconds is not None
+                else anchor.default_wait_seconds
             )
-            self._set_step_status(session, step, RunStepStatus.FAILED)
-            return False
+            wait_seconds = float(wait_seconds or 0.0)
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+            return (
+                Observation(),
+                WaitStrategyPayload(type="fixed_wait", wait_seconds=wait_seconds),
+                1,
+                wait_seconds,
+                None,
+            )
 
-        sources = self._step_observation_sources(step, bindings, condition)
-        if not sources:
-            run_sessions.emit_event(
-                session,
-                RuntimeEventName.RUN_FAILED,
-                step_id=step.id,
-                detail="wait_until/screenshot_check missing observation source",
-            )
-            self._set_step_status(session, step, RunStepStatus.FAILED)
-            return False
-
-        timeout = max(float(condition.get("timeout_seconds", 30.0)), 0.0)
-        poll_interval = max(float(condition.get("poll_interval_seconds", 1.0)), 0.1)
-
-        if step.action == "screenshot_check":
-            observation, screenshot_path = self._observe_sources(session, step, profile, sources)
-            passed = self._observer.condition_passed(observation, condition)
-            self._set_step_status(
-                session,
-                step,
-                RunStepStatus.OBSERVED if passed else RunStepStatus.FAILED,
-            )
-            self._emit_observation_event(
-                session,
-                step,
-                observation,
-                sources,
-                screenshot_path=screenshot_path,
-            )
-            self._record_trace(
-                session,
-                step,
-                ActionOutcome(ok=passed, detail="screenshot_check"),
-                observation,
-                provider_mode="real",
-                poll_attempts=1,
-                elapsed_seconds=0.0,
-                screenshot_path=screenshot_path,
-            )
-            if not passed:
-                self._handle_incident(
-                    session,
-                    step.id,
-                    IncidentType.EXECUTOR_FAILED,
-                    f"screenshot_check condition not met: {condition}",
-                )
-                return False
-            run_sessions.emit_event(
-                session, RuntimeEventName.RUN_STEP_SUCCEEDED, step_id=step.id
-            )
-            return True
-
+        timeout_seconds = (
+            step.timeout_seconds
+            if step.timeout_seconds is not None
+            else anchor.default_wait_seconds
+        )
+        timeout_seconds = float(timeout_seconds or 2.0)
         start = time.monotonic()
         attempts = 0
+        last_observation = Observation()
+        last_screenshot_path = None
         while True:
             attempts += 1
-            observation, screenshot_path = self._observe_sources(
-                session, step, profile, sources
-            )
-            if self._observer.condition_passed(observation, condition):
-                elapsed = time.monotonic() - start
-                self._set_step_status(session, step, RunStepStatus.OBSERVED)
-                self._emit_observation_event(
-                    session,
-                    step,
-                    observation,
-                    sources,
-                    screenshot_path=screenshot_path,
+            screenshot = self._executor.screenshot(step.id)
+            if screenshot:
+                self._observer.configure_screenshot(screenshot)
+                last_screenshot_path = self._run_sessions.save_screenshot(
+                    session.session_id,
+                    f"{step.id}_observe.png",
+                    screenshot,
                 )
-                self._record_trace(
-                    session,
-                    step,
-                    ActionOutcome(ok=True, detail=f"wait_until hit on attempt {attempts}"),
-                    observation,
-                    provider_mode="real",
-                    poll_attempts=attempts,
-                    elapsed_seconds=elapsed,
-                    screenshot_path=screenshot_path,
-                )
-                run_sessions.emit_event(
-                    session, RuntimeEventName.RUN_STEP_SUCCEEDED, step_id=step.id
-                )
-                return True
-
+            observation = self._observer.observe_anchor(profile, step.anchor_id)
+            last_observation = observation
             elapsed = time.monotonic() - start
-            if elapsed >= timeout:
-                self._set_step_status(session, step, RunStepStatus.FAILED)
-                self._emit_observation_event(
+            if observation.min_confidence < 0.6:
+                self._run_sessions.emit_event(
                     session,
-                    step,
-                    observation,
-                    sources,
-                    screenshot_path=screenshot_path,
-                )
-                self._record_trace(
-                    session,
-                    step,
-                    ActionOutcome(ok=False, detail=f"wait_until timeout ({timeout}s)"),
-                    observation,
-                    provider_mode="real",
-                    poll_attempts=attempts,
-                    elapsed_seconds=elapsed,
-                    screenshot_path=screenshot_path,
-                )
-                self._handle_incident(
-                    session,
-                    step.id,
-                    IncidentType.EXECUTOR_FAILED,
-                    f"wait_until timeout: {timeout}s after {attempts} polls",
-                )
-                return False
-            if self._run_sessions.stop_requested(session.session_id):
-                self._set_step_status(session, step, RunStepStatus.FAILED)
-                run_sessions.emit_event(
-                    session,
-                    RuntimeEventName.RUN_FAILED,
+                    RuntimeEventName.RUN_RECOVERED,
                     step_id=step.id,
-                    detail=self._run_sessions.stop_reason(session.session_id),
+                    recovery="resample_after_low_confidence",
                 )
-                return False
-            time.sleep(poll_interval)
-
-    def _step_observation_sources(
-        self,
-        step: WorkflowStep,
-        bindings: dict[str, str],
-        condition: dict | None = None,
-    ) -> list[str]:
-        condition = condition if condition is not None else normalize_condition(step.condition)
-        condition = condition or {}
-        source = condition.get("source") or condition.get("roi")
-        if source:
-            return [bindings.get(str(source), str(source))]
-        if bindings:
-            return list(dict.fromkeys(bindings.values()))
-        if step.target:
-            return [step.target]
-        return []
-
-    def _observe_sources(
-        self,
-        session: RunSession,
-        step: WorkflowStep,
-        profile: InstrumentProfileContract | None,
-        sources: list[str],
-    ) -> tuple[Observation, str | None]:
-        screenshot_path = None
-        screenshot = self._executor.screenshot(step.id)
-        if screenshot:
-            self._observer.configure_screenshot(screenshot)
-            screenshot_path = self._run_sessions.save_screenshot(
-                session.session_id,
-                f"{step.id}.png",
-                screenshot,
+            if self._observer.is_low_confidence(observation) and elapsed < timeout_seconds:
+                time.sleep(0.5)
+                continue
+            reading = observation.readings[0] if observation.readings else None
+            matched = (
+                self._observer.matches(
+                    reading,
+                    expected_text=step.expected_text,
+                    match_mode=step.match_mode,
+                )
+                if reading is not None
+                else False
             )
-        else:
-            self._observer.configure_screenshot(None)
-        observation = self._observer.observe_profile(profile, sources)
-        return observation, screenshot_path
+            if matched or elapsed >= timeout_seconds:
+                return (
+                    observation,
+                    WaitStrategyPayload(
+                        type="ocr_poll",
+                        timeout_seconds=timeout_seconds,
+                        poll_interval_seconds=0.5,
+                    ),
+                    attempts,
+                    elapsed,
+                    last_screenshot_path,
+                )
+            time.sleep(0.5)
 
     def _emit_observation_event(
         self,
         session: RunSession,
         step: WorkflowStep,
         observation: Observation,
-        sources: list[str],
         *,
+        wait_strategy: WaitStrategyPayload,
+        attempts: int,
+        elapsed_seconds: float,
+        matched: bool | None,
         screenshot_path: str | None = None,
     ) -> None:
+        reading = observation.readings[0] if observation.readings else None
         payload = {
             "step_id": step.id,
+            "anchor_id": step.anchor_id,
             "min_confidence": observation.min_confidence,
-            "sources": sources,
+            "sources": [step.anchor_id],
+            "expected_text": step.expected_text,
+            "actual_text": reading.text if reading is not None else None,
+            "match_mode": step.match_mode,
+            "matched": matched,
+            "attempts": attempts,
+            "elapsed_seconds": elapsed_seconds,
+            "wait_strategy": wait_strategy.model_dump(mode="json", exclude_none=True),
             "readings": [
                 {
                     "roi": reading.roi,
@@ -422,46 +337,37 @@ class Orchestrator:
         }
         if screenshot_path:
             payload["screenshot_path"] = screenshot_path
-        self._run_sessions.emit_event(
-            session, RuntimeEventName.RUN_STEP_OBSERVED, **payload
-        )
+        self._run_sessions.emit_event(session, RuntimeEventName.RUN_STEP_OBSERVED, **payload)
 
-    def _run_with_recovery(self, session: RunSession, step: WorkflowStep, safety):
-        attempt = 0
+    def _run_with_recovery(self, session: RunSession, step: WorkflowStep) -> ActionOutcome | None:
+        attempts = 0
         while True:
             try:
-                return self._executor.run_step(step, safety)
+                return self._executor.run_step(step, None)
             except SafetyViolationError as exc:
-                self._handle_incident(
-                    session, step.id, IncidentType.SAFETY_LIMIT_VIOLATION, str(exc)
-                )
+                self._handle_incident(session, step.id, IncidentType.SAFETY_LIMIT_VIOLATION, str(exc))
                 return None
             except (WindowMissingError, AnchorMissingError, ExecutorError) as exc:
-                if not self._handle_incident(
-                    session, step.id, self._classify(exc), str(exc)
-                ):
+                if not self._handle_incident(session, step.id, self._classify(exc), str(exc)):
                     return None
-                attempt += 1
-                if attempt > self._max_retries:
+                attempts += 1
+                if attempts > self._max_retries:
                     return None
 
     def _confirm_gate(self, session: RunSession, step_id: str, reason: str) -> bool:
-        run_sessions = self._run_sessions
-        run_sessions.emit_event(
-            session, RuntimeEventName.RUN_BLOCKED, step_id=step_id, reason=reason
-        )
+        self._run_sessions.emit_event(session, RuntimeEventName.RUN_BLOCKED, step_id=step_id, reason=reason)
         ok = self._confirm(ConfirmRequest(session.session_id, step_id, reason))
         if ok:
-            run_sessions.emit_event(
-                session, RuntimeEventName.RUN_RECOVERED, step_id=step_id
-            )
+            self._run_sessions.emit_event(session, RuntimeEventName.RUN_RECOVERED, step_id=step_id)
         return ok
 
     def _handle_incident(
-        self, session: RunSession, step_id: str, incident_type: IncidentType, detail: str
+        self,
+        session: RunSession,
+        step_id: str,
+        incident_type: IncidentType,
+        detail: str,
     ) -> bool:
-        """Open an incident and decide recovery. Returns True if the run may continue."""
-
         incident = self._incidents.open(
             session_id=session.session_id,
             step_id=step_id,
@@ -469,16 +375,12 @@ class Orchestrator:
             detail=detail,
         )
         action = self._recovery.decide(incident)
-
         if self._recovery.must_wait_for_human(incident):
-            confirmed = self._confirm(
-                ConfirmRequest(session.session_id, step_id, detail, incident_type.value)
-            )
+            confirmed = self._confirm(ConfirmRequest(session.session_id, step_id, detail, incident_type.value))
             if not confirmed:
                 return False
             self._incidents.confirm(incident.incident_id)
             return action != RecoveryAction.ABORT
-
         if action == RecoveryAction.ABORT:
             return False
         self._run_sessions.emit_event(
@@ -499,46 +401,48 @@ class Orchestrator:
 
     def _record_trace(
         self,
-        session: RunSession,
-        step: WorkflowStep,
-        outcome: ActionOutcome,
-        observation: Observation,
         *,
-        provider_mode: str | None = None,
-        poll_attempts: int | None = None,
-        elapsed_seconds: float | None = None,
-        normalization_note: str | None = None,
-        screenshot_path: str | None = None,
+        session: RunSession,
+        workflow: WorkflowContract,
+        step: WorkflowStep,
+        observation: Observation,
+        wait_strategy: WaitStrategyPayload,
+        attempts: int,
+        elapsed_seconds: float,
+        screenshot_path: str | None,
+        status: str,
+        error: ErrorPayload | None,
     ) -> None:
+        reading = observation.readings[0] if observation.readings else None
+        matched = (
+            self._observer.matches(
+                reading,
+                expected_text=step.expected_text,
+                match_mode=step.match_mode,
+            )
+            if reading is not None
+            else None
+        )
         record = RunTraceRecord(
             timestamp=datetime.now(timezone.utc),
             session_id=session.session_id,
+            workflow_id=workflow.metadata.workflow_id,
+            template_id=workflow.metadata.template_id,
+            template_version=workflow.metadata.template_version,
             step_id=step.id,
-            observation=ObservationPayload.model_validate(
-                {
-                    "readings": [
-                        {
-                            "roi": reading.roi,
-                            "text": reading.text,
-                            "confidence": reading.confidence,
-                            "detail": reading.detail,
-                        }
-                        for reading in observation.readings
-                    ],
-                    "min_confidence": observation.min_confidence,
-                }
-            ),
-            action=ActionPayload(type=step.action, target=step.target),
-            result=ResultPayload(status="success", detail=outcome.detail or "ok"),
-            artifacts=ArtifactPayload.model_validate(
-                {"screenshot": screenshot_path or outcome.screenshot_path}
-                if screenshot_path or outcome.screenshot_path
-                else {}
-            ),
-            provider_mode=provider_mode,
-            poll_attempts=poll_attempts,
+            anchor_id=step.anchor_id,
+            action=ActionPayload(type=step.action, value=step.value),
+            wait_strategy=wait_strategy,
+            expected_text=step.expected_text,
+            actual_text=reading.text if reading is not None else None,
+            match_mode=step.match_mode,
+            matched=matched,
+            attempts=attempts,
             elapsed_seconds=elapsed_seconds,
-            normalization_note=normalization_note,
+            screenshot_path=screenshot_path,
+            status=status,  # type: ignore[arg-type]
+            error=error,
+            provider_mode="real",
         )
         self._run_sessions.append_trace(record)
 
@@ -563,9 +467,7 @@ class Orchestrator:
         return session
 
     @staticmethod
-    def _set_step_status(
-        session: RunSession, step: WorkflowStep, status: RunStepStatus
-    ) -> None:
+    def _set_step_status(session: RunSession, step: WorkflowStep, status: RunStepStatus) -> None:
         for existing in session.steps:
             if existing.step_id == step.id:
                 existing.status = status

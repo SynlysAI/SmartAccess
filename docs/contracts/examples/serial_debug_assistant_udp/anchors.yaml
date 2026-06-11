@@ -1,0 +1,143 @@
+profile_id: serial_debug_assistant_udp
+window_signature:
+  title_contains: 串口调试助手
+  process_name: null
+  screenshot_size:
+    width: 1280
+    height: 860
+anchors:
+  - id: protocol_udp_tab
+    action_region:
+      pixel:
+        x: 46
+        y: 86
+        width: 138
+        height: 34
+      normalized:
+        x: 0.0359
+        y: 0.1
+        width: 0.1078
+        height: 0.0395
+    supported_actions:
+      - click
+    default_wait_seconds: 0.5
+    action_bindings:
+      - action: click
+        requires_confirmation: false
+    notes: 选择 UDP/网络调试页签；实际运行前请在目标工具窗口中重新校准。
+  - id: local_port_input
+    action_region:
+      pixel:
+        x: 174
+        y: 142
+        width: 110
+        height: 28
+      normalized:
+        x: 0.1359
+        y: 0.1651
+        width: 0.0859
+        height: 0.0326
+    supported_actions:
+      - click
+      - type
+      - hotkey
+      - press_enter
+    default_wait_seconds: 0.3
+    action_bindings:
+      - action: click
+        requires_confirmation: false
+      - action: type
+        requires_confirmation: false
+      - action: hotkey
+        requires_confirmation: false
+      - action: press_enter
+        requires_confirmation: false
+  - id: open_udp_service_button
+    action_region:
+      pixel:
+        x: 304
+        y: 138
+        width: 118
+        height: 34
+      normalized:
+        x: 0.2375
+        y: 0.1605
+        width: 0.0922
+        height: 0.0395
+    observe_region:
+      pixel:
+        x: 432
+        y: 138
+        width: 210
+        height: 34
+      normalized:
+        x: 0.3375
+        y: 0.1605
+        width: 0.1641
+        height: 0.0395
+    supported_actions:
+      - click
+    default_wait_seconds: 1.0
+    action_bindings:
+      - action: click
+        requires_confirmation: false
+    vision_mode: ocr
+    notes: 打开 UDP 服务后观察状态文字，期望出现“已打开/监听/UDP”之一。
+  - id: send_text_input
+    action_region:
+      pixel:
+        x: 46
+        y: 670
+        width: 792
+        height: 72
+      normalized:
+        x: 0.0359
+        y: 0.7791
+        width: 0.6188
+        height: 0.0837
+    supported_actions:
+      - click
+      - type
+      - hotkey
+      - press_enter
+    default_wait_seconds: 0.3
+    action_bindings:
+      - action: click
+        requires_confirmation: false
+      - action: type
+        requires_confirmation: false
+      - action: hotkey
+        requires_confirmation: false
+      - action: press_enter
+        requires_confirmation: false
+  - id: send_button
+    action_region:
+      pixel:
+        x: 862
+        y: 686
+        width: 112
+        height: 42
+      normalized:
+        x: 0.6734
+        y: 0.7977
+        width: 0.0875
+        height: 0.0488
+    observe_region:
+      pixel:
+        x: 46
+        y: 192
+        width: 930
+        height: 438
+      normalized:
+        x: 0.0359
+        y: 0.2233
+        width: 0.7266
+        height: 0.5093
+    supported_actions:
+      - click
+    default_wait_seconds: 1.0
+    action_bindings:
+      - action: click
+        requires_confirmation: false
+    vision_mode: ocr
+    notes: 发送后观察收发日志区域，期望出现测试消息。

@@ -1,34 +1,33 @@
 # Workflow Primitives Memory
 
-- `scope`: SmartAccess 运行时允许使用的基础工作流原语。
+- `scope`: SmartAccess v2 运行时允许使用的基础工作流动作和等待语义。
 - `source_of_truth`: `docs/PRD.zh-CN.md`, `docs/contracts/interfaces.md`
-- `last_reviewed`: 2026-06-09
-- `related_contracts`: `workflow.yaml`, `run_trace.jsonl`
+- `last_reviewed`: 2026-06-11
+- `related_contracts`: `workflow.yaml`, `anchors.yaml`, `run_trace.jsonl`
 
 ## 原语集合
 
 - `click`
-- `double_click`
 - `type`
 - `hotkey`
-- `wait`
-- `wait_until`
-- `screenshot_check`
-- `capture`
-- `branch`
-- `loop`
-- `pause_for_confirmation`
+- `press_enter`
 
-## 设计要求
+## 动作语义
 
-- 每个原语都必须可落到可审计事件。
-- `wait_until` 必须绑定观测条件并轮询到条件满足或超时。
-- `screenshot_check` 必须读取指定观测源并执行一次条件判断。
-- 高风险原语必须支持人工确认。
-- 原语扩展前先更新本文件和 `workflow.yaml` 文档。
+- `click` 点击目标锚点 `action_region` 中心；双击用两个连续 `click` 步骤表达。
+- `type` / `hotkey` / `press_enter` 必须先聚焦目标锚点，再输入或按键。
+- 每个原语都必须可落到 `run_trace.jsonl` 的步骤级事实。
+- 高风险步骤使用 `requires_confirmation`，执行前必须等待人工确认。
 
-## 绑定与输出语义
+## 等待与观测语义
 
-- `roi_bindings` 是“工作流逻辑名 -> 仪器锚点 ID”，用于让多个工作流复用同一套校准锚点。
-- `outputs` 是“结果 key -> 观测来源”，用于声明运行结束或关键节点需要保留的结构化结果。
-- 步骤级 `condition` 是动作识别闭环入口，应包含 source/mode/operator/expected/timeout 等字段。
+- 如果步骤有 `expected_text`，或 `match_mode == not_empty`，orchestrator 必须对目标锚点的 `observe_region` 做 OCR 轮询。
+- OCR 匹配支持 `contains`、`equals`、`regex`、`not_empty`、`none`。
+- 如果 `match_mode == none`，按 `step.wait_seconds -> anchor.default_wait_seconds -> app default 2.0s` 等待。
+- 停止或取消请求必须能中断 OCR 轮询。
+
+## 禁止重新引入的旧语义
+
+- 不再使用独立等待动作、截图校验动作、流程控制动作或截图采集动作作为 v2 workflow 动作。
+- 不再使用复杂绑定、手工结果声明或步骤级自由判断。
+- 平台需要结果时从 `run_trace.jsonl` 读取每步 OCR 事实。

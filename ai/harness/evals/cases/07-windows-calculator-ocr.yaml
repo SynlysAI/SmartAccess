@@ -1,0 +1,29 @@
+scenario:
+  id: windows_calculator_ocr
+  title: Windows 计算器运算与 OCR 结果证明
+inputs:
+  anchors: docs/contracts/examples/windows_calculator/anchors.yaml
+  workflow: docs/contracts/examples/windows_calculator/workflow.yaml
+  required_docs:
+    - anchors.yaml
+    - workflow.yaml
+    - run_trace.jsonl
+expected_events:
+  - calculator_window_focused
+  - expression_12_plus_34_entered
+  - result_display_observed
+  - ocr_text_contains_46
+  - run_trace_records_calculation_result
+pass_criteria:
+  - calculator_anchor_profile_loads
+  - workflow_standardization_passes
+  - final_step_expected_text_is_46
+  - final_step_uses_ocr_observe_region
+fixtures:
+  related_memory:
+    - ai/memory/product/vision-patterns.md
+  related_skills:
+    - ai/skills/runtime/ui-automation-orchestrator/SKILL.md
+  example_assets:
+    - docs/contracts/examples/windows_calculator/anchors.yaml
+    - docs/contracts/examples/windows_calculator/workflow.yaml

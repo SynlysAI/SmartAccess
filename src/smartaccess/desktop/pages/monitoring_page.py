@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTabWidget,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -94,7 +95,7 @@ class MonitoringPage(QWidget):
         card.add(section_title("步骤时间线"))
         card.add(
             hint_label(
-                "左侧时间线已放宽，步骤详情会自动换行，方便查看 target、value 和状态时间。"
+                "左侧时间线已放宽，步骤详情会自动换行，方便查看 anchor_id、value 和状态时间。"
             )
         )
         self._timeline = Timeline()
@@ -118,8 +119,7 @@ class MonitoringPage(QWidget):
         obs_section = CollapsibleSection("观测结果", accent=t.PRIMARY)
         obs_section.add(
             hint_label(
-                "运行时会按锚点的 vision_mode 触发 OCR、template、color 或 presence，"
-                "并把结构化读数直接展示在这里。"
+                "有 OCR 条件的步骤会轮询锚点观察区域；普通步骤只执行固定等待。"
             )
         )
         self._reading = rich_text(QLabel("暂无识别结果。"))
@@ -130,9 +130,8 @@ class MonitoringPage(QWidget):
             "<b>识别结果说明</b>"
             "<ul style='margin:6px 0 0 16px;'>"
             "<li><b>OCR</b>: 读出 ROI 内文字，text 为识别内容，confidence 为置信度。</li>"
-            "<li><b>Template</b>: 结果常见为 matched / no_match，confidence 为匹配分数。</li>"
-            "<li><b>Color</b>: 结果常见为 matched / no_match 或具体色值，detail 会带参考色距离。</li>"
-            "<li><b>Presence</b>: 结果常见为 present / missing，confidence 反映前景占比判断。</li>"
+            "<li><b>固定等待</b>: match_mode 为 none 时不会做 OCR 校验，trace 中 matched 为空。</li>"
+            "<li><b>OCR 轮询</b>: expected_text 或 not_empty 会形成校验标准，并记录实测值。</li>"
             "</ul></div>"
         )
         guide.setWordWrap(True)
@@ -147,8 +146,13 @@ class MonitoringPage(QWidget):
         obs_section.add(self._shot)
         center.add(obs_section)
 
-        audit_section = CollapsibleSection("审计摘要", accent=t.SUCCESS, expanded=False)
-        self._audit = rich_text(QLabel("暂无审计摘要。"))
+        audit_section = CollapsibleSection("步骤审计", accent=t.SUCCESS, expanded=True)
+        self._audit = QTextBrowser()
+        self._audit.setObjectName("LogView")
+        self._audit.setOpenExternalLinks(True)
+        self._audit.setReadOnly(True)
+        self._audit.setMinimumHeight(260)
+        self._audit.setHtml("暂无步骤审计。")
         audit_section.add(self._audit)
         center.add(audit_section)
         center.body().addStretch(1)
@@ -161,7 +165,7 @@ class MonitoringPage(QWidget):
         self._vm.log_line.connect(self._log.append_line)
         self._vm.run_state.connect(self._state.set_status)
         self._vm.reading.connect(self._reading.setText)
-        self._vm.audit.connect(self._audit.setText)
+        self._vm.audit.connect(self._audit.setHtml)
         self._vm.shot.connect(self._shot.setText)
         self._vm.run_state.connect(self._on_run_state_changed)
 
@@ -180,7 +184,7 @@ class MonitoringPage(QWidget):
     def _clear_run_display(self) -> None:
         self._log.clear_log()
         self._reading.setText("暂无识别结果。")
-        self._audit.setText("暂无审计摘要。")
+        self._audit.setHtml("暂无步骤审计。")
         self._shot.setText("最新截图路径会显示在这里。")
 
     def _reload(self) -> None:

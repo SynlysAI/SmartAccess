@@ -1,17 +1,20 @@
 scenario:
   id: workflow_generation
-  title: 自然语言生成工作流
+  title: 自然语言生成简化工作流
 inputs:
   required_docs:
     - workflow.yaml
-    - instrument_profile.yaml
+    - anchors.yaml
 expected_events:
   - workflow_metadata_present
-  - preconditions_present
-  - retry_policy_present
+  - anchor_profile_referenced
+  - steps_resolved_to_existing_anchors
+  - no_legacy_fields_generated
 pass_criteria:
   - workflow_steps_use_known_primitives
-  - outputs_declared
+  - each_action_supported_by_anchor
+  - ocr_steps_have_observe_region
+  - no_manual_result_fields_declared
 fixtures:
   related_memory:
     - ai/memory/product/workflow-primitives.md

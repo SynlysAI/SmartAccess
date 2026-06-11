@@ -1,4 +1,4 @@
-"""Calibration view model: window discovery, capture, and instrument profile creation."""
+"""Calibration view model: window discovery, capture, and anchor profile creation."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from smartaccess.runtime.application.ports import WindowInfo
-from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
+from smartaccess.shared.contracts.anchors import AnchorsContract
 
 from .base import ViewModel
 
@@ -18,11 +18,11 @@ class CalibrationViewModel(ViewModel):
     def capture_window(self, hwnd: int) -> bytes | None:
         return self._facade.capture_window(hwnd)
 
-    def list_instruments(self) -> list[InstrumentProfileContract]:
+    def list_instruments(self) -> list[AnchorsContract]:
         return self._facade.list_instruments()
 
-    def get_instrument(self, device_id: str) -> InstrumentProfileContract | None:
-        """Load a specific instrument profile by device_id."""
+    def get_instrument(self, device_id: str) -> AnchorsContract | None:
+        """Load a specific anchor profile by device_id/profile_id."""
         return self._facade.get_instrument(device_id)
 
     def workspace_dir(self) -> Path:
@@ -33,17 +33,17 @@ class CalibrationViewModel(ViewModel):
         return self._facade.check_instrument_references(device_id)
 
     def delete_instrument(self, device_id: str, *, force: bool = False):
-        """Delete an instrument profile after pre-check."""
+        """Delete an anchor profile after pre-check."""
         return self._facade.delete_instrument(device_id, force=force)
 
-    def generate_profile_suggestion(self, prompt: str, context: dict[str, Any]) -> InstrumentProfileContract:
-        return self._facade.generate_instrument_profile(prompt, context)
+    def generate_profile_suggestion(self, prompt: str, context: dict[str, Any]) -> AnchorsContract:
+        return self._facade.generate_anchor_profile(prompt, context)
 
     def profile_suggestion_reasoning(self) -> str:
-        return self._facade.instrument_profile_reasoning()
+        return self._facade.anchor_profile_reasoning()
 
     def profile_generator_label(self) -> str:
-        return self._facade.instrument_profile_generator_label()
+        return self._facade.anchor_profile_generator_label()
 
     def create_profile(
         self,
@@ -56,7 +56,7 @@ class CalibrationViewModel(ViewModel):
         confirm_steps: list[str],
         capture_width: int | None,
         capture_height: int | None,
-    ) -> InstrumentProfileContract:
+    ) -> AnchorsContract:
         safety: dict[str, Any] = {"fields": safety_fields}
         if confirm_steps:
             safety["requires_manual_confirm_for"] = confirm_steps

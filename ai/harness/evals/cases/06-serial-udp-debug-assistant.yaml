@@ -1,0 +1,30 @@
+scenario:
+  id: serial_udp_debug_assistant
+  title: 串口调试助手 UDP 服务打开与发送
+inputs:
+  anchors: docs/contracts/examples/serial_debug_assistant_udp/anchors.yaml
+  workflow: docs/contracts/examples/serial_debug_assistant_udp/workflow.yaml
+  required_docs:
+    - anchors.yaml
+    - workflow.yaml
+    - run_trace.jsonl
+expected_events:
+  - udp_mode_selected
+  - local_port_input_filled
+  - udp_service_opened
+  - udp_payload_sent
+  - ocr_send_log_contains_payload
+pass_criteria:
+  - serial_udp_anchor_profile_loads
+  - workflow_standardization_passes
+  - open_service_step_uses_ocr_observe_region
+  - send_step_records_payload_ocr_fact
+fixtures:
+  related_skills:
+    - ai/skills/runtime/vision-calibrator/SKILL.md
+    - ai/skills/runtime/workflow-designer/SKILL.md
+  related_agents:
+    - ai/agents/runtime/orchestrator.md
+  example_assets:
+    - docs/contracts/examples/serial_debug_assistant_udp/anchors.yaml
+    - docs/contracts/examples/serial_debug_assistant_udp/workflow.yaml

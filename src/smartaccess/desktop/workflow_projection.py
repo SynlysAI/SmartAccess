@@ -9,10 +9,9 @@ from urllib.parse import quote
 from smartaccess.desktop.shell import theme as t
 from smartaccess.runtime.application.workflow_service import StandardizationResult
 from smartaccess.runtime.application.workflow_service import WorkflowDraftRecord
-from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
+from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 
-_OBSERVATION_TYPES = {"observation", "readout", "status", "region", "roi"}
 REFERENCE_CATEGORY_ORDER = ("observation", "action", "safety", "confirm")
 REFERENCE_CATEGORY_LABELS = {
     "observation": "观测",
@@ -33,15 +32,16 @@ class ContextAnchorView:
     id: str
     type: str
     vision_mode: str
+    can_observe: bool
     requires_confirmation: bool
 
     @property
     def role_label(self) -> str:
-        return "观测锚点" if self.type in _OBSERVATION_TYPES else "动作锚点"
+        return "观测锚点" if self.can_observe else "动作锚点"
 
     @property
     def category(self) -> str:
-        return "observation" if self.type in _OBSERVATION_TYPES else "action"
+        return "observation" if self.can_observe else "action"
 
     @property
     def token(self) -> str:
@@ -131,7 +131,7 @@ class ContextReferenceView:
 
 @dataclass(frozen=True, slots=True)
 class WorkflowContextSnapshot:
-    device_id: str
+    anchor_profile: str
     title_contains: str
     actions: list[str] = field(default_factory=list)
     action_anchors: list[ContextAnchorView] = field(default_factory=list)
@@ -142,7 +142,7 @@ class WorkflowContextSnapshot:
 
     @property
     def is_empty(self) -> bool:
-        return not self.device_id
+        return not self.anchor_profile
 
     def reference_tokens(self) -> set[str]:
         return {item.token for item in self.references}
@@ -183,11 +183,11 @@ class WorkflowContextSnapshot:
         active_tokens: set[str] | None = None,
     ) -> str:
         if self.is_empty:
-            return f"## {heading}\n\n- 未选择或未找到已校准设备。"
+            return f"## {heading}\n\n- 未选择或未找到已校准 anchor_profile。"
         lines = [
             f"## {heading}",
             "",
-            f"- 目标设备：`{self.device_id}`",
+            f"- anchor_profile：`{self.anchor_profile}`",
             f"- 窗口标题匹配：`{self.title_contains or '未配置'}`",
             f"- 支持动作：{', '.join(f'`{a}`' for a in self.actions) if self.actions else '未声明'}",
         ]
@@ -207,7 +207,7 @@ class WorkflowContextSnapshot:
         interactive: bool = False,
     ) -> str:
         if self.is_empty:
-            return "<span>未选择或未找到已校准设备。</span>"
+            return "<span>未选择或未找到已校准 anchor_profile。</span>"
         sections = [self._summary_html()]
         active_tokens = active_tokens or set()
         for category in REFERENCE_CATEGORY_ORDER:
@@ -229,7 +229,7 @@ class WorkflowContextSnapshot:
         interactive: bool = True,
     ) -> str:
         if self.is_empty:
-            return "<span>未选择设备，无法生成引用。</span>"
+            return "<span>未选择 anchor_profile，无法生成引用。</span>"
         items = self.items_for_category(category)
         if not items:
             return (
@@ -254,7 +254,7 @@ class WorkflowContextSnapshot:
         return (
             "<div style='margin-bottom:12px;padding:10px 12px;border-radius:10px;"
             f"border:1px solid {t.HAIRLINE};background:{t.SURFACE_2};line-height:170%;'>"
-            f"<div><b>目标设备</b>: {html.escape(self.device_id)}</div>"
+            f"<div><b>anchor_profile</b>: {html.escape(self.anchor_profile)}</div>"
             f"<div><b>窗口标题匹配</b>: {html.escape(self.title_contains or '未配置')}</div>"
             f"<div><b>支持动作</b>: {html.escape(actions)}</div>"
             "</div>"
@@ -285,7 +285,7 @@ class WorkflowContextSnapshot:
 @dataclass(frozen=True, slots=True)
 class WorkflowOverviewProjection:
     workflow_id: str
-    device_id: str
+    anchor_profile: str
     lifecycle_state: str
     prompt: str
     reasoning_markdown: str
@@ -298,10 +298,10 @@ class WorkflowOverviewProjection:
 
 
 def build_context_snapshot(
-    profile: InstrumentProfileContract | None,
+    profile: AnchorsContract | None,
 ) -> WorkflowContextSnapshot:
     if profile is None:
-        return WorkflowContextSnapshot(device_id="", title_contains="")
+        return WorkflowContextSnapshot(anchor_profile="", title_contains="")
     anchors: list[ContextAnchorView] = []
     for anchor in profile.anchors:
         requires_confirmation = any(
@@ -310,8 +310,9 @@ def build_context_snapshot(
         anchors.append(
             ContextAnchorView(
                 id=anchor.id,
-                type=anchor.type,
-                vision_mode=anchor.vision_mode,
+                type=anchor.type or "action_target",
+                vision_mode=anchor.vision_mode or "none",
+                can_observe=anchor.observe_region is not None,
                 requires_confirmation=requires_confirmation,
             )
         )
@@ -366,18 +367,18 @@ def build_context_snapshot(
                 note="需人工确认" if field.requires_confirmation else "",
             )
         )
-    for target in sorted(profile.safety_limits.requires_manual_confirm_for):
+    for anchor_id in sorted(profile.safety_limits.requires_manual_confirm_for):
         references.append(
             ContextReferenceView(
-                token=f"@confirm:{target}",
+                token=f"@confirm:{anchor_id}",
                 category="confirm",
-                ref_id=target,
-                title=target,
-                subtitle="人工确认目标 · 危险动作执行前需确认",
+                ref_id=anchor_id,
+                title=anchor_id,
+                subtitle="人工确认锚点 · 危险动作执行前需确认",
             )
         )
     return WorkflowContextSnapshot(
-        device_id=profile.device_id,
+        anchor_profile=profile.profile_id,
         title_contains=profile.window_signature.title_contains or "",
         actions=list(profile.actions),
         action_anchors=action_anchors,
@@ -390,7 +391,7 @@ def build_context_snapshot(
 
 def build_workflow_overview_projection(
     workflow: WorkflowContract,
-    profile: InstrumentProfileContract | None,
+    profile: AnchorsContract | None,
     draft_record: WorkflowDraftRecord | None,
     standardization: StandardizationResult,
 ) -> WorkflowOverviewProjection:
@@ -404,14 +405,14 @@ def build_workflow_overview_projection(
         {
             "id": step.id,
             "action": step.action,
-            "target": step.target or "",
+            "anchor_id": step.anchor_id or "",
             "value": "" if step.value is None else str(step.value),
         }
         for step in workflow.steps
     ]
     return WorkflowOverviewProjection(
         workflow_id=workflow.metadata.workflow_id,
-        device_id=workflow.metadata.instrument_profile,
+        anchor_profile=workflow.metadata.anchor_profile,
         lifecycle_state=workflow.metadata.lifecycle_state,
         prompt=prompt,
         reasoning_markdown=reasoning,

@@ -25,7 +25,7 @@ class TemplateRecord:
 
     identity: TemplateIdentity
     status: TemplateVersionStatus
-    instrument_profile: str
+    anchor_profile: str
     source: str
     published_at: str
     error: str = ""
@@ -74,7 +74,7 @@ class TemplateService:
             record = TemplateRecord(
                 identity=TemplateIdentity(meta.template_id, meta.template_version),
                 status=TemplateVersionStatus.PUBLISHED if meta.lifecycle_state == "Published" else TemplateVersionStatus.DRAFT,
-                instrument_profile=meta.instrument_profile,
+                anchor_profile=meta.anchor_profile,
                 source="local",
                 published_at="",
             )
@@ -99,7 +99,7 @@ class TemplateService:
                 TemplateRecord(
                     identity=TemplateIdentity(template_id, template_version),
                     status=TemplateVersionStatus.PUBLISHED,
-                    instrument_profile=str(item.get("instrument_profile") or ""),
+                    anchor_profile=str(item.get("anchor_profile") or item.get("instrument_profile") or ""),
                     source="cloud",
                     published_at=str(item.get("published_at") or ""),
                 )
@@ -131,7 +131,7 @@ class TemplateService:
                 {
                     "template_id": identity.template_id,
                     "template_version": identity.template_version,
-                    "instrument_profile": meta.instrument_profile,
+                    "anchor_profile": meta.anchor_profile,
                     "workflow": workflow.model_dump(mode="json", exclude_none=True),
                 }
             )
@@ -146,7 +146,7 @@ class TemplateService:
         record = TemplateRecord(
             identity=identity,
             status=status,
-            instrument_profile=meta.instrument_profile,
+            anchor_profile=meta.anchor_profile,
             source=source,
             published_at=datetime.now(timezone.utc).isoformat(),
             error=error,
@@ -183,7 +183,7 @@ class TemplateService:
                     r.identity.template_id,
                     r.identity.template_version,
                     r.status.value,
-                    r.instrument_profile,
+                    r.anchor_profile,
                     r.source,
                     r.error,
                 ]
@@ -195,18 +195,18 @@ class TemplateService:
         template_id: str,
         template_version: str,
         *,
-        instrument_profile: str | None = None,
+        anchor_profile: str | None = None,
     ) -> TemplateRecord:
         records = self._records.get(template_id, [])
         target = next((r for r in records if r.identity.template_version == template_version), None)
         if target is None:
             raise TemplateVersionMissing(template_id, template_version)
-        if instrument_profile is not None:
-            target.instrument_profile = instrument_profile
+        if anchor_profile is not None:
+            target.anchor_profile = anchor_profile
             path = self._template_path(target.identity)
             if path.exists():
                 workflow = load_yaml_contract(path, WorkflowContract)
-                workflow.metadata.instrument_profile = instrument_profile
+                workflow.metadata.anchor_profile = anchor_profile
                 dump_yaml_contract(workflow, path)
         return target
 

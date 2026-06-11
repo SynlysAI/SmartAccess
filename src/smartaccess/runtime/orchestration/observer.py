@@ -1,17 +1,12 @@
-"""Observer: collect screenshots and produce structured observations.
-
-Wraps the :class:`VisionProvider` port. Each observation carries source ROI,
-confidence, and timestamp; low-confidence results are flagged so the
-orchestrator can resample, wait, or escalate rather than driving the next step
-(SPEC §5.5).
-"""
+"""Observer: collect screenshots and produce structured observations."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from smartaccess.runtime.application.ports import OcrReading, VisionProvider
-from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, InstrumentProfileContract
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorsContract
 
 
 @dataclass(slots=True)
@@ -34,54 +29,45 @@ class Observer:
         if callable(configure):
             configure(data)
 
-    def observe(self, rois: list[str]) -> Observation:
-        readings = [self._vision.read_text(roi) for roi in rois]
-        min_conf = min((r.confidence for r in readings), default=1.0)
-        return Observation(readings=readings, min_confidence=min_conf)
-
-    def observe_profile(self, profile: InstrumentProfileContract | None, sources: list[str]) -> Observation:
-        anchors = {anchor.id: anchor for anchor in profile.anchors} if profile else {}
-        readings = [self.observe_anchor(anchors.get(source), source) for source in sources]
-        min_conf = min((r.confidence for r in readings), default=1.0)
-        return Observation(readings=readings, min_confidence=min_conf)
-
-    def observe_anchor(self, anchor: AnchorDefinition | None, source: str) -> OcrReading:
+    def observe_anchor(
+        self,
+        profile: AnchorsContract | None,
+        anchor_id: str,
+    ) -> Observation:
+        if profile is None:
+            reading = self._vision.read_text(anchor_id)
+            return Observation(readings=[reading], min_confidence=reading.confidence)
+        anchor = profile.anchor_map().get(anchor_id)
         if anchor is None:
-            return self._vision.read_text(source)
-        mode = anchor.vision_mode
-        if mode == "presence":
-            present = self._vision.detect_presence(anchor.id)
-            return OcrReading(
-                roi=anchor.id,
-                text="present" if present else "missing",
-                confidence=1.0 if present else 0.0,
-                detail="presence",
-            )
-        if mode == "template":
-            return self._vision.match_template(anchor.id)
-        if mode == "color":
-            return self._vision.sample_color(anchor.id)
-        if mode == "none":
-            return OcrReading(roi=anchor.id, text="not_observed", confidence=1.0, detail="none")
-        return self._vision.read_roi_text(screenshot=None, anchor=anchor, roi=None)
+            reading = self._vision.read_text(anchor_id)
+            return Observation(readings=[reading], min_confidence=reading.confidence)
+        reading = self._read_anchor(anchor)
+        return Observation(readings=[reading], min_confidence=reading.confidence)
 
-    def condition_passed(self, observation: Observation, condition: dict | None) -> bool:
-        if not condition:
-            return True
-        expected = condition.get("expected")
-        operator = str(condition.get("operator") or "exists")
-        reading = observation.readings[0] if observation.readings else None
-        if reading is None:
+    def _read_anchor(self, anchor: AnchorDefinition) -> OcrReading:
+        if anchor.observe_region is None:
+            return OcrReading(roi=anchor.id, text="", confidence=1.0, detail="none")
+        return self._vision.read_roi_text(
+            screenshot=None,
+            anchor=anchor,
+            roi=anchor.observe_region.pixel,
+        )
+
+    def matches(self, reading: OcrReading, *, expected_text: str | None, match_mode: str) -> bool | None:
+        if match_mode == "none":
+            return None
+        text = reading.text or ""
+        if match_mode == "not_empty":
+            return bool(text.strip())
+        if expected_text is None:
             return False
-        if operator == "exists":
-            return reading.confidence > 0 and reading.text not in {"missing", "not_observed"}
-        if operator == "equals":
-            return str(reading.text) == str(expected)
-        if operator == "contains":
-            return str(expected or "") in str(reading.text)
-        if operator == "not_empty":
-            return bool(str(reading.text).strip())
-        return True
+        if match_mode == "contains":
+            return expected_text in text
+        if match_mode == "equals":
+            return expected_text == text
+        if match_mode == "regex":
+            return re.search(expected_text, text) is not None
+        return False
 
     def is_low_confidence(self, observation: Observation) -> bool:
         return observation.min_confidence < self._threshold
