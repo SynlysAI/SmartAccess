@@ -186,6 +186,14 @@ class RuntimeFacade:
             detail="工作流草稿生成器可用" if label != "未配置" else "未配置工作流草稿生成器",
         )
 
+    def ai_model_options(self) -> dict[str, str]:
+        status = self.ai_assistant_status()
+        return {
+            "provider": status.provider,
+            "model": status.model,
+            "base_url": status.detail.removeprefix("base_url=") if status.detail.startswith("base_url=") else "",
+        }
+
     def register_workflow(self, workflow: WorkflowContract) -> WorkflowContract:
         return self._workflow.register(workflow)
 

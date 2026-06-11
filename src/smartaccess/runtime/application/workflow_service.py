@@ -114,6 +114,9 @@ class WorkflowService:
     def generator_label(self) -> str:
         if self._draft_generator is None:
             return "Not configured"
+        label = getattr(self._draft_generator, "generator_label", None)
+        if callable(label):
+            return str(label())
         name = type(self._draft_generator).__name__
         return "DeepSeek" if "DeepSeek" in name else "Template"
 

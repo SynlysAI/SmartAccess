@@ -1,9 +1,4 @@
-"""Process bootstrap helpers for runtime and desktop entry points.
-
-This is the composition root: it wires concrete adapters to the application
-services and builds the runtime API. Adapter selection (stub vs. real) lives
-here so the inner layers stay free of provider choices.
-"""
+"""Process bootstrap helpers for runtime and desktop entry points."""
 
 from __future__ import annotations
 
@@ -14,6 +9,8 @@ from smartaccess.runtime.adapters import (
     DeepSeekWorkflowGenerator,
     FileArtifactStore,
     LocalVisionProvider,
+    OpenAICompatibleInstrumentProfileGenerator,
+    OpenAICompatibleWorkflowGenerator,
     SpecLabOSPlatformClient,
     StubAutomationProvider,
     StubPlatformClient,
@@ -101,12 +98,7 @@ def build_runtime_facade(
     platform_provider: str = "stub",
     eval_cases_dir: Path | None = None,
 ) -> RuntimeFacade:
-    """Compose the full runtime: adapters + services + orchestrator.
-
-    Each provider accepts ``"real"`` (default in desktop), ``"stub"`` (tests), or
-    ``"local"`` (vision).  If a real provider's dependencies are missing the call
-    raises ``RuntimeError`` immediately — no silent fallback.
-    """
+    """Compose the full runtime: adapters + services + orchestrator."""
 
     settings = settings or AppSettings.from_env()
     workspace_dir = Path(settings.workspace_dir)
@@ -118,8 +110,6 @@ def build_runtime_facade(
     artifact_store = FileArtifactStore(workspace_dir)
     draft_generator = _build_workflow_generator(settings)
     instrument_draft_generator = _build_instrument_profile_generator(settings)
-
-    # AI runtime knowledge store — persistent learning across generations
     ai_store = AIRuntimeStore(workspace_dir)
 
     calibration = CalibrationService(
@@ -146,7 +136,7 @@ def build_runtime_facade(
     )
     evaluation = EvaluationService(cases_dir=eval_cases_dir or _DEFAULT_EVAL_CASES)
 
-    facade = RuntimeFacade(
+    return RuntimeFacade(
         event_bus=event_bus,
         calibration=calibration,
         workflow=workflow,
@@ -159,26 +149,31 @@ def build_runtime_facade(
         executor=Executor(automation),
         observer=Observer(vision),
         recovery=RecoveryEngine(),
-        ai_assistant_status=_build_ai_status(settings, draft_generator),
+        ai_assistant_status=_build_ai_status(settings),
     )
 
-    return facade
 
-
-def _build_ai_status(settings: AppSettings, draft_generator) -> AIAssistantStatus:
-    label = "DeepSeek" if "DeepSeek" in type(draft_generator).__name__ else "模板生成器"
-    if label == "DeepSeek":
+def _build_ai_status(settings: AppSettings) -> AIAssistantStatus:
+    provider = _active_ai_provider(settings)
+    if provider and settings.ai_configured:
+        return AIAssistantStatus(
+            provider=_provider_label(provider),
+            model=settings.ai_model,
+            status="Configured",
+            detail=f"base_url={settings.ai_base_url}",
+        )
+    if settings.workflow_generator_provider == "deepseek" and settings.deepseek_configured:
         return AIAssistantStatus(
             provider="DeepSeek",
             model=settings.deepseek_model,
-            status="已配置" if settings.deepseek_configured else "未配置",
+            status="Configured",
             detail=f"base_url={settings.deepseek_base_url}",
         )
     return AIAssistantStatus(
-        provider="模板生成器",
-        model="内置模板规则",
-        status="模拟模式",
-        detail="未接入在线模型，使用本地模板生成草稿",
+        provider="Template",
+        model="Built-in template rules",
+        status="Local template",
+        detail="No online model configured; using local draft rules.",
     )
 
 
@@ -190,7 +185,6 @@ def _build_automation(settings: AppSettings, *, mode: str):
 
 def _build_vision(settings: AppSettings, *, mode: str, workspace_dir: Path):
     if mode == "local":
-        # Fail fast if PaddleOCR or OpenCV is missing — never silently fall back.
         return LocalVisionProvider(workspace_dir=workspace_dir)
     return StubVisionProvider()
 
@@ -206,25 +200,90 @@ def _build_platform(settings: AppSettings, *, mode: str):
 
 
 def _build_workflow_generator(settings: AppSettings):
+    provider = _active_ai_provider(settings)
+    if provider and settings.ai_api_key:
+        if provider == "deepseek":
+            return DeepSeekWorkflowGenerator(
+                api_key=settings.ai_api_key,
+                base_url=settings.ai_base_url,
+                model=settings.ai_model,
+                timeout_seconds=settings.ai_timeout_seconds,
+                user_agent=settings.ai_user_agent,
+            )
+        return OpenAICompatibleWorkflowGenerator(
+            api_key=settings.ai_api_key,
+            base_url=settings.ai_base_url,
+            model=settings.ai_model,
+            provider_name=_provider_label(provider),
+            timeout_seconds=settings.ai_timeout_seconds,
+            user_agent=settings.ai_user_agent,
+        )
     if settings.workflow_generator_provider == "deepseek" and settings.deepseek_api_key:
         return DeepSeekWorkflowGenerator(
             api_key=settings.deepseek_api_key,
             base_url=settings.deepseek_base_url,
             model=settings.deepseek_model,
             timeout_seconds=settings.deepseek_timeout_seconds,
+            user_agent=settings.ai_user_agent,
         )
     return TemplatePromptWorkflowGenerator()
 
 
 def _build_instrument_profile_generator(settings: AppSettings):
+    provider = _active_ai_provider(settings)
+    if provider and settings.ai_api_key:
+        if provider == "deepseek":
+            return DeepSeekInstrumentProfileGenerator(
+                api_key=settings.ai_api_key,
+                base_url=settings.ai_base_url,
+                model=settings.ai_model,
+                timeout_seconds=settings.ai_timeout_seconds,
+                user_agent=settings.ai_user_agent,
+            )
+        return OpenAICompatibleInstrumentProfileGenerator(
+            api_key=settings.ai_api_key,
+            base_url=settings.ai_base_url,
+            model=settings.ai_model,
+            provider_name=_provider_label(provider),
+            timeout_seconds=settings.ai_timeout_seconds,
+            user_agent=settings.ai_user_agent,
+        )
     if settings.workflow_generator_provider == "deepseek" and settings.deepseek_api_key:
         return DeepSeekInstrumentProfileGenerator(
             api_key=settings.deepseek_api_key,
             base_url=settings.deepseek_base_url,
             model=settings.deepseek_model,
             timeout_seconds=settings.deepseek_timeout_seconds,
+            user_agent=settings.ai_user_agent,
         )
     return None
+
+
+def _active_ai_provider(settings: AppSettings) -> str | None:
+    provider = (settings.ai_provider or "").strip().lower()
+    if provider in {"", "template", "stub", "local"}:
+        return None
+    return provider
+
+
+def _provider_label(provider: str) -> str:
+    labels = {
+        "deepseek": "DeepSeek",
+        "codex": "Codex",
+        "openai": "OpenAI",
+        "openai-compatible": "OpenAI-compatible",
+        "compatible": "OpenAI-compatible",
+    }
+    return labels.get(provider.lower(), provider)
+
+
+def _llm_provider_label(settings: AppSettings) -> str:
+    provider = _active_ai_provider(settings)
+    if provider and settings.ai_configured:
+        return f"{_provider_label(provider)} / {settings.ai_model}"
+    if settings.workflow_generator_provider == "deepseek" and settings.deepseek_configured:
+        return f"DeepSeek / {settings.deepseek_model}"
+    return "Template"
 
 
 def run_desktop(settings: AppSettings | None = None) -> int:
@@ -239,12 +298,11 @@ def run_desktop(settings: AppSettings | None = None) -> int:
         vision_provider="local",
         platform_provider="real" if settings.speclabos_base_url else "stub",
     )
-    llm_provider = "DeepSeek" if settings.deepseek_configured else "模板生成器"
     return run_app(
         facade,
         provider_modes={
             "automation": "real",
             "vision": "local",
-            "llm": llm_provider,
+            "llm": _llm_provider_label(settings),
         },
     )

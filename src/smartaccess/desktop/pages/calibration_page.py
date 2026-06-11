@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import re
 from html import escape
 from pathlib import Path
@@ -170,6 +171,21 @@ class CalibrationPage(QWidget):
         self._title.setPlaceholderText("选中窗口后可自动填入标题关键字")
         form.addRow("设备 ID *", self._device_id)
         form.addRow("窗口标题包含 *", self._title)
+        ai_options = self._vm.ai_model_options()
+        self._ai_provider = QComboBox()
+        for provider in ("Codex", "OpenAI-compatible", "OpenAI", "DeepSeek"):
+            self._ai_provider.addItem(provider, provider.lower())
+        configured_provider = ai_options.get("provider") or "Codex"
+        provider_index = self._ai_provider.findText(configured_provider)
+        if provider_index < 0:
+            self._ai_provider.addItem(configured_provider, configured_provider.lower())
+            provider_index = self._ai_provider.findText(configured_provider)
+        self._ai_provider.setCurrentIndex(max(0, provider_index))
+        self._ai_base_url = QLineEdit(ai_options.get("base_url") or "https://fufei.mossx.ai/v1")
+        self._ai_model = QLineEdit(ai_options.get("model") or "GPT-5.4")
+        form.addRow("AI provider", self._ai_provider)
+        form.addRow("AI base URL", self._ai_base_url)
+        form.addRow("AI model", self._ai_model)
         layout.addLayout(form)
 
         self._actions: dict[str, QCheckBox] = {}
@@ -451,7 +467,15 @@ class CalibrationPage(QWidget):
             "capture_height": height,
             "actions": list(_DEFAULT_ACTIONS),
             "anchors": self._collect_anchors_for_context(),
+            "ai_provider": self._ai_provider.currentText().strip(),
+            "ai_base_url": self._ai_base_url.text().strip(),
+            "ai_model": self._ai_model.text().strip(),
         }
+        if self._latest_capture_bytes:
+            context["screenshot"] = {
+                "mime_type": "image/png",
+                "data": base64.b64encode(self._latest_capture_bytes).decode("ascii"),
+            }
         try:
             profile = self._vm.generate_profile_suggestion(prompt.strip(), context)
         except Exception as exc:  # noqa: BLE001

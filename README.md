@@ -40,6 +40,7 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 - [AI 组件设计](docs/architecture/ai-components.md)
 - [关键契约与样例](docs/contracts/interfaces.md)
 - [功能更新日志](docs/CHANGELOG.zh-CN.md)
+- [近期实现更新 2026-06-11](docs/recent-updates-2026-06-11.md)
 - [仓库级 Agent 协作约束](ai/AGENT.md)
 
 ## 仓库结构
@@ -152,6 +153,23 @@ copy .envexample .env
 - `SMARTACCESS_VISION_PROVIDER`：桌面真实 OCR 使用 `local`，测试可用 `stub`。
 - `SMARTACCESS_UDP_HOST` / `SMARTACCESS_UDP_PORT`：Edge API 下发 UDP 执行信号的目标。
 - `SMARTACCESS_WORKFLOW_GENERATOR`、`DEEPSEEK_API_KEY`：配置在线工作流/锚点生成能力。
+- `SMARTACCESS_AI_PROVIDER` / `SMARTACCESS_AI_BASE_URL` / `SMARTACCESS_AI_MODEL` / `SMARTACCESS_AI_API_KEY`：OpenAI-compatible 多模型配置。
+- `SMARTACCESS_AI_TIMEOUT_SECONDS`：AI 请求超时，单位秒。
+- `SMARTACCESS_AI_USER_AGENT`：AI 请求头中的 `User-Agent`，用于兼容部分网关或 Cloudflare 策略。
+
+### AI 配置与接入
+
+- 工作流草稿生成和设备接入页的 AI 辅助接入都已统一到 OpenAI-compatible 生成链路。
+- 桌面端设备接入页允许临时切换 `AI provider`、`AI base URL`、`AI model`，但不会把 API key 写入 workspace。
+- 设备接入页发起 AI 辅助接入时，会把当前窗口截图作为多模态上下文一并发送，用于生成简化后的 `anchors.yaml` 建议。
+- `DEEPSEEK_*` 旧配置仍兼容；当 `SMARTACCESS_AI_*` 存在时优先使用新配置。
+- 启动时会自动读取项目根目录 `.env`；系统环境变量仍优先于 `.env`。
+
+### Cloudflare / 网关限制
+
+- 如果 AI 请求返回 `HTTP 403 Cloudflare 1010`，说明端点拦截了当前请求指纹，不是本地 YAML 或 OCR 配置错误。
+- 运行时会自动带上浏览器风格的 `User-Agent`、`Origin`、`Referer` 请求头，并把错误压缩成可操作提示。
+- 如果仍被拦截，优先调整 `SMARTACCESS_AI_USER_AGENT`，或者让模型服务提供方放行该 API 客户端。
 
 ## 新增一个仪器接入的最小步骤
 
@@ -187,6 +205,11 @@ copy .envexample .env
 - 工作流：`docs/contracts/examples/serial_debug_assistant_udp/workflow.yaml`
 - 覆盖能力：选择 UDP 模式、设置本地端口、打开 UDP 服务、输入并发送 `SmartAccess UDP validation`，再用 OCR 检查收发日志。
 - 运行前打开目标“串口调试助手/网络调试助手”，把示例锚点导入或按示例重新框选坐标，确认窗口标题包含“串口调试助手”。
+- workspace 中同时提供了可直接测试的草稿：
+  `workspace/anchors/serial_debug_assistant_udp/anchors.yaml`
+  `workspace/instruments/serial_debug_assistant_udp/instrument_profile.yaml`
+  `workspace/workflows/wf_serial_debug_assistant_udp_send/draft.yaml`
+- workspace 版本按 `1322x914` 截图基准保存，并给打开/发送相关锚点配置了 OCR 观察区。
 
 ### Windows 计算器
 
