@@ -20,11 +20,20 @@ SMARTACCESS_VISION_PROVIDER=stub
 SMARTACCESS_PLATFORM_PROVIDER=stub
 SMARTACCESS_WORKFLOW_GENERATOR=template
 
+# Optional OpenAI-compatible workflow/anchor generation.
+# API key is intentionally blank; set it in your local .env.
+SMARTACCESS_AI_PROVIDER=codex
+SMARTACCESS_AI_BASE_URL=https://fufei.mossx.ai/v1
+SMARTACCESS_AI_MODEL=GPT-5.4
+SMARTACCESS_AI_API_KEY=
+SMARTACCESS_AI_TIMEOUT_SECONDS=30
+SMARTACCESS_AI_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36
+
 # Downstream UDP process executor target used by smartaccess-edge.
 SMARTACCESS_UDP_HOST=127.0.0.1
 SMARTACCESS_UDP_PORT=8889
 
-# Optional DeepSeek workflow/anchor generation.
+# Legacy DeepSeek workflow/anchor generation compatibility.
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat

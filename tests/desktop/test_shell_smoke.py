@@ -202,6 +202,48 @@ def test_workflow_page_condition_round_trip_and_row_reorder(tmp_path: Path) -> N
     assert reloaded.steps[0].timeout_seconds == 1.0
 
 
+def test_workflow_page_step_table_adapts_to_content_and_row_count(tmp_path: Path) -> None:
+    _app()
+    from smartaccess.desktop.pages.workflow_page import WorkflowPage
+
+    facade = _facade(tmp_path)
+    workflow = WorkflowContract(
+        metadata=WorkflowMetadata(
+            workflow_id="wf_long_step_table",
+            author="test",
+            anchor_profile="d1",
+            experiment_type="smoke_test",
+            lifecycle_state="Draft",
+        ),
+        roi_bindings={},
+        steps=[
+            WorkflowStep(
+                id="step_with_long_fields",
+                action="type",
+                anchor_id="anchor_id_for_a_wide_numeric_input_field",
+                value="1234567890.1234567890",
+                expected_text="measurement complete with stable baseline",
+                match_mode="contains",
+                timeout_seconds=12.0,
+            )
+        ],
+        outputs=[],
+    )
+    page = WorkflowPage(facade)
+    page.resize(980, 640)
+    page._show_workflow(workflow)
+    page.show()
+    _app().processEvents()
+
+    assert page._steps_table.maximumHeight() < 220
+    assert page._steps_table.columnWidth(5) == 92
+    assert page._steps_table.columnWidth(6) == 52
+    assert page._steps_table.item(0, 2).toolTip() == "anchor_id_for_a_wide_numeric_input_field"
+    assert sum(page._steps_table.columnWidth(column) for column in range(7)) <= (
+        page._steps_table.viewport().width() + 4
+    )
+
+
 def test_calibration_page_exposes_simplified_anchor_table(tmp_path: Path) -> None:
     _app()
     from smartaccess.desktop.pages.calibration_page import CalibrationPage
@@ -219,6 +261,8 @@ def test_calibration_page_exposes_simplified_anchor_table(tmp_path: Path) -> Non
     action_combo = page._anchor_table.cellWidget(0, 2)
     actions = [action_combo.itemData(i) for i in range(action_combo.count())]
     assert actions == ["click", "type", "hotkey", "press_enter"]
+    assert page._ai_base_url.text()
+    assert page._ai_model.text()
 
 
 def test_monitoring_audit_card_shows_strategy_and_measurement() -> None:

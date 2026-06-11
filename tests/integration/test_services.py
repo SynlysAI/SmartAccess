@@ -7,7 +7,14 @@ import pytest
 from smartaccess.runtime.adapters.ai_stub import TemplatePromptWorkflowGenerator
 from smartaccess.runtime.adapters.automation_stub import StubAutomationProvider
 from smartaccess.runtime.adapters.deepseek_instrument_generator import DeepSeekInstrumentProfileGenerator
+from smartaccess.runtime.adapters.deepseek_generator import DeepSeekWorkflowGenerator
+from smartaccess.runtime.adapters.openai_compatible_generator import (
+    DEFAULT_AI_USER_AGENT,
+    OpenAICompatibleInstrumentProfileGenerator,
+    OpenAICompatibleWorkflowGenerator,
+)
 from smartaccess.runtime.adapters.platform_stub import StubPlatformClient
+from smartaccess.bootstrap import build_runtime_facade
 from smartaccess.runtime.application.calibration_service import CalibrationService
 from smartaccess.runtime.application.evaluation_service import EvaluationService
 from smartaccess.runtime.application.incident_service import IncidentService
@@ -20,6 +27,7 @@ from smartaccess.runtime.domain.template import TemplateVersionStatus
 from smartaccess.runtime.domain.workflow import WorkflowLifecycleState
 from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.io import dump_yaml_contract, load_yaml_contract
+from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowOutput
 from smartaccess.shared.events import EventBus, RuntimeEventName
 
@@ -110,6 +118,178 @@ def test_deepseek_instrument_generator_friendly_validation_error() -> None:
     assert "pydantic.dev" not in message
     assert "input_value" not in message
     assert "缺少字段" in message
+
+
+def test_openai_compatible_settings_take_precedence(tmp_path: Path) -> None:
+    settings = AppSettings(
+        workspace_dir=tmp_path,
+        workflow_generator_provider="deepseek",
+        deepseek_api_key="legacy-key",
+        deepseek_base_url="https://api.deepseek.com",
+        deepseek_model="deepseek-chat",
+        ai_provider="codex",
+        ai_api_key="new-key",
+        ai_base_url="https://fufei.mossx.ai/v1",
+        ai_model="GPT-5.4",
+    )
+
+    facade = build_runtime_facade(settings)
+
+    assert isinstance(facade._workflow._draft_generator, OpenAICompatibleWorkflowGenerator)
+    assert not isinstance(facade._workflow._draft_generator, DeepSeekWorkflowGenerator)
+    assert isinstance(facade._calibration._draft_generator, OpenAICompatibleInstrumentProfileGenerator)
+    assert facade.ai_assistant_status().provider == "Codex"
+    assert facade.ai_assistant_status().model == "GPT-5.4"
+
+
+def test_openai_compatible_env_takes_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SMARTACCESS_AI_PROVIDER", "codex")
+    monkeypatch.setenv("SMARTACCESS_AI_API_KEY", "new-key")
+    monkeypatch.setenv("SMARTACCESS_AI_BASE_URL", "https://fufei.mossx.ai/v1")
+    monkeypatch.setenv("SMARTACCESS_AI_MODEL", "GPT-5.4")
+    monkeypatch.setenv("SMARTACCESS_AI_USER_AGENT", "SmartAccessTest/1.0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "legacy-key")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-chat")
+
+    settings = AppSettings.from_env()
+
+    assert settings.ai_provider == "codex"
+    assert settings.ai_api_key == "new-key"
+    assert settings.ai_base_url == "https://fufei.mossx.ai/v1"
+    assert settings.ai_model == "GPT-5.4"
+    assert settings.ai_user_agent == "SmartAccessTest/1.0"
+
+
+def test_app_settings_loads_dotenv_without_overriding_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "SMARTACCESS_AI_PROVIDER=codex",
+                "SMARTACCESS_AI_API_KEY=dotenv-key",
+                "SMARTACCESS_AI_BASE_URL=https://dotenv.example/v1",
+                "SMARTACCESS_AI_MODEL=DotEnvModel",
+                'SMARTACCESS_AI_USER_AGENT="DotEnvAgent/1.0"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SMARTACCESS_AI_MODEL", "EnvModel")
+
+    settings = AppSettings.from_env()
+
+    assert settings.ai_provider == "codex"
+    assert settings.ai_api_key == "dotenv-key"
+    assert settings.ai_base_url == "https://dotenv.example/v1"
+    assert settings.ai_model == "EnvModel"
+    assert settings.ai_user_agent == "DotEnvAgent/1.0"
+
+
+def test_openai_compatible_headers_use_browser_user_agent() -> None:
+    generator = OpenAICompatibleWorkflowGenerator(
+        api_key="secret",
+        base_url="https://fufei.mossx.ai/v1",
+        model="GPT-5.4",
+        provider_name="Codex",
+    )
+
+    headers = generator._headers("https://fufei.mossx.ai/v1")
+
+    assert headers["Authorization"] == "Bearer secret"
+    assert headers["Accept"] == "application/json"
+    assert headers["User-Agent"] == DEFAULT_AI_USER_AGENT
+    assert headers["Origin"] == "https://fufei.mossx.ai"
+    assert headers["Referer"] == "https://fufei.mossx.ai/"
+
+
+def test_openai_compatible_cloudflare_1010_error_is_short() -> None:
+    generator = OpenAICompatibleWorkflowGenerator(
+        api_key="secret",
+        base_url="https://fufei.mossx.ai/v1",
+        model="GPT-5.4",
+        provider_name="Codex",
+        user_agent="SmartAccessTest/1.0",
+    )
+    detail = {
+        "title": "Error 1010: Access denied",
+        "status": 403,
+        "detail": "The site owner has blocked access based on your browser's signature.",
+        "err_code": 1010,
+        "footer": "x" * 2000,
+    }
+
+    message = generator._format_http_error(403, __import__("json").dumps(detail))
+
+    assert "HTTP 403 Cloudflare 1010" in message
+    assert "SmartAccessTest/1.0" in message
+    assert len(message) < 400
+    assert "x" * 100 not in message
+
+
+def test_deepseek_legacy_settings_remain_compatible(tmp_path: Path) -> None:
+    settings = AppSettings(
+        workspace_dir=tmp_path,
+        workflow_generator_provider="deepseek",
+        deepseek_api_key="legacy-key",
+        ai_provider="template",
+    )
+
+    facade = build_runtime_facade(settings)
+
+    assert isinstance(facade._workflow._draft_generator, DeepSeekWorkflowGenerator)
+    assert isinstance(facade._calibration._draft_generator, DeepSeekInstrumentProfileGenerator)
+
+
+def test_anchor_generator_payload_includes_screenshot_when_present() -> None:
+    generator = OpenAICompatibleInstrumentProfileGenerator(
+        api_key="test",
+        base_url="https://example.invalid/v1",
+        model="vision-model",
+        provider_name="TestProvider",
+    )
+
+    with_image = generator._chat_payload(
+        "draft anchors",
+        {
+            "device_id": "d1",
+            "capture_width": 100,
+            "capture_height": 80,
+            "screenshot": {"mime_type": "image/png", "data": "AAAA"},
+        },
+    )
+    without_image = generator._chat_payload("draft anchors", {"device_id": "d1"})
+
+    image_content = with_image["messages"][1]["content"]
+    assert isinstance(image_content, list)
+    assert image_content[1]["image_url"]["url"] == "data:image/png;base64,AAAA"
+    assert isinstance(without_image["messages"][1]["content"], str)
+
+
+def test_udp_workspace_draft_standardizes(tmp_path: Path) -> None:
+    base = REPO_ROOT / "workspace"
+    if not (base / "anchors" / "serial_debug_assistant_udp" / "anchors.yaml").exists():
+        pytest.skip("local workspace UDP assets are not present")
+    profile = load_yaml_contract(
+        base / "anchors" / "serial_debug_assistant_udp" / "anchors.yaml",
+        AnchorsContract,
+    )
+    workflow = load_yaml_contract(
+        base / "workflows" / "wf_serial_debug_assistant_udp_send" / "draft.yaml",
+        WorkflowContract,
+    )
+
+    dump_yaml_contract(profile, tmp_path / "anchors" / profile.profile_id / "anchors.yaml")
+    svc = WorkflowService(draft_generator=None, workspace_dir=tmp_path)
+    check = svc.standardize_check(workflow)
+
+    assert check.ok, check.issues
+    assert workflow.metadata.anchor_profile == "serial_debug_assistant_udp"
+    assert workflow.steps[-1].expected_text == "SmartAccess UDP validation"
 
 
 def test_template_publish_supersede_and_rollback(tmp_path: Path) -> None:

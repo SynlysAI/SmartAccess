@@ -57,6 +57,8 @@ _MOVE_DOWN_GLYPH = "↓"
 _DELETE_GLYPH = "×"
 _TAB_NAME_TO_INDEX = {"steps": 0}
 _STEP_CONDITION_ROLE = Qt.ItemDataRole.UserRole + 10
+_STEP_TABLE_BASE_ROW_HEIGHT = 52
+_STEP_TABLE_MAX_VISIBLE_ROWS = 9
 
 
 def _metadata_with_anchor_profile(
@@ -141,6 +143,12 @@ class WorkflowPage(QWidget):
         if self._current is not None:
             self._refresh_context_panel()
             self._refresh_reasoning_view()
+        self._fit_steps_table_to_content()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "_steps_table"):
+            self._fit_steps_table_to_content()
 
     def focus_workflow(self, workflow_id: str, *, section: str | None = None) -> None:
         workflows = self._vm.list_workflows()
@@ -261,21 +269,19 @@ class WorkflowPage(QWidget):
         )
         self._steps_table = QTableWidget(0, 7)
         self._steps_table.setHorizontalHeaderLabels(["步骤 ID", "动作", "anchor_id", "值", "条件", "上移/下移", ""])
-        self._steps_table.verticalHeader().setDefaultSectionSize(52)
+        self._steps_table.setWordWrap(False)
+        self._steps_table.verticalHeader().setDefaultSectionSize(_STEP_TABLE_BASE_ROW_HEIGHT)
+        self._steps_table.verticalHeader().setMinimumSectionSize(_STEP_TABLE_BASE_ROW_HEIGHT)
         steps_header = self._steps_table.horizontalHeader()
         steps_header.setStretchLastSection(False)
         steps_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._steps_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._steps_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._steps_table.setColumnWidth(0, 190)
-        self._steps_table.setColumnWidth(1, 170)
-        self._steps_table.setColumnWidth(2, 260)
-        self._steps_table.setColumnWidth(3, 280)
-        self._steps_table.setColumnWidth(4, 240)
-        self._steps_table.setColumnWidth(5, 92)
-        self._steps_table.setColumnWidth(6, 48)
+        self._steps_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._steps_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._steps_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._steps_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._steps_table.itemChanged.connect(lambda _item: self._fit_steps_table_to_content())
         steps_layout.addWidget(self._steps_table, 1)
         step_controls = QWidget()
         step_row = QHBoxLayout(step_controls)
@@ -437,6 +443,7 @@ class WorkflowPage(QWidget):
         self._refresh_context_panel()
         self._refresh_reasoning_view()
         self._precheck.setText("已加载工作流，可编辑步骤后保存或运行标准化检查。")
+        self._fit_steps_table_to_content()
 
     def _restore_prompt_for_workflow(self, workflow: WorkflowContract) -> None:
         record = self._vm.draft_record(workflow.metadata.workflow_id)
@@ -652,11 +659,13 @@ class WorkflowPage(QWidget):
                 step.value or "",
                 condition=condition,
             )
+        self._fit_steps_table_to_content()
 
     def _add_step_row(self) -> None:
         step_num = self._steps_table.rowCount() + 1
         self._insert_step_row(f"step_{step_num}", "click", "", "")
         self._renumber_steps()
+        self._fit_steps_table_to_content()
 
     def _insert_step_after_selection(self) -> None:
         selected = self._steps_table.currentRow()
@@ -666,6 +675,7 @@ class WorkflowPage(QWidget):
         step_num = self._steps_table.rowCount() + 1
         self._insert_step_at(f"step_{step_num}", "click", "", "", selected + 1)
         self._renumber_steps()
+        self._fit_steps_table_to_content()
 
     def _insert_step_at(
         self,
@@ -678,19 +688,13 @@ class WorkflowPage(QWidget):
         condition: dict | None = None,
     ) -> None:
         self._steps_table.insertRow(row)
-        self._steps_table.setItem(row, 0, QTableWidgetItem(step_id))
+        self._steps_table.setItem(row, 0, self._make_step_item(step_id))
 
-        action_combo = QComboBox()
-        action_combo.setMinimumHeight(34)
-        for act_key, act_label in _ACTION_NOTES.items():
-            action_combo.addItem(f"{act_key} · {act_label}", act_key)
-        idx = action_combo.findData(action)
-        if idx >= 0:
-            action_combo.setCurrentIndex(idx)
+        action_combo = self._make_action_combo(action)
         self._steps_table.setCellWidget(row, 1, action_combo)
 
-        self._steps_table.setItem(row, 2, QTableWidgetItem(anchor_id))
-        self._steps_table.setItem(row, 3, QTableWidgetItem(str(value)))
+        self._steps_table.setItem(row, 2, self._make_step_item(anchor_id))
+        self._steps_table.setItem(row, 3, self._make_step_item(str(value)))
         self._set_row_condition(row, condition)
 
         self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
@@ -711,6 +715,7 @@ class WorkflowPage(QWidget):
         delete.clicked.connect(lambda _checked=False, r=row: self._delete_step_row(r))
         self._steps_table.setCellWidget(row, 6, delete)
         self._rebind_step_buttons()
+        self._fit_steps_table_to_content()
 
     def _insert_step_row(
         self,
@@ -723,18 +728,12 @@ class WorkflowPage(QWidget):
     ) -> None:
         row = self._steps_table.rowCount()
         self._steps_table.insertRow(row)
-        self._steps_table.setItem(row, 0, QTableWidgetItem(step_id))
+        self._steps_table.setItem(row, 0, self._make_step_item(step_id))
 
-        action_combo = QComboBox()
-        action_combo.setMinimumHeight(34)
-        for act_key, act_label in _ACTION_NOTES.items():
-            action_combo.addItem(f"{act_key} · {act_label}", act_key)
-        idx = action_combo.findData(action)
-        if idx >= 0:
-            action_combo.setCurrentIndex(idx)
+        action_combo = self._make_action_combo(action)
         self._steps_table.setCellWidget(row, 1, action_combo)
-        self._steps_table.setItem(row, 2, QTableWidgetItem(anchor_id))
-        self._steps_table.setItem(row, 3, QTableWidgetItem(str(value)))
+        self._steps_table.setItem(row, 2, self._make_step_item(anchor_id))
+        self._steps_table.setItem(row, 3, self._make_step_item(str(value)))
         self._set_row_condition(row, condition)
 
         self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
@@ -754,11 +753,13 @@ class WorkflowPage(QWidget):
         delete = self._make_delete_button("删除步骤")
         delete.clicked.connect(lambda _checked=False, r=row: self._delete_step_row(r))
         self._steps_table.setCellWidget(row, 6, delete)
+        self._fit_steps_table_to_content()
 
     def _delete_step_row(self, row: int) -> None:
         self._steps_table.removeRow(row)
         self._rebind_step_buttons()
         self._renumber_steps()
+        self._fit_steps_table_to_content()
 
     def _move_step_up(self, row: int) -> None:
         if row <= 0:
@@ -777,12 +778,15 @@ class WorkflowPage(QWidget):
         self._set_step_row_data(row2, data1)
         self._renumber_steps()
         self._rebind_step_buttons()
+        self._fit_steps_table_to_content()
 
     def _renumber_steps(self) -> None:
         for row in range(self._steps_table.rowCount()):
             item = self._steps_table.item(row, 0)
             if item is not None:
-                item.setText(f"step_{row + 1}")
+                step_id = f"step_{row + 1}"
+                item.setText(step_id)
+                item.setToolTip(step_id)
 
     def _edit_condition(self, row: int) -> None:
         """Open the condition editor for a step row."""
@@ -797,14 +801,14 @@ class WorkflowPage(QWidget):
             else:
                 self._set_row_condition(row, condition)
             self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
+            self._fit_steps_table_to_content()
 
     def _make_condition_button(self, row: int) -> QPushButton:
         summary = self._condition_summary(self._row_condition(row))
         button = QPushButton(summary)
         button.setObjectName("Ghost")
-        button.setToolTip("编辑 OCR 期望 (expected_text/match_mode/timeout_seconds)")
+        button.setToolTip(f"{summary}\n编辑 OCR 期望 (expected_text/match_mode/timeout_seconds)")
         button.setMinimumHeight(30)
-        button.setMaximumWidth(210)
         button.clicked.connect(lambda _checked=False, r=row: self._edit_condition(r))
         return button
 
@@ -817,6 +821,25 @@ class WorkflowPage(QWidget):
         item = self._steps_table.item(row, 0)
         if item is not None:
             item.setData(_STEP_CONDITION_ROLE, dict(condition) if condition else None)
+
+    @staticmethod
+    def _make_step_item(text: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setToolTip(text)
+        return item
+
+    @staticmethod
+    def _make_action_combo(action: str) -> QComboBox:
+        combo = QComboBox()
+        combo.setMinimumHeight(34)
+        for act_key, act_label in _ACTION_NOTES.items():
+            combo.addItem(f"{act_key} · {act_label}", act_key)
+        idx = combo.findData(action)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.setToolTip(combo.currentText())
+        combo.currentTextChanged.connect(combo.setToolTip)
+        return combo
 
     @staticmethod
     def _condition_summary(condition: dict | None) -> str:
@@ -849,7 +872,9 @@ class WorkflowPage(QWidget):
             if idx >= 0:
                 action_combo.setCurrentIndex(idx)
         self._steps_table.item(row, 2).setText(anchor_id)
+        self._steps_table.item(row, 2).setToolTip(anchor_id)
         self._steps_table.item(row, 3).setText(value)
+        self._steps_table.item(row, 3).setToolTip(value)
         self._set_row_condition(row, condition)
 
     def _rebind_step_buttons(self) -> None:
@@ -871,6 +896,89 @@ class WorkflowPage(QWidget):
             delete = self._make_delete_button("删除步骤")
             delete.clicked.connect(lambda _checked=False, r=row: self._delete_step_row(r))
             self._steps_table.setCellWidget(row, 6, delete)
+        self._fit_steps_table_to_content()
+
+    def _fit_steps_table_to_content(self) -> None:
+        if not hasattr(self, "_steps_table"):
+            return
+
+        table = self._steps_table
+        if table.columnCount() == 0:
+            return
+
+        metrics = table.fontMetrics()
+        header_metrics = table.horizontalHeader().fontMetrics()
+
+        def text_width(text: str, padding: int = 40) -> int:
+            return max(metrics.horizontalAdvance(text), header_metrics.horizontalAdvance(text)) + padding
+
+        headers = [
+            table.horizontalHeaderItem(column).text()
+            if table.horizontalHeaderItem(column) is not None
+            else ""
+            for column in range(table.columnCount())
+        ]
+        natural = [
+            text_width(headers[0], 34),
+            text_width(headers[1], 40),
+            text_width(headers[2], 48),
+            text_width(headers[3], 48),
+            text_width(headers[4], 48),
+            92,
+            52,
+        ]
+
+        for row in range(table.rowCount()):
+            natural[0] = max(natural[0], text_width(self._table_text(table, row, 0), 36))
+            action_combo = table.cellWidget(row, 1)
+            if isinstance(action_combo, QComboBox):
+                natural[1] = max(natural[1], text_width(action_combo.currentText(), 42))
+            natural[2] = max(natural[2], text_width(self._table_text(table, row, 2), 48))
+            natural[3] = max(natural[3], text_width(self._table_text(table, row, 3), 48))
+            natural[4] = max(natural[4], text_width(self._condition_summary(self._row_condition(row)), 54))
+            table.setRowHeight(row, _STEP_TABLE_BASE_ROW_HEIGHT)
+
+        mins = [110, 150, 170, 90, 150, 92, 52]
+        maxes = [190, 240, 360, 420, 380, 92, 52]
+        widths = [min(max(natural[i], mins[i]), maxes[i]) for i in range(table.columnCount())]
+
+        available = table.viewport().width()
+        if available <= 0:
+            available = table.width() - table.verticalHeader().width() - 2
+        fixed_width = widths[0] + widths[1] + widths[5] + widths[6]
+        grow_columns = [2, 3, 4]
+        grow_width = available - fixed_width
+        if grow_width > sum(widths[column] for column in grow_columns):
+            extra = grow_width - sum(widths[column] for column in grow_columns)
+            for column, weight in ((2, 0.35), (3, 0.30), (4, 0.35)):
+                widths[column] += int(extra * weight)
+        elif available > 0 and sum(widths) > available:
+            deficit = sum(widths) - available
+            for column in (4, 3, 2, 0, 1):
+                shrink = min(deficit, widths[column] - mins[column])
+                if shrink <= 0:
+                    continue
+                widths[column] -= shrink
+                deficit -= shrink
+                if deficit <= 0:
+                    break
+
+        for column, width in enumerate(widths):
+            table.setColumnWidth(column, width)
+
+        visible_rows = max(1, min(table.rowCount(), _STEP_TABLE_MAX_VISIBLE_ROWS))
+        header_height = table.horizontalHeader().height()
+        frame = table.frameWidth() * 2
+        horizontal_scroll_height = table.horizontalScrollBar().sizeHint().height()
+        target_height = (
+            header_height
+            + visible_rows * _STEP_TABLE_BASE_ROW_HEIGHT
+            + frame
+            + horizontal_scroll_height
+            + 10
+        )
+        table.setMinimumHeight(target_height)
+        table.setMaximumHeight(target_height if table.rowCount() <= _STEP_TABLE_MAX_VISIBLE_ROWS else 16777215)
 
     def _collect_steps(self) -> list[WorkflowStep]:
         steps: list[WorkflowStep] = []

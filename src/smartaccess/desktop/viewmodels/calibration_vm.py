@@ -45,6 +45,10 @@ class CalibrationViewModel(ViewModel):
     def profile_generator_label(self) -> str:
         return self._facade.anchor_profile_generator_label()
 
+    def ai_model_options(self) -> dict[str, str]:
+        options = getattr(self._facade, "ai_model_options", None)
+        return options() if callable(options) else {}
+
     def create_profile(
         self,
         *,
