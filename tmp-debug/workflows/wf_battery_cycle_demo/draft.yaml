@@ -1,31 +1,19 @@
 metadata:
   workflow_id: wf_battery_cycle_demo
   author: ai-assistant
-  instrument_profile: potentiostat_win_01
-  experiment_type: battery_cycle_test
+  anchor_profile: potentiostat_win_01
   lifecycle_state: Draft
-preconditions: []
-roi_bindings:
-  status_banner: roi_status_text
-  voltage_panel: roi_voltage_value
 steps:
-- id: open_method_editor
-  action: click
-  target: anchor_method_editor_button
-- id: input_target_voltage
-  action: type
-  target: anchor_voltage_input
-  value: '4.20'
-- id: start_run
-  action: click
-  target: anchor_start_button
-- id: wait_running
-  action: wait_until
-  target: roi_status_text
-outputs:
-- key: run_status
-  source: roi_status_text
-- key: final_voltage
-  source: roi_voltage_value
-retry_policy:
-  max_attempts: 2
+  - id: input_target_voltage
+    anchor_id: anchor_voltage_input
+    action: type
+    value: '4.20'
+    match_mode: none
+    wait_seconds: 0.5
+  - id: start_run
+    anchor_id: anchor_start_button
+    action: click
+    expected_text: Running
+    match_mode: contains
+    timeout_seconds: 10.0
+    requires_confirmation: true

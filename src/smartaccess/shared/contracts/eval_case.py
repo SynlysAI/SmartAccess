@@ -19,6 +19,9 @@ class EvalScenario(FlexibleContractModel):
 class EvalInputs(FlexibleContractModel):
     """Scenario inputs, intentionally extensible across eval families."""
 
+    workflow: str | None = None
+    anchors: str | None = None
+    platform_adapter: str | None = None
     required_docs: list[str] = Field(default_factory=list)
     fixtures: list[str] = Field(default_factory=list)
 

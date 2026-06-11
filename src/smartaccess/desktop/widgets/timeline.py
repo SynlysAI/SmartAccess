@@ -72,7 +72,7 @@ class _TimelineRow(QWidget):
         index: int,
         step_id: str,
         action: str,
-        target: str,
+        anchor_id: str,
         value: str,
         status: str,
         status_time: str = "",
@@ -91,7 +91,7 @@ class _TimelineRow(QWidget):
                 f" <span style='color:{t.INK_SUBTLE};'>at {html.escape(status_time)}</span>"
             )
         detail = (
-            f"<span style='color:{t.INK_MUTED};'><b>Target</b>: {html.escape(target or '-')}<br>"
+            f"<span style='color:{t.INK_MUTED};'><b>anchor_id</b>: {html.escape(anchor_id or '-')}<br>"
             f"<b>Value</b>: {html.escape(_format_value(action, value))}</span>"
         )
         self._title.setText(title)
@@ -120,7 +120,7 @@ class Timeline(QListWidget):
             step_id = step.get("id", f"step_{index}")
             meta = {
                 "action": str(step.get("action", "")),
-                "target": str(step.get("target", "") or ""),
+                "anchor_id": str(step.get("anchor_id", "") or ""),
                 "value": str(step.get("value", "") or ""),
                 "status": "pending",
                 "status_time": "",
@@ -144,14 +144,20 @@ class Timeline(QListWidget):
             self._widgets[step_id] = widget
             self._meta[step_id] = {
                 "action": "",
-                "target": "",
+                "anchor_id": "",
                 "value": "",
                 "status": status,
                 "status_time": status_time,
             }
         meta = self._meta.setdefault(
             step_id,
-            {"action": "", "target": "", "value": "", "status": status, "status_time": ""},
+            {
+                "action": "",
+                "anchor_id": "",
+                "value": "",
+                "status": status,
+                "status_time": "",
+            },
         )
         meta["status"] = status
         if status_time:
@@ -163,13 +169,19 @@ class Timeline(QListWidget):
         widget = self._widgets[step_id]
         meta = self._meta[step_id]
         row_index = index if index is not None else list(self._rows).index(step_id) + 1
+        widget.setFixedWidth(max(120, self.viewport().width() - 12))
         widget.update_row(
             index=row_index,
             step_id=step_id,
             action=meta.get("action", ""),
-            target=meta.get("target", ""),
+            anchor_id=meta.get("anchor_id", ""),
             value=meta.get("value", ""),
             status=meta.get("status", "pending"),
             status_time=meta.get("status_time", ""),
         )
         item.setSizeHint(widget.sizeHint())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        for step_id in list(self._rows):
+            self._refresh_row(step_id)

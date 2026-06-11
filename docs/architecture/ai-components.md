@@ -4,10 +4,10 @@
 
 SmartAccess 的 AI 组件分为两层：
 
-- `产品运行时 AI`：服务真实的实验工作流设计、执行、观察和恢复。
+- `产品运行时 AI`：服务真实的锚点配置、工作流设计、执行、OCR 观察和恢复。
 - `仓库协作 AI`：服务产品文档、架构约束和研发协作。
 
-本文定义四类组件：`memory`、`skill`、`agent`、`harness`，以及它们的边界、目录和协作方式。
+本文定义四类组件：`memory`、`skill`、`agent`、`harness`，以及它们的边界、目录和协作方式。v2 运行时 AI 必须围绕简化契约工作。
 
 ## 2. 目录约定
 
@@ -44,7 +44,7 @@ ai/
 分类：
 
 - `memory/repo/`：项目背景、术语、路线图。
-- `memory/product/`：工作流原语、仪器画像、视觉模式、恢复规则。
+- `memory/product/`：动作原语、锚点配置、OCR 观测、恢复规则。
 
 ### 3.2 Skill
 
@@ -94,14 +94,22 @@ ai/
 
 ### 4.1 主链路
 
-1. orchestrator 读取 `workflow.yaml`、`instrument_profile.yaml`、`platform_adapter.yaml`。
+1. orchestrator 读取 `workflow.yaml`、`anchors.yaml`、`platform_adapter.yaml`。
 2. orchestrator 根据任务阶段选择 runtime skill。
-3. executor 执行动作原语并将结果写入 `run_trace.jsonl`。
-4. observer 读取截图与 ROI 配置，输出结构化状态。
+3. executor 执行动作原语并将动作事实写入 `run_trace.jsonl`。
+4. observer 读取截图与 observe region，输出 OCR 文本和匹配结果。
 5. recovery agent 在异常时接管，应用恢复 skill 和恢复规则 memory。
 6. runtime harness 负责会话装配、事件顺序、审计边界和组件注入。
 
-### 4.2 仓库协作链路
+### 4.2 AI 工作流生成链路
+
+1. 用户在工作流页选择锚点集并输入单 prompt。
+2. AI Gateway 检索 approved memory、approved skill 和模板摘要。
+3. 生成器先抽取 step intent，再解析为 `anchor_id`、`action`、`value`、`expected_text`、`match_mode`。
+4. Workflow Service 标准化检查生成结果。
+5. 生成后自动提取候选 memory/skill，进入 pending 审批。
+
+### 4.3 仓库协作链路
 
 1. product-analyst 读取 PRD、路线图和契约。
 2. technical-writer 维护 README、PRD 和用户可读文档。
@@ -112,11 +120,13 @@ ai/
 
 | 场景 | Memory | Skill | Agent | Harness |
 | --- | --- | --- | --- | --- |
-| 首次仪器接入 | `instrument-archetypes` | `vision-calibrator`、`platform-mapper` | orchestrator、observer | runtime、eval case 01 |
+| 首次锚点配置 | `instrument-archetypes`、`vision-patterns` | `vision-calibrator`、`platform-mapper` | orchestrator、observer | runtime、eval case 01 |
 | 工作流生成 | `workflow-primitives` | `workflow-designer` | orchestrator | runtime、eval case 02 |
-| 执行中状态识别 | `vision-patterns` | `ui-automation-orchestrator`、`vision-calibrator` | executor、observer | runtime、eval case 03 |
+| 执行中 OCR 识别 | `vision-patterns` | `ui-automation-orchestrator`、`vision-calibrator` | executor、observer | runtime、eval case 03 |
 | 异常恢复 | `failure-recovery-rules` | `incident-recovery` | recovery、orchestrator | runtime、eval case 04 |
-| 平台数据回传 | `project-context`、`workflow-primitives` | `platform-mapper` | orchestrator | runtime、eval case 05 |
+| 平台 trace 回传 | `project-context`、`workflow-primitives` | `platform-mapper` | orchestrator | runtime、eval case 05 |
+| 串口调试助手 UDP | `instrument-archetypes`、`vision-patterns` | `vision-calibrator`、`workflow-designer` | executor、observer | eval case 06 |
+| Windows 计算器 OCR | `vision-patterns`、`workflow-primitives` | `ui-automation-orchestrator`、`vision-calibrator` | executor、observer | eval case 07 |
 | 文档同步 | `project-context`、`milestones` | `documentation-sync`、`prd-maintainer`、`readme-maintainer` | technical-writer、architecture-steward | eval harness / 文档审查 |
 
 ## 6. 组件验收要求
@@ -126,30 +136,34 @@ ai/
 - 能说明适用边界。
 - 能指向主文档与主契约。
 - 能为下游 skill/agent 提供稳定术语和规则。
+- 只保留 v2 主契约字段作为推荐路径。
 
 ### 6.2 Skill
 
 - 触发条件清晰。
 - 输入输出可核查。
 - 失败处理不与其他 skill 冲突。
+- 运行时 skill 只能生成或消费简化 `anchors.yaml`、`workflow.yaml` 和 `run_trace.jsonl`。
 
 ### 6.3 Agent
 
 - 目标单一。
 - 禁止事项明确。
 - 知道什么时候调用什么 skill，什么时候升级异常。
+- observer 只做 OCR 观察和文本匹配，不执行动作。
 
 ### 6.4 Harness
 
 - 运行时 harness 能说明组件如何装配。
 - eval harness 能给出可复现的场景、指标和通过门槛。
+- 评测必须覆盖 OCR 命中、OCR 超时、无观测默认等待、停止中断轮询，并保留串口 UDP 与计算器 OCR 的能力样例。
 
 ## 7. 与契约的关系
 
 AI 组件必须围绕以下运行时契约协作：
 
+- `anchors.yaml`
 - `workflow.yaml`
-- `instrument_profile.yaml`
 - `platform_adapter.yaml`
 - `run_trace.jsonl`
 - `eval_case.yaml`

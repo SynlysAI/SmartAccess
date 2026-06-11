@@ -1,17 +1,19 @@
 scenario:
-  id: first_instrument_onboarding
-  title: 首次仪器接入与校准
+  id: first_anchor_onboarding
+  title: 首次锚点集创建
 inputs:
   required_docs:
-    - instrument_profile.yaml
+    - anchors.yaml
     - platform_adapter.yaml
 expected_events:
-  - instrument_profile_created
-  - roi_bindings_defined
+  - anchor_profile_created
+  - action_region_defined
+  - optional_observe_region_defined
   - platform_mapping_drafted
 pass_criteria:
-  - profile_contains_window_signature
-  - safety_limits_present
+  - anchors_contains_window_signature
+  - anchors_include_supported_actions
+  - regions_include_pixel_and_normalized_coordinates
   - related_agents_defined
 fixtures:
   related_memory:

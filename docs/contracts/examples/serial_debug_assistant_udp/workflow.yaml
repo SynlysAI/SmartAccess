@@ -1,0 +1,36 @@
+metadata:
+  workflow_id: wf_serial_debug_assistant_udp_send
+  anchor_profile: serial_debug_assistant_udp
+  author: smartaccess
+  lifecycle_state: Draft
+  experiment_type: udp_debug_smoke
+steps:
+  - id: select_udp_mode
+    anchor_id: protocol_udp_tab
+    action: click
+    match_mode: none
+    wait_seconds: 0.5
+  - id: set_local_port
+    anchor_id: local_port_input
+    action: type
+    value: "8889"
+    match_mode: none
+    wait_seconds: 0.3
+  - id: open_udp_service
+    anchor_id: open_udp_service_button
+    action: click
+    expected_text: UDP
+    match_mode: contains
+    timeout_seconds: 5.0
+  - id: input_udp_payload
+    anchor_id: send_text_input
+    action: type
+    value: SmartAccess UDP validation
+    match_mode: none
+    wait_seconds: 0.3
+  - id: send_udp_payload
+    anchor_id: send_button
+    action: click
+    expected_text: SmartAccess UDP validation
+    match_mode: contains
+    timeout_seconds: 5.0

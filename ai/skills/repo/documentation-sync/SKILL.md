@@ -8,7 +8,7 @@ description: Keep SmartAccess product docs, repo memory, skills, changelog, and 
 ## 触发条件
 
 - 完成产品功能、运行时契约、UI 行为或工作流语义改动。
-- 修改 `workflow.yaml`、`instrument_profile.yaml`、`run_trace.jsonl` 等契约字段或运行语义。
+- 修改 `anchors.yaml`、`workflow.yaml`、`run_trace.jsonl` 等契约字段或运行语义。
 - 新增、删除或重命名核心页面、服务、AI 组件、skill、agent、memory。
 - 用户要求“沉淀到文档 / 更新日志 / memory / skill / PRD / README”。
 
@@ -41,8 +41,9 @@ description: Keep SmartAccess product docs, repo memory, skills, changelog, and 
 6. 如果新增文档、入口流程或核心能力，更新 `README.md` 的核心文档、仓库结构、开发顺序或当前默认假设。
 7. 更新 `ai/memory/` 中稳定知识，特别是 `repo/milestones.md`、`product/workflow-primitives.md`、`product/vision-patterns.md`。
 8. 更新相关 `ai/skills/`，让下一次同类改动知道如何复用新规则。
-9. 检查文档之间是否出现命名冲突，如“上下文/工具栏”、`roi_bindings` 语义、模板回滚语义、vision mode 命名。
-10. 在最终说明中列出已更新文档和未执行/失败的验证。
+9. 检查文档之间是否出现命名冲突，如 `anchors.yaml` / `anchor_profile`、四页主导航、OCR-only 观测、trace 结果来源。
+10. 检查旧模型概念是否残留在主路径：复杂绑定、手工结果声明、复杂判断对象、多模式识别、独立等待动作或截图校验动作。
+11. 在最终说明中列出已更新文档和未执行/失败的验证。
 
 ## 失败处理
 

@@ -11,7 +11,7 @@ import time
 from typing import Any
 
 from smartaccess.runtime.application.ports import ActionOutcome, WindowInfo
-from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
+from smartaccess.shared.contracts.anchors import AnchorsContract
 
 from .window_scanner import WindowScanner, capture_window as _capture_real_window
 
@@ -27,10 +27,10 @@ class StubAutomationProvider:
     ) -> None:
         self._window_title = window_title
         self._scanner = WindowScanner() if use_real_scanner else None
-        self._profile: InstrumentProfileContract | None = None
+        self._profile: AnchorsContract | None = None
         self.actions: list[tuple[str, str | None, Any]] = []
 
-    def configure_profile(self, profile: InstrumentProfileContract | None) -> None:
+    def configure_profile(self, profile: AnchorsContract | None) -> None:
         self._profile = profile
 
     def window_present(self, title_contains: str | None) -> bool:
@@ -74,8 +74,9 @@ class StubAutomationProvider:
         anchor_detail = ""
         if self._profile and target:
             anchor = next((a for a in self._profile.anchors if a.id == target), None)
-            if anchor and anchor.roi:
-                anchor_detail = f" @({anchor.roi.x:.0f},{anchor.roi.y:.0f},{anchor.roi.width:.0f},{anchor.roi.height:.0f})"
+            if anchor:
+                roi = anchor.action_region.pixel
+                anchor_detail = f" @({roi.x:.0f},{roi.y:.0f},{roi.width:.0f},{roi.height:.0f})"
         return ActionOutcome(
             ok=True,
             detail=f"{action} {target or ''}{anchor_detail}".strip(),

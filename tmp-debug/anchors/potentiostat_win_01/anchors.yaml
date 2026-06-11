@@ -1,0 +1,53 @@
+profile_id: potentiostat_win_01
+window_signature:
+  title_contains: ElectroChem Console
+  screenshot_size:
+    width: 1280
+    height: 860
+anchors:
+  - id: anchor_start_button
+    label: Start run
+    action_region:
+      pixel:
+        x: 40.0
+        y: 40.0
+        width: 160.0
+        height: 48.0
+      normalized:
+        x: 0.1
+        y: 0.08
+        width: 0.2
+        height: 0.08
+    observe_region:
+      pixel:
+        x: 320.0
+        y: 182.0
+        width: 180.0
+        height: 56.0
+      normalized:
+        x: 0.4
+        y: 0.3
+        width: 0.22
+        height: 0.09
+    supported_actions:
+      - click
+    default_wait_seconds: 2.0
+  - id: anchor_voltage_input
+    label: Voltage input
+    action_region:
+      pixel:
+        x: 220.0
+        y: 132.0
+        width: 140.0
+        height: 42.0
+      normalized:
+        x: 0.28
+        y: 0.22
+        width: 0.18
+        height: 0.07
+    supported_actions:
+      - click
+      - type
+      - hotkey
+      - press_enter
+    default_wait_seconds: 0.5

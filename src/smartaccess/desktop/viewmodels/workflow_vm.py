@@ -6,7 +6,7 @@ from PyQt6.QtCore import pyqtSignal
 
 from smartaccess.runtime.application.workflow_service import StandardizationResult
 from smartaccess.runtime.application.workflow_service import WorkflowDraftRecord
-from smartaccess.shared.contracts.instrument_profile import InstrumentProfileContract
+from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 
 from .base import ViewModel
@@ -24,14 +24,14 @@ class WorkflowViewModel(ViewModel):
     def generator_label(self) -> str:
         return self._facade.workflow_generator_label()
 
-    def list_instrument_ids(self) -> list[str]:
-        return [p.device_id for p in self._facade.list_instruments()]
+    def list_anchor_profiles(self) -> list[str]:
+        return [p.profile_id for p in self._facade.list_instruments()]
 
-    def get_instrument(self, device_id: str | None) -> InstrumentProfileContract | None:
-        return self._facade.get_instrument(device_id) if device_id else None
+    def get_anchor_profile(self, anchor_profile: str | None) -> AnchorsContract | None:
+        return self._facade.get_instrument(anchor_profile) if anchor_profile else None
 
-    def list_anchor_ids(self, device_id: str | None) -> list[str]:
-        profile = self.get_instrument(device_id)
+    def list_anchor_ids(self, anchor_profile: str | None) -> list[str]:
+        profile = self.get_anchor_profile(anchor_profile)
         return [anchor.id for anchor in profile.anchors] if profile else []
 
     def draft_record(self, workflow_id: str) -> WorkflowDraftRecord | None:
@@ -41,14 +41,14 @@ class WorkflowViewModel(ViewModel):
         self,
         prompt: str,
         *,
-        device_id: str | None,
+        anchor_profile: str | None,
         workflow_id: str,
         prompt_references: list[dict[str, str]] | None = None,
     ) -> WorkflowContract:
-        profile = self._facade.get_instrument(device_id) if device_id else None
+        profile = self._facade.get_instrument(anchor_profile) if anchor_profile else None
         context = {
             "workflow_id": workflow_id,
-            "instrument_profile": device_id or "unknown_device",
+            "anchor_profile": anchor_profile or "unknown_device",
             "prompt_references": list(prompt_references or []),
         }
         if profile is not None:

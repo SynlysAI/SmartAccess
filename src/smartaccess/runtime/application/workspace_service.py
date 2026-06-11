@@ -78,21 +78,21 @@ class WorkspaceService:
         """Devices that are *really accessed*: the intersection of devices that
         have a template made for them AND have been driven by a (simulated) run.
 
-        - templated: any template record names the device as its instrument_profile.
+        - templated: any template record names the device as its anchor_profile.
         - simulated: a run session executed a workflow bound to the device.
         """
 
-        calibrated = {p.device_id for p in self._calibration.list_profiles()}
+        calibrated = {p.profile_id for p in self._calibration.list_profiles()}
         templated = {
-            r.instrument_profile
+            r.anchor_profile
             for r in self._templates.list_all()
-            if r.instrument_profile
+            if r.anchor_profile
         }
         simulated: set[str] = set()
         if self._workflows is not None:
             run_workflow_ids = {s.workflow_id for s in self._run_sessions.list_sessions()}
             by_id = {
-                wf.metadata.workflow_id: wf.metadata.instrument_profile
+                wf.metadata.workflow_id: wf.metadata.anchor_profile
                 for wf in self._workflows.list_workflows()
             }
             simulated = {
@@ -108,8 +108,8 @@ class WorkspaceService:
         return DashboardProjection(
             devices=[
                 DeviceStatus(
-                    device_id=p.device_id,
-                    status=(self._calibration.status_of(p.device_id) or "Draft"),
+                    device_id=p.profile_id,
+                    status=(self._calibration.status_of(p.profile_id) or "Draft"),
                 )
                 for p in self._calibration.list_profiles()
             ],

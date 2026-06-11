@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-本文基于 [PRD](../PRD.zh-CN.md) 和 [Spec](../SPEC.zh-CN.md)，把 SmartAccess 从“产品与架构基线”进一步收束为可实施的软件设计。它回答四个实现问题：
+本文基于 [PRD](../PRD.zh-CN.md) 和 [Spec](../SPEC.zh-CN.md)，把 SmartAccess 从“产品与架构基线”进一步收束为可实施的软件设计。v2 设计采用“锚点 -> 工作流 -> 执行”的断代简化模型，回答四个实现问题：
 
 - MVP 推荐采用什么样的进程与部署形态。
 - 桌面端、运行时、平台适配、AI 能力之间如何分层与协作。
@@ -15,12 +15,12 @@
 
 ### 2.1 非侵入优先
 
-- 默认通过 GUI、键鼠、截图和视觉识别与上位机交互。
+- 默认通过 GUI、键鼠、截图和 OCR 观测与上位机交互。
 - 不把厂商驱动、PLC 或安全联锁逻辑纳入 SmartAccess 责任域。
 
 ### 2.2 契约先于代码
 
-- `workflow.yaml`、`instrument_profile.yaml`、`platform_adapter.yaml`、`run_trace.jsonl`、`eval_case.yaml` 是跨模块共享边界。
+- `anchors.yaml`、`workflow.yaml`、`platform_adapter.yaml`、`run_trace.jsonl`、`eval_case.yaml` 是跨模块共享边界。
 - 新能力先补契约和样例，再补界面与实现。
 
 ### 2.3 UI 与运行时解耦
@@ -31,17 +31,17 @@
 ### 2.4 本地优先，云端可替换
 
 - 实验执行、运行轨迹、模板副本、待补传队列必须可在断网场景下持续工作。
-- AI、OCR 和视觉识别允许云端增强，但必须保留本地替代链路。
+- AI 允许云端增强；OCR 默认本地执行，并通过 provider interface 隔离实现。
 
 ### 2.5 审计优先于智能
 
 - AI 只负责生成建议、草稿和判断信号，不直接绕过审计链路。
 - 高风险动作、人工确认、模板发布和模板回滚必须留下可追溯记录。
 
-### 2.6 增量扩展优先
+### 2.6 简化主模型优先
 
-- MVP 先覆盖 Windows、单窗口、有限动作原语和基础 OCR。
-- 通过 provider 接口和插件式适配，为 Linux、多窗口和多模态识别保留演进空间。
+- MVP 先覆盖 Windows、单窗口、有限动作原语和 OCR-only 观测。
+- 不在 v2 主路径保留复杂判断、手工结果声明或多模式识别。
 
 ## 3. 推荐系统形态
 
@@ -51,21 +51,15 @@ MVP 推荐把 SmartAccess 打包为一个安装包，但运行时拆成两个主
 
 | 进程 | 主要职责 | 是否 MVP 必需 |
 | --- | --- | --- |
-| `smartaccess-desktop` | PyQt 工作台、页面导航、可视化监控、人工确认入口 | 是 |
+| `smartaccess-desktop` | PyQt 工作台、四页导航、可视化监控、人工确认入口 | 是 |
 | `smartaccess-runtime` | orchestrator、executor、observer、recovery、平台适配、FastAPI 服务、落盘与补传 | 是 |
-| `smartaccess-ai-worker` | 长耗时 LLM/OCR/视觉任务隔离执行 | 否，预留接口 |
-
-推荐拆分原因：
-
-- 避免 PyQt UI 卡顿直接影响执行链路。
-- 让设备侧 FastAPI 服务在桌面关闭后仍可维持最小运行能力。
-- 便于后续把运行时演进为 Windows Service 或 Linux daemon。
+| `smartaccess-ai-worker` | 长耗时 LLM/OCR 任务隔离执行 | 否，预留接口 |
 
 ### 3.2 逻辑通信方式
 
 - `desktop -> runtime`：本机 `localhost` 控制 API + WebSocket/SSE 事件流。
 - `runtime -> SpecLabOS`：HTTP/HTTPS 平台接口。
-- `runtime -> executor/vision adapters`：进程内 service call；长耗时任务可转交 worker。
+- `runtime -> executor/ocr adapters`：进程内 service call；长耗时任务可转交 worker。
 - `runtime -> local store`：SQLite + 文件系统。
 
 ### 3.3 路由分面
@@ -73,7 +67,7 @@ MVP 推荐把 SmartAccess 打包为一个安装包，但运行时拆成两个主
 运行时对外暴露两类接口：
 
 - `Edge API`：供 SpecLabOS 或运维调用，仅包含 `/health` 和实验触发/执行/状态查询接口。
-- `Internal Control API`：供桌面端使用，负责工作流编辑、模板发布、运行监控、人工确认和事件订阅。
+- `Internal Control API`：供桌面端使用，负责锚点、工作流、模板发布、运行监控、人工确认和事件订阅。
 
 MVP 可以由同一个 FastAPI 应用承载两类路由，但必须做到逻辑分组、权限分离和审计分离。
 
@@ -84,8 +78,8 @@ MVP 可以由同一个 FastAPI 应用承载两类路由，但必须做到逻辑�
 职责：
 
 - 提供统一工作台布局与页面路由。
-- 展示运行状态、模板状态、仪器状态和异常上下文。
-- 发起校准、生成工作流、发布模板、执行任务和人工恢复。
+- 展示运行状态、模板状态、锚点集状态和异常上下文。
+- 发起锚点配置、生成工作流、发布模板、执行任务和人工恢复。
 
 约束：
 
@@ -95,15 +89,15 @@ MVP 可以由同一个 FastAPI 应用承载两类路由，但必须做到逻辑�
 
 ### 4.2 Application Service 层
 
-该层是“用例编排层”，负责把 UI 操作或平台请求转成稳定的业务流程。
+该层是用例编排层，负责把 UI 操作或平台请求转成稳定的业务流程。
 
 建议包含：
 
 - `WorkspaceService`
-- `CalibrationService`
+- `AnchorService`
 - `WorkflowService`
 - `TemplateService`
-- `RunSessionService`
+- `RunService`
 - `IncidentService`
 - `PlatformSyncService`
 - `EvaluationService`
@@ -114,8 +108,8 @@ MVP 可以由同一个 FastAPI 应用承载两类路由，但必须做到逻辑�
 
 核心聚合：
 
+- `AnchorProfile`
 - `Workflow`
-- `InstrumentProfile`
 - `TemplateVersion`
 - `RunSession`
 - `Incident`
@@ -126,7 +120,7 @@ MVP 可以由同一个 FastAPI 应用承载两类路由，但必须做到逻辑�
 该层承载所有不稳定依赖：
 
 - GUI 自动化 provider
-- 截图与视觉识别 provider
+- 截图 provider
 - OCR provider
 - LLM/规则引擎 provider
 - SpecLabOS client
@@ -144,24 +138,25 @@ MVP 可以由同一个 FastAPI 应用承载两类路由，但必须做到逻辑�
 
 | 模块 | 主要职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
-| `Workflow Manager` | 管理草稿、标准化检查、参数绑定、模板装配 | 自然语言草稿、模板、平台任务 | `workflow.yaml`、本地执行上下文 |
-| `Instrument Calibrator` | 维护窗口签名、锚点、ROI、安全限制 | 截图、用户标注、平台字段需求 | `instrument_profile.yaml` |
-| `Automation Executor` | 执行动作原语并回写事件 | step、anchor、参数、安全限制 | 动作事件、截图、执行结果 |
-| `Observer` | 采集截图并生成结构化观察结果 | ROI 配置、截图、识别规则 | observation 事件、结构化状态 |
-| `Recovery Engine` | 根据异常和策略给出重试、回退或人工确认动作 | incident、run context、recovery rule | 恢复动作、升级事件 |
-| `Platform Adapter` | 管理任务拉取、模板发布、状态/日志/结果同步 | platform config、domain event | 平台请求、补传任务 |
-| `Run Session Manager` | 管理会话状态机、事件流和归档 | workflow、instrument profile、command | `run_trace.jsonl`、session state |
+| `Anchor Manager` | 维护窗口签名、action/observe 区域、坐标重映射 | 截图、用户标注、锚点表 | `anchors.yaml` |
+| `Workflow Manager` | 管理草稿、标准化检查、参数绑定、模板装配 | 自然语言草稿、模板、平台任务、锚点集 | `workflow.yaml`、本地执行上下文 |
+| `Automation Executor` | 执行动作原语并回写事件 | step、anchor、参数、确认状态 | 动作事件、截图、执行结果 |
+| `Observer` | 截图裁剪并生成 OCR 观察结果 | observe region、截图、匹配规则 | OCR 事件、结构化文本结果 |
+| `Recovery Engine` | 根据异常和策略给出重试、人工确认或终止动作 | incident、run context、recovery rule | 恢复动作、升级事件 |
+| `Platform Adapter` | 管理任务拉取、模板发布、状态/日志/trace 同步 | platform config、domain event | 平台请求、补传任务 |
+| `Run Service` | 管理会话状态机、事件流和归档 | workflow、anchors、command | `run_trace.jsonl`、session state |
 | `Artifact Store` | 统一保存截图、导出 YAML、日志、缓存副本 | 文件内容、事件引用 | 文件路径、artifact index |
 | `Outbox Sync` | 负责离线缓存与补传 | 平台失败事件 | retry task、告警 |
-| `AI Gateway` | 隔离 LLM、OCR、VLM 供应商差异 | prompt、截图、上下文 | 草稿、识别结果、建议 |
+| `AI Gateway` | 隔离 LLM 供应商差异 | prompt、锚点集、上下文 | 简化 workflow 草稿、建议 |
 
 ### 5.1 Orchestrator 的中心职责
 
 orchestrator 不等于单一 agent，而是运行时决策中心。它需要负责：
 
 - 建立 `RunSession`。
-- 按步骤驱动 executor 与 observer。
-- 根据观察结果推进、等待、分支、重试或阻塞。
+- 按步骤驱动 executor。
+- 若步骤有 OCR 预期，则驱动 observer 轮询；否则执行默认等待。
+- 根据观察结果推进、失败、取消或阻塞。
 - 触发 platform sync 与本地审计。
 - 在异常时交给 recovery engine 决策。
 
@@ -179,15 +174,11 @@ Recovery 只决定“怎么恢复”，不修改模板真相源。恢复动作�
 | 本地元数据 | `SQLite` | 单机稳定、易备份、事务语义清晰 |
 | 文件产物 | 本地文件系统分层目录 | 适合截图、JSONL、YAML、副本缓存 |
 | Windows GUI 自动化 | `pywinauto` + `pyautogui` + `mss` | 兼顾 UIA 能力、坐标操作和截图能力 |
-| 视觉识别 | `OpenCV` + provider interface | 支撑模板匹配、颜色检测、规则识别 |
 | OCR | 默认本地 OCR provider，建议优先评估 `PaddleOCR` | 支持离线部署，便于中英混合场景 |
 | 日志 | 标准 `logging` + JSON formatter | 兼容 Python 生态和运行轨迹落盘 |
 | 密钥管理 | OS keyring/凭据管理器，开发态可降级 `.env` | 避免把明文令牌写入契约文件 |
 
-说明：
-
-- 本节是推荐实现，不是不可变约束。
-- 如果后续验证发现某个库不适配仪器上位机，优先保持 adapter interface 不变，再替换底层 provider。
+说明：如果后续验证发现某个库不适配仪器上位机，优先保持 adapter interface 不变，再替换底层 provider。
 
 ## 7. 数据与存储设计
 
@@ -198,8 +189,6 @@ Recovery 只决定“怎么恢复”，不修改模板真相源。恢复动作�
 - `SQLite`：保存可查询的元数据、状态索引、队列和审计记录。
 - `workspace 文件系统`：保存 YAML 契约、运行轨迹、截图和模板副本。
 
-这样既能支持 UI 快速查询，也能保留可导出、可迁移、可审计的原始文件。
-
 ### 7.2 建议目录布局
 
 ```text
@@ -208,10 +197,10 @@ workspace/
 |-- configs/
 |   |-- platform_adapter.yaml
 |   `-- app_settings.yaml
-|-- instruments/
-|   `-- {device_id}/
-|       |-- instrument_profile.yaml
-|       `-- calibration_assets/
+|-- anchors/
+|   `-- {profile_id}/
+|       |-- anchors.yaml
+|       `-- screenshots/
 |-- workflows/
 |   `-- {workflow_id}/
 |       |-- draft.yaml
@@ -236,11 +225,11 @@ workspace/
 
 | 表 | 用途 |
 | --- | --- |
-| `instrument_profiles` | 仪器画像索引、状态、适用 OS、最近校准时间 |
+| `anchor_profiles` | 锚点集索引、状态、适用 OS、最近更新时间 |
 | `workflows` | 草稿与标准化工作流索引 |
 | `template_versions` | 发布态模板版本索引、来源、状态 |
 | `run_sessions` | 运行会话主表，记录状态、模板来源、开始结束时间 |
-| `run_steps` | 步骤执行投影，供监控页查询 |
+| `run_steps` | 步骤执行投影，供执行页查询 |
 | `incidents` | 异常、恢复动作、人工确认记录 |
 | `sync_outbox` | 待补传平台事件 |
 | `audit_events` | 发布、回滚、人工确认、高风险动作审计 |
@@ -273,16 +262,17 @@ workspace/
 
 桌面端建议通过内部 API 使用运行时能力，至少覆盖以下用例：
 
-- 仪器画像创建、编辑、校准、启停。
+- 锚点集创建、编辑、截图、保存。
 - 工作流草稿生成、保存、标准化检查。
 - 模板发布、回滚、回拉和版本查询。
-- 运行发起、暂停、继续、终止、人工确认。
+- 运行发起、停止、取消、人工确认。
 - 运行事件订阅与监控数据拉取。
 
 ### 8.3 领域事件
 
 推荐把运行过程标准化为领域事件，供 UI、日志、平台同步和补传共享：
 
+- `anchor_profile.saved`
 - `workflow.standardized`
 - `template.published`
 - `run.created`
@@ -290,10 +280,10 @@ workspace/
 - `run.step.started`
 - `run.step.observed`
 - `run.step.succeeded`
+- `run.step.failed`
 - `run.blocked`
-- `run.recovered`
 - `run.completed`
-- `run.failed`
+- `run.cancelled`
 - `platform.sync.failed`
 
 领域事件先写本地，再由 `PlatformSyncService` 异步投递到 SpecLabOS；这就是 MVP 的 outbox 模式基础。
@@ -308,44 +298,37 @@ workspace/
 - 中央：主工作区。
 - 右侧：上下文详情、AI 助手、风险提示、审计摘要。
 
-### 9.2 五个 MVP 页面
+### 9.2 四个 MVP 页面
 
-### 工作台首页
+### 锚点
 
-- 任务队列卡片
-- 当前设备状态
-- 最近运行记录
-- 待处理异常与待补传告警
+- 窗口扫描与签名确认。
+- 截图捕获与画布标注。
+- 锚点表：id、label、action_region、observe_region、supported_actions、default_wait_seconds。
+- 保存并校验 `anchors.yaml`。
 
-### 设备接入与校准页
+### 工作流
 
-- 窗口发现与签名确认
-- ROI/锚点标注画布
-- 安全限制配置
-- 平台字段映射草稿
+- 锚点集选择。
+- 单 prompt 输入与生成按钮。
+- 步骤表：id、anchor_id、action、value、expected_text、match_mode、timeout/wait、confirmation。
+- 标准化检查结果。
 
-### 工作流设计页
+### 模板/平台
 
-- 模板选择与引用
-- 步骤编排器
-- 参数面板
-- 预检与标准化检查结果
-- AI 生成与修订入口
+- 模板列表与筛选。
+- 版本历史。
+- 发布状态与适用锚点集。
+- 回拉、复用、回滚入口。
+- 平台字段映射与 trace 同步状态。
 
-### 模板库页
+### 执行
 
-- 模板列表与筛选
-- 版本历史
-- 发布状态与适用仪器
-- 回拉、复用、回滚入口
-
-### 运行监控页
-
-- 当前步骤时间线
-- 最新截图与 ROI 识别结果
-- 日志流
-- 异常处理面板
-- 人工确认与恢复动作
+- 开始、停止、取消。
+- 当前步骤与状态。
+- 期望 OCR vs 实际 OCR。
+- 最新截图路径。
+- 日志流和异常处理面板。
 
 ### 9.3 状态管理原则
 
@@ -355,36 +338,36 @@ workspace/
 
 ## 10. 关键流程设计
 
-### 10.1 首次接入新仪器
+### 10.1 首次创建锚点集
 
-1. 桌面端发起校准会话。
-2. runtime 扫描窗口并创建 `InstrumentProfile` 草稿。
-3. 用户标注 ROI、锚点和安全限制。
-4. `CalibrationService` 生成 `instrument_profile.yaml` 与元数据索引。
-5. 若存在平台字段需求，则同步生成字段映射草稿。
+1. 桌面端发起锚点配置会话。
+2. runtime 扫描窗口并创建 `AnchorProfile` 草稿。
+3. 用户标注 action region 和可选 observe region。
+4. `AnchorService` 生成 `anchors.yaml` 与元数据索引。
+5. 若存在平台字段需求，则在平台适配层建立映射草稿。
 
 ### 10.2 工作流从草稿到发布
 
-1. 用户通过 AI 或手工创建 workflow draft。
-2. `WorkflowService` 绑定仪器画像、ROI 和字段映射。
-3. `StandardizationChecker` 校验生命周期前置条件。
+1. 用户选择锚点集并通过 AI 或手工创建 workflow draft。
+2. `WorkflowService` 绑定 `anchor_profile` 和平台任务参数。
+3. 标准化检查校验步骤、锚点、动作能力和 OCR 观测区域。
 4. 通过后进入 `Standardized`。
 5. `TemplateService` 发布模板到 SpecLabOS，并在本地保存稳定副本。
 
 ### 10.3 平台下发任务执行
 
-1. `PlatformAdapter` 接收任务上下文。
+1. `PlatformSyncService` 接收任务上下文。
 2. 根据 `template_id + template_version` 拉取模板。
-3. `WorkflowManager` 绑定参数，生成 session context。
-4. `RunSessionManager` 创建 `session_id`。
+3. `WorkflowService` 绑定参数，生成 session context。
+4. `RunService` 创建 `session_id`。
 5. orchestrator 驱动 executor + observer 执行。
-6. `PlatformSyncService` 异步上传状态、日志、结果和异常。
+6. `PlatformSyncService` 异步上传状态、日志、trace 和异常。
 
 ### 10.4 异常恢复
 
 1. observer 或 executor 触发 incident。
 2. `RecoveryEngine` 结合规则判断默认动作。
-3. 低风险异常自动重试或回退。
+3. 低风险异常自动重试或重新定位。
 4. 高风险异常进入 `Blocked`，等待人工确认。
 5. 所有恢复动作写入 `run_trace.jsonl` 和 `audit_events`。
 
@@ -392,7 +375,7 @@ workspace/
 
 ### 11.1 安全
 
-- 高风险动作必须具备 `requires_manual_confirm` 标记。
+- 高风险动作必须具备 `requires_confirmation` 标记。
 - 平台认证信息只存 `secret_ref`，不写入 YAML 明文。
 - Internal API 至少要求本机访问和本地令牌保护。
 
@@ -401,6 +384,7 @@ workspace/
 - 平台同步采用 outbox 模式，避免回传失败阻塞本地执行。
 - 模板拉取失败时回退到最近可执行副本，但必须记录命中来源。
 - 运行时重启后，可从 `run_sessions` 和 `run_trace.jsonl` 恢复最后状态摘要。
+- 停止或取消请求必须能中断 OCR 轮询。
 
 ### 11.3 可运维性
 
@@ -440,7 +424,7 @@ tests/
 
 - `shared/contracts/` 放 Pydantic schema 和 YAML serializer。
 - `runtime/application/` 实现用例服务，不放第三方 API 细节。
-- `runtime/adapters/` 按 `automation`、`vision`、`platform`、`storage`、`ai` 再细分。
+- `runtime/adapters/` 按 `automation`、`ocr`、`platform`、`storage`、`ai` 再细分。
 - `desktop/viewmodels/` 只处理展示态，不承载业务规则。
 
 ## 13. MVP 实施顺序
@@ -451,29 +435,30 @@ tests/
 - 建立 SQLite 与 workspace 目录。
 - 跑通日志、artifact store 和 outbox 基础能力。
 
-### Phase 2：设备接入与校准
+### Phase 2：锚点配置
 
-- 实现窗口发现、截图、ROI 标注、锚点保存。
-- 能产出 `instrument_profile.yaml`。
+- 实现窗口发现、截图、画布标注、锚点保存。
+- 能产出 `anchors.yaml`。
 
 ### Phase 3：工作流设计与标准化
 
-- 实现 workflow 草稿编辑、参数绑定、标准化检查。
+- 实现 workflow 草稿编辑、锚点集选择、单 prompt 生成和标准化检查。
 - 能产出和回读 `workflow.yaml`。
 
-### Phase 4：执行与观察闭环
+### Phase 4：执行与 OCR 闭环
 
 - 实现 executor、observer、run session 状态机。
+- 跑通 OCR 命中、OCR 超时、无观测默认等待、停止中断轮询。
 - 跑通 `run_trace.jsonl`、异常记录和人工确认。
 
 ### Phase 5：平台与模板闭环
 
 - 实现 FastAPI MVP 四接口。
-- 接入模板拉取、模板发布、状态/日志/结果回传。
+- 接入模板拉取、模板发布、状态/日志/trace 回传。
 
 ### Phase 6：评测与交付
 
-- 对齐 `ai/harness/evals/cases/` 五个关键场景。
+- 对齐 `ai/harness/evals/cases/` 七个关键场景，包含串口调试助手 UDP 和 Windows 计算器 OCR 能力示例。
 - 完成安装包、运行时配置和运维说明。
 
 ## 14. 当前应立即落地的设计决策

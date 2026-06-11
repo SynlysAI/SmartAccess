@@ -21,9 +21,10 @@ class EndpointMap(FlexibleContractModel):
     fetch_task: NonEmptyStr
     fetch_template: NonEmptyStr
     publish_template: NonEmptyStr
+    delete_template: str | None = None
     upload_status: NonEmptyStr
     upload_logs: NonEmptyStr
-    upload_results: NonEmptyStr
+    upload_trace: NonEmptyStr
 
 
 class AdapterRetryPolicy(FlexibleContractModel):

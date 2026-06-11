@@ -14,7 +14,7 @@ from typing import Any
 
 from smartaccess.runtime.application.ports import ActionOutcome, WindowInfo
 from smartaccess.runtime.application.roi_resolver import resolve_anchor_roi
-from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, InstrumentProfileContract
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorsContract
 
 from .window_scanner import WindowScanner, capture_window as _capture_real_window, user32
 
@@ -70,10 +70,10 @@ class Win32AutomationProvider:
 
     def __init__(self) -> None:
         self._scanner = WindowScanner()
-        self._profile: InstrumentProfileContract | None = None
+        self._profile: AnchorsContract | None = None
         self._hwnd: int | None = None
 
-    def configure_profile(self, profile: InstrumentProfileContract | None) -> None:
+    def configure_profile(self, profile: AnchorsContract | None) -> None:
         self._profile = profile
         self._hwnd = self._find_hwnd(profile.window_signature.title_contains if profile else None)
 

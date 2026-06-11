@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, RoiRect, WindowSignature
+from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion, WindowSignature
 
 
 def resolve_anchor_roi(
@@ -11,33 +11,33 @@ def resolve_anchor_roi(
     *,
     current_width: int | None = None,
     current_height: int | None = None,
-) -> RoiRect | None:
+) -> PixelRegion | None:
     """Return the best absolute ROI for the current window dimensions."""
 
     if (
-        anchor.normalized_roi is not None
+        anchor.action_region.normalized is not None
         and current_width
         and current_height
         and current_width > 0
         and current_height > 0
     ):
-        normalized = anchor.normalized_roi
-        return RoiRect(
+        normalized = anchor.action_region.normalized
+        return PixelRegion(
             x=normalized.x * current_width,
             y=normalized.y * current_height,
             width=normalized.width * current_width,
             height=normalized.height * current_height,
         )
-    if anchor.roi is not None:
-        return anchor.roi
+    if anchor.action_region.pixel is not None:
+        return anchor.action_region.pixel
     if (
-        anchor.normalized_roi is not None
+        anchor.action_region.normalized is not None
         and signature is not None
         and signature.capture_width
         and signature.capture_height
     ):
-        normalized = anchor.normalized_roi
-        return RoiRect(
+        normalized = anchor.action_region.normalized
+        return PixelRegion(
             x=normalized.x * signature.capture_width,
             y=normalized.y * signature.capture_height,
             width=normalized.width * signature.capture_width,

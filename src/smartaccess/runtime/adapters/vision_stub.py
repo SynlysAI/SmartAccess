@@ -10,7 +10,7 @@ exercised once; the resample then returns high confidence. Set
 from __future__ import annotations
 
 from smartaccess.runtime.application.ports import OcrReading
-from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, RoiRect
+from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
 
 
 class StubVisionProvider:
@@ -33,7 +33,7 @@ class StubVisionProvider:
         *,
         screenshot: bytes | None,
         anchor: AnchorDefinition,
-        roi: RoiRect | None = None,
+        roi: PixelRegion | None = None,
     ) -> OcrReading:
         reading = self.read_text(anchor.id)
         detail = "stub OCR"

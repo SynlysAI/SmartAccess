@@ -1,38 +1,41 @@
 """Shared contract models and serialization helpers."""
 
-from .edge_api import ApiResponse, ExecuteRequest, HealthResponse, StatusResponse, TriggerGenerateRequest
-from .eval_case import EvalCaseContract, EvalFixtures, EvalInputs, EvalScenario, ExpectedEventEntry
-from .instrument_profile import (
-    ActionBinding,
+from .anchors import (
     AnchorDefinition,
-    InstrumentProfileContract,
-    NormalizedRoiRect,
-    RoiRect,
-    SafetyField,
-    SafetyLimits,
+    AnchorActionBinding,
+    AnchorRegion,
+    AnchorsContract,
+    NormalizedRegion,
+    PixelRegion,
+    ScreenshotSize,
     WindowSignature,
 )
+from .edge_api import ApiResponse, ExecuteRequest, HealthResponse, StatusResponse, TriggerGenerateRequest
+from .eval_case import EvalCaseContract, EvalFixtures, EvalInputs, EvalScenario, ExpectedEventEntry
 from .io import dump_jsonl_contracts, dump_yaml_contract, load_jsonl_contracts, load_yaml_contract
 from .platform_adapter import AdapterRetryPolicy, AuthConfig, EndpointMap, PlatformAdapterContract
-from .run_trace import ActionPayload, ArtifactPayload, ObservationPayload, ResultPayload, RunTraceRecord
+from .run_trace import ActionPayload, ErrorPayload, RunTraceRecord, WaitStrategyPayload
+from .validation import validate_workflow_against_anchors
 from .workflow import (
     WorkflowContract,
     WorkflowMetadata,
     WorkflowOutput,
-    WorkflowPrecondition,
     WorkflowRetryPolicy,
     WorkflowStep,
+    WorkflowMigrationError,
 )
 
 __all__ = [
-    "ActionBinding",
     "ActionPayload",
     "AdapterRetryPolicy",
     "AnchorDefinition",
+    "AnchorActionBinding",
+    "AnchorRegion",
+    "AnchorsContract",
     "ApiResponse",
-    "ArtifactPayload",
     "AuthConfig",
     "EndpointMap",
+    "ErrorPayload",
     "EvalCaseContract",
     "EvalFixtures",
     "EvalInputs",
@@ -40,24 +43,22 @@ __all__ = [
     "ExecuteRequest",
     "ExpectedEventEntry",
     "HealthResponse",
-    "InstrumentProfileContract",
-    "NormalizedRoiRect",
-    "ObservationPayload",
+    "NormalizedRegion",
+    "PixelRegion",
     "PlatformAdapterContract",
-    "ResultPayload",
-    "RoiRect",
     "RunTraceRecord",
-    "SafetyField",
-    "SafetyLimits",
+    "ScreenshotSize",
     "StatusResponse",
     "TriggerGenerateRequest",
+    "WaitStrategyPayload",
     "WindowSignature",
     "WorkflowContract",
     "WorkflowMetadata",
+    "WorkflowMigrationError",
     "WorkflowOutput",
-    "WorkflowPrecondition",
     "WorkflowRetryPolicy",
     "WorkflowStep",
+    "validate_workflow_against_anchors",
     "dump_jsonl_contracts",
     "dump_yaml_contract",
     "load_jsonl_contracts",

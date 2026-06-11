@@ -1,0 +1,17 @@
+name: smartaccess
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pyqt
+  - pyyaml
+  - pydantic
+  - fastapi
+  - uvicorn
+  - httpx
+  - pytest
+  - opencv
+  - pip:
+      - paddlepaddle
+      - paddleocr

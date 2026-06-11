@@ -23,14 +23,16 @@ def _demo_workflow(workflow_id: str = "wf_test") -> WorkflowContract:
             experiment_type="smoke_test",
             lifecycle_state="Draft",
         ),
-        roi_bindings={"status_banner": "roi_status"},
+        roi_bindings={"status_banner": "status_button"},
         steps=[WorkflowStep(
-            id="wait_running",
-            action="wait_until",
-            target="roi_status",
-            condition={"source": "roi_status", "mode": "ocr", "operator": "contains", "expected": "Running", "timeout_seconds": 5.0, "poll_interval_seconds": 0.5},
+            id="start_and_wait",
+            action="click",
+            anchor_id="status_button",
+            expected_text="Running",
+            match_mode="contains",
+            timeout_seconds=5.0,
         )],
-        outputs=[WorkflowOutput(key="run_status", source="roi_status")],
+        outputs=[WorkflowOutput(key="run_status", source="status_button")],
         retry_policy=WorkflowRetryPolicy(max_attempts=2),
     )
 
@@ -47,8 +49,17 @@ def test_facade_smoke_and_dashboard(tmp_path: Path) -> None:
     facade.create_calibration(
         device_id="d1",
         title_contains="ElectroChem Console",
-        anchors=[{"id": "roi_status", "type": "observation", "vision_mode": "ocr"}],
-        actions=["wait_until"],
+        anchors=[
+            {
+                "id": "status_button",
+                "roi": {"x": 10, "y": 10, "width": 80, "height": 32},
+                "normalized_roi": {"x": 0.01, "y": 0.01, "width": 0.08, "height": 0.03},
+                "observe_roi": {"x": 120, "y": 10, "width": 120, "height": 32},
+                "observe_normalized_roi": {"x": 0.12, "y": 0.01, "width": 0.12, "height": 0.03},
+                "vision_mode": "ocr",
+            }
+        ],
+        actions=["click"],
         safety_limits={},
     )
     workflow = facade.register_workflow(_demo_workflow())
@@ -62,7 +73,9 @@ def test_facade_smoke_and_dashboard(tmp_path: Path) -> None:
     assert any(r.session_id == session.session_id for r in dashboard.recent_runs)
 
     evals = facade.run_evals()
-    assert len(evals) == 5
+    scenario_ids = {result.scenario_id for result in evals}
+    assert len(evals) == 7
+    assert {"serial_udp_debug_assistant", "windows_calculator_ocr"} <= scenario_ids
 
 
 def test_facade_updates_workflow_bindings_and_outputs(tmp_path: Path) -> None:

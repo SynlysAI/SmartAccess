@@ -1,29 +1,35 @@
 scenario:
   id: eval_platform_sync_01
-  title: platform template sync and data sync after successful run
+  title: platform template sync and trace upload after successful run
 inputs:
   workflow: workflow.yaml
-  instrument_profile: instrument_profile.yaml
+  anchors: anchors.yaml
   platform_adapter: platform_adapter.yaml
   fixtures:
     - screenshots/success/
 expected_events:
   - template_published:
       template_id: tpl_battery_cycle_standard
-      template_version: 1.2.0
+      template_version: 2.0.0
   - template_fetched:
       template_id: tpl_battery_cycle_standard
-      template_version: 1.2.0
+      template_version: 2.0.0
   - step_id: start_run
-    result_status: success
+    anchor_id: start_run
+    action: click
+    wait_strategy: ocr_poll
+    expected_text: Running
+    actual_text_contains: Running
+    matched: true
   - upload_status: completed
-  - upload_results_contains:
-      - final_voltage
-      - run_status
+  - upload_trace_contains:
+      - step_id: start_run
+      - actual_text
+      - screenshot_path
 pass_criteria:
   - all_expected_events_present
   - no_unhandled_exception
-  - run_trace_contains_artifacts
+  - run_trace_contains_step_ocr_facts
   - template_sync_trace_present
 fixtures:
   mock_platform_server: fixtures/mock_speclabos

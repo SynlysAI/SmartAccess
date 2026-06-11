@@ -1,9 +1,4 @@
-"""Deterministic workflow-draft generator stub.
-
-Stands in for the AI workflow designer. Produces a believable
-:class:`WorkflowContract` draft from a natural-language prompt plus context
-(instrument profile, ROI bindings) so the workflow design page is fully wired.
-"""
+"""Deterministic workflow-draft generator stub."""
 
 from __future__ import annotations
 
@@ -12,109 +7,106 @@ from typing import Any
 from smartaccess.shared.contracts.workflow import (
     WorkflowContract,
     WorkflowMetadata,
-    WorkflowOutput,
-    WorkflowRetryPolicy,
     WorkflowStep,
 )
 
 
 class TemplatePromptWorkflowGenerator:
-    """Maps a prompt + context onto a draft workflow contract."""
+    """Maps a prompt + context onto a v2 workflow contract."""
 
     def __init__(self) -> None:
         self.last_reasoning: str = ""
 
     def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> WorkflowContract:
-        instrument = context.get("instrument_profile") or "unknown_device"
+        anchor_profile = context.get("anchor_profile") or context.get("instrument_profile") or "unknown_device"
         anchors = context.get("anchors") or []
         actions = context.get("actions") or []
         prompt_references = context.get("prompt_references") or []
-        roi_bindings = context.get("roi_bindings") or {
-            "status_banner": "roi_status_text",
-            "voltage_panel": "roi_voltage_value",
-        }
-        steps = context.get("steps") or [
-            {"id": "open_method_editor", "action": "click", "target": "anchor_method_editor_button"},
-            {"id": "input_target_voltage", "action": "type", "target": "anchor_voltage_input", "value": "4.20"},
-            {"id": "start_run", "action": "click", "target": "anchor_start_button"},
+        anchor_ids = [anchor.get("id") for anchor in anchors if anchor.get("id")]
+
+        default_steps = [
             {
-                "id": "wait_running",
-                "action": "wait_until",
-                "target": "roi_status_text",
-                "condition": {
-                    "source": "roi_status_text",
-                    "mode": "ocr",
-                    "operator": "contains",
-                    "expected": "Running",
-                    "timeout_seconds": 30.0,
-                    "poll_interval_seconds": 1.0,
-                },
+                "id": "open_method_editor",
+                "anchor_id": anchor_ids[0] if anchor_ids else "anchor_method_editor_button",
+                "action": "click",
+                "match_mode": "none",
+                "wait_seconds": 1.0,
+            },
+            {
+                "id": "input_target_value",
+                "anchor_id": anchor_ids[1] if len(anchor_ids) > 1 else (anchor_ids[0] if anchor_ids else "anchor_value_input"),
+                "action": "type",
+                "value": "4.20",
+                "match_mode": "none",
+                "wait_seconds": 0.5,
             },
         ]
+        if len(anchor_ids) > 2:
+            default_steps.append(
+                {
+                    "id": "run_and_wait",
+                    "anchor_id": anchor_ids[2],
+                    "action": "click",
+                    "expected_text": "Running",
+                    "match_mode": "contains",
+                    "timeout_seconds": 10.0,
+                    "requires_confirmation": True,
+                }
+            )
+        elif anchor_ids:
+            default_steps[0]["expected_text"] = "OK"
+            default_steps[0]["match_mode"] = "not_empty"
+            default_steps[0]["timeout_seconds"] = 2.0
+        steps = context.get("steps") or default_steps
         self.last_reasoning = self._explain(
-            prompt,
-            instrument,
-            anchors,
-            actions,
-            steps,
-            roi_bindings,
-            prompt_references,
+            prompt=prompt,
+            anchor_profile=anchor_profile,
+            anchor_ids=anchor_ids,
+            actions=actions,
+            steps=steps,
+            prompt_references=prompt_references,
         )
         return WorkflowContract(
             metadata=WorkflowMetadata(
                 workflow_id=context.get("workflow_id", "wf_draft"),
+                anchor_profile=anchor_profile,
                 author=context.get("author", "ai-assistant"),
-                instrument_profile=instrument,
-                experiment_type=context.get("experiment_type", "generic_experiment"),
                 lifecycle_state="Draft",
+                template_id=context.get("template_id"),
+                template_version=context.get("template_version"),
             ),
-            preconditions=[],
-            roi_bindings=roi_bindings,
-            steps=[WorkflowStep(**s) for s in steps],
-            outputs=[
-                WorkflowOutput(key="run_status", source="roi_status_text"),
-                WorkflowOutput(key="final_voltage", source="roi_voltage_value"),
-            ],
-            retry_policy=WorkflowRetryPolicy(max_attempts=2),
+            steps=[WorkflowStep(**step) for step in steps],
         )
 
     @staticmethod
-    def _explain(prompt, instrument, anchors, actions, steps, roi_bindings, prompt_references) -> str:
-        """A human-readable trace of how this draft was assembled (item 13).
-
-        The template generator is deterministic, so we narrate the same logic it
-        applied — what context it read and why each step was chosen.
-        """
-
-        anchor_ids = [a.get("id") for a in anchors] if anchors else []
+    def _explain(
+        *,
+        prompt: str,
+        anchor_profile: str,
+        anchor_ids: list[str],
+        actions: list[str],
+        steps: list[dict[str, Any]],
+        prompt_references: list[dict[str, Any]],
+    ) -> str:
         lines = [
-            "## 编排推理过程（模板生成器）",
-            f"**目标描述**：{prompt.strip() or '（空）'}",
-            f"**目标仪器**：`{instrument}`",
+            "## Draft reasoning",
+            f"prompt: {prompt.strip() or '(empty)'}",
+            f"anchor_profile: {anchor_profile}",
+            f"anchors: {', '.join(anchor_ids) if anchor_ids else '(none)'}",
+            f"actions: {', '.join(actions) if actions else '(none)'}",
             "",
-            "### 1. 读取上下文",
-            f"- 可用锚点 {len(anchor_ids)} 个：{', '.join(anchor_ids) if anchor_ids else '（未提供，使用占位锚点）'}",
-            f"- 已声明能力：{', '.join(actions) if actions else '（未提供）'}",
-            "",
-            "### 1.1 已引用上下文",
-            *(
-                [
-                    f"- `{ref.get('token')}` → {ref.get('category')} / {ref.get('ref_id')}"
-                    for ref in prompt_references
-                ]
-                if prompt_references
-                else ["- 无显式引用，按完整设备上下文推断。"]
-            ),
-            "",
-            "### 2. 步骤编排依据",
-            "- 先打开方法编辑器，确保参数面板可见；",
-            "- 再写入目标参数（type 动作绑定输入框锚点）；",
-            "- 然后触发启动（高风险，保留原始 step id 供人工确认）；",
-            "- 最后用 wait_until 轮询状态观测区，确认运行已开始。",
-            "",
-            "### 3. ROI / 输出绑定",
-            *[f"- `{k}` → `{v}`" for k, v in roi_bindings.items()],
-            "",
-            f"### 4. 生成 {len(steps)} 个步骤的草稿，等待标准化检查。",
+            "### Prompt references",
         ]
+        if prompt_references:
+            lines.extend(
+                f"- {item.get('token')} -> {item.get('category')} / {item.get('ref_id')}"
+                for item in prompt_references
+            )
+        else:
+            lines.append("- none")
+        lines.extend(["", "### Steps"])
+        for idx, step in enumerate(steps, 1):
+            lines.append(
+                f"{idx}. {step.get('id')} :: {step.get('action')} -> {step.get('anchor_id')}"
+            )
         return "\n".join(lines)

@@ -3,45 +3,56 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import Field
 
 from .base import ContractModel, FlexibleContractModel, NonEmptyStr
 
 
-class ObservationPayload(FlexibleContractModel):
-    """Structured observation data emitted by the observer."""
-
-
 class ActionPayload(FlexibleContractModel):
-    """Action or recovery command written into the run trace."""
+    """Action command written into the run trace."""
 
     type: NonEmptyStr
-    target: str | None = None
+    value: Any | None = None
 
 
-class ResultPayload(FlexibleContractModel):
-    """Execution result for a step or recovery action."""
+class WaitStrategyPayload(FlexibleContractModel):
+    """How the runner waited after an action."""
 
-    status: NonEmptyStr
+    type: Literal["ocr_poll", "fixed_wait"]
+    wait_seconds: float | None = Field(default=None, ge=0)
+    timeout_seconds: float | None = Field(default=None, ge=0)
+    poll_interval_seconds: float | None = Field(default=None, ge=0)
 
 
-class ArtifactPayload(FlexibleContractModel):
-    """Artifact references such as screenshots and logs."""
+class ErrorPayload(FlexibleContractModel):
+    """Optional step error details."""
+
+    type: str | None = None
+    message: str | None = None
+    detail: Any | None = None
 
 
 class RunTraceRecord(ContractModel):
-    """A single JSONL event inside `run_trace.jsonl`."""
+    """A single step-level JSONL fact inside `run_trace.jsonl`."""
 
     timestamp: datetime
     session_id: NonEmptyStr
+    workflow_id: NonEmptyStr
     step_id: NonEmptyStr
-    observation: ObservationPayload = Field(default_factory=ObservationPayload)
+    anchor_id: NonEmptyStr
     action: ActionPayload
-    result: ResultPayload
-    artifacts: ArtifactPayload = Field(default_factory=ArtifactPayload)
-    # Audit fields for real-link tracing and wait normalization
+    wait_strategy: WaitStrategyPayload
+    expected_text: str | None = None
+    actual_text: str | None = None
+    match_mode: Literal["contains", "equals", "regex", "not_empty", "none"] = "none"
+    matched: bool | None = None
+    attempts: int = Field(default=1, ge=0)
+    elapsed_seconds: float = Field(default=0.0, ge=0)
+    screenshot_path: str | None = None
+    status: Literal["success", "timeout", "failed", "cancelled"]
+    error: ErrorPayload | None = None
     provider_mode: str | None = None
-    poll_attempts: int | None = None
-    elapsed_seconds: float | None = None
-    normalization_note: str | None = None
+    template_id: str | None = None
+    template_version: str | None = None

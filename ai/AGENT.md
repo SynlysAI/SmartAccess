@@ -8,7 +8,7 @@
 
 - `runtime AI`：服务 SmartAccess 产品运行时的 agent、skill、memory、harness。
 - `repo AI`：服务本仓库文档和架构维护的 agent、skill、memory、harness。
-- `contract`：工作流、仪器画像、平台适配、运行轨迹和评测用例等结构化接口定义。
+- `contract`：锚点集、工作流、平台适配、运行轨迹和评测用例等结构化接口定义。
 
 ## 工作原则
 
@@ -32,23 +32,26 @@
 - 在没有同步更新契约的情况下私自改变核心术语。
 - 把高风险物理动作描述为默认自动执行。
 - 让 repo AI 文档与 runtime AI 运行时边界混淆。
+- 在 v2 文档或 skill 中重新推荐复杂绑定、手工结果声明、自由判断或多模式识别作为主路径。
 
 ## 推荐执行顺序
 
 1. 更新 `docs/PRD.zh-CN.md`
-2. 更新 `docs/architecture/`
-3. 更新 `docs/contracts/`
-4. 更新 `ai/memory/`
-5. 更新 `ai/skills/`
+2. 更新 `docs/SPEC.zh-CN.md`
+3. 更新 `docs/architecture/`
+4. 更新 `docs/contracts/`
+5. 更新 `ai/memory/`
+6. 更新 `ai/skills/`
    - 重大实现或产品决策后优先运行 `ai/skills/repo/documentation-sync`
-6. 更新 `ai/agents/`
-7. 更新 `ai/harness/`
-8. 回查 `README.md`
+7. 更新 `ai/agents/`
+8. 更新 `ai/harness/`
+9. 回查 `README.md`
 
 ## 关键输入
 
 - `README.md`
 - `docs/PRD.zh-CN.md`
+- `docs/SPEC.zh-CN.md`
 - `docs/architecture/*.md`
 - `docs/contracts/*.md`
 

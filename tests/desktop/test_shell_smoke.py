@@ -7,12 +7,13 @@ import pytest
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QPointF  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QTableWidgetItem  # noqa: E402
+from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from smartaccess.bootstrap import build_runtime_facade  # noqa: E402
 from smartaccess.desktop.journey_projection import build_journey_projection  # noqa: E402
 from smartaccess.desktop.widgets.workflow_journey import WorkflowJourneyGraph  # noqa: E402
 from smartaccess.shared.config.settings import AppSettings  # noqa: E402
+from smartaccess.shared.contracts import load_yaml_contract  # noqa: E402
 from smartaccess.shared.contracts.workflow import (  # noqa: E402
     WorkflowContract,
     WorkflowMetadata,
@@ -20,9 +21,13 @@ from smartaccess.shared.contracts.workflow import (  # noqa: E402
     WorkflowStep,
 )
 
+_APP: QApplication | None = None
+
 
 def _app() -> QApplication:
-    return QApplication.instance() or QApplication([])
+    global _APP
+    _APP = QApplication.instance() or _APP or QApplication([])
+    return _APP
 
 
 def _empty_facade(tmp_path: Path):
@@ -36,21 +41,18 @@ def _facade(tmp_path: Path):
         title_contains="ElectroChem Console",
         anchors=[
             {
-                "id": "start_button",
-                "type": "button",
-                "vision_mode": "none",
+                "id": "status_button",
+                "roi": {"x": 10, "y": 10, "width": 80, "height": 32},
+                "normalized_roi": {"x": 0.01, "y": 0.01, "width": 0.08, "height": 0.03},
+                "observe_roi": {"x": 120, "y": 10, "width": 120, "height": 32},
+                "observe_normalized_roi": {"x": 0.12, "y": 0.01, "width": 0.12, "height": 0.03},
                 "action_bindings": [{"action": "click", "requires_confirmation": True}],
-            },
-            {
-                "id": "roi_status",
-                "type": "observation",
                 "vision_mode": "ocr",
-                "action_bindings": [{"action": "wait_until", "requires_confirmation": False}],
             },
         ],
-        actions=["click", "wait_until"],
+        actions=["click"],
         safety_limits={
-            "requires_manual_confirm_for": ["start_button"],
+            "requires_manual_confirm_for": ["status_button"],
             "fields": [
                 {
                     "field_id": "target_voltage",
@@ -66,18 +68,27 @@ def _facade(tmp_path: Path):
             metadata=WorkflowMetadata(
                 workflow_id="wf_test",
                 author="test",
-                instrument_profile="d1",
+                anchor_profile="d1",
                 experiment_type="smoke_test",
                 lifecycle_state="Draft",
             ),
-            roi_bindings={"status_banner": "roi_status"},
-            steps=[WorkflowStep(id="wait_running", action="wait_until", target="roi_status")],
-            outputs=[WorkflowOutput(key="run_status", source="roi_status")],
+            roi_bindings={"status_banner": "status_button"},
+            steps=[
+                WorkflowStep(
+                    id="start_and_wait",
+                    action="click",
+                    anchor_id="status_button",
+                    expected_text="Running",
+                    match_mode="contains",
+                    timeout_seconds=1.0,
+                )
+            ],
+            outputs=[WorkflowOutput(key="run_status", source="status_button")],
         )
     )
     facade.generate_workflow(
         "打开方法编辑器，启动运行，并等待状态变化。",
-        {"workflow_id": "wf_generated", "instrument_profile": "d1"},
+        {"workflow_id": "wf_generated", "anchor_profile": "d1"},
     )
     return facade
 
@@ -111,48 +122,135 @@ def test_main_window_builds_and_navigates(tmp_path: Path) -> None:
         assert window._stack.currentIndex() == row
 
 
-def test_workflow_page_shows_context_snapshot_and_saves_outputs(tmp_path: Path) -> None:
+def test_workflow_page_shows_ai_evidence_and_saves_without_outputs(tmp_path: Path) -> None:
     _app()
     from smartaccess.desktop.pages.workflow_page import WorkflowPage
 
     facade = _facade(tmp_path)
     page = WorkflowPage(facade)
+    assert page._prompt.toPlainText() == ""
     generated = next(wf for wf in facade.list_workflows() if wf.metadata.workflow_id == "wf_generated")
     page._show_workflow(generated)
 
-    assert page._prompt_label.text() == "Prompt / 目标描述"
-    assert page._workflow_id_label.text() == "工作流 ID"
-    assert page._device_label.text() == "目标设备"
-    assert "ElectroChem Console" in page._reference_panel.toPlainText()
-    assert "roi_status" in page._reference_panel.toPlainText()
-    assert "start_button" in page._reasoning.toPlainText()
-    assert "本次生成读取的上下文快照" in page._reasoning.toPlainText()
+    assert not page._draft_dock.isVisible()
+    assert not page._review_dock.isVisible()
+    assert page._prompt_label.text()
+    assert page._workflow_id_label.text()
+    assert page._anchor_profile_label.text() == "anchor_profile"
+    assert page._editor_tabs.count() == 1
+    assert page._editor_tabs.tabText(0) == "步骤编排"
+    assert "ElectroChem Console" in page._reasoning.toPlainText()
+    assert "status_button" in page._reasoning.toPlainText()
+    assert "生成依据与编排过程" not in page._reasoning.toPlainText()
+    assert "步骤编排" in page._reasoning.toPlainText()
+    assert "知识命中" in page._reasoning.toPlainText()
+    assert not hasattr(page, "_binding_table")
+    assert not hasattr(page, "_output_table")
 
-    page._step_conditions[0] = {
-        "source": "roi_status",
-        "mode": "ocr",
-        "operator": "contains",
-        "expected": "Running",
+    page._set_row_condition(0, {
+        "expected_text": "Running",
+        "match_mode": "contains",
         "timeout_seconds": 12.0,
-    }
+    })
     condition_button = page._make_condition_button(0)
-    assert "roi_status" in condition_button.text()
+    assert "OCR" in condition_button.text()
     assert "contains" in condition_button.text()
     page._delete_step_row(0)
-    assert 0 not in page._step_conditions
-
-    page._binding_table.setItem(0, 0, QTableWidgetItem("contact_result"))
-    binding_combo = page._binding_table.cellWidget(0, 1)
-    binding_combo.setEditText("roi_status")
-    page._output_table.setItem(0, 0, QTableWidgetItem("selected_contact"))
-    output_combo = page._output_table.cellWidget(0, 1)
-    output_combo.setEditText("contact_result")
+    assert page._row_condition(0) is None
 
     workflow = page._build_form_workflow()
     saved = facade.update_workflow(workflow)
 
-    assert saved.roi_bindings == {"contact_result": "roi_status"}
-    assert [(out.key, out.source) for out in saved.outputs] == [("selected_contact", "contact_result")]
+    assert saved.roi_bindings == {}
+    assert saved.outputs == []
+    serialized = saved.model_dump(mode="json", exclude_none=True)
+    assert serialized["metadata"]["anchor_profile"] == "d1"
+    assert "instrument_profile" not in serialized["metadata"]
+    assert all("anchor_id" in step and "target" not in step for step in serialized["steps"])
+
+
+def test_workflow_page_condition_round_trip_and_row_reorder(tmp_path: Path) -> None:
+    _app()
+    from smartaccess.desktop.pages.workflow_page import WorkflowPage
+
+    facade = _facade(tmp_path)
+    workflow = next(wf for wf in facade.list_workflows() if wf.metadata.workflow_id == "wf_test")
+    page = WorkflowPage(facade)
+    page._show_workflow(workflow)
+
+    button = page._steps_table.cellWidget(0, 4)
+    assert button is not None
+    assert "OCR" in button.text()
+    assert "contains" in button.text()
+    assert "Running" in button.text()
+
+    page._insert_step_at("step_extra", "click", "status_button", "", 0)
+    assert page._row_condition(0) is None
+    assert page._row_condition(1)["expected_text"] == "Running"
+
+    page._move_step_up(1)
+    assert page._row_condition(0)["expected_text"] == "Running"
+    assert page._row_condition(1) is None
+
+    saved = facade.update_workflow(page._build_form_workflow())
+    reloaded = load_yaml_contract(
+        tmp_path / "workflows" / saved.metadata.workflow_id / "draft.yaml",
+        WorkflowContract,
+    )
+    assert reloaded.steps[0].expected_text == "Running"
+    assert reloaded.steps[0].match_mode == "contains"
+    assert reloaded.steps[0].timeout_seconds == 1.0
+
+
+def test_calibration_page_exposes_simplified_anchor_table(tmp_path: Path) -> None:
+    _app()
+    from smartaccess.desktop.pages.calibration_page import CalibrationPage
+
+    page = CalibrationPage(_empty_facade(tmp_path))
+    page._insert_anchor_row(name="status_button", roi_name="status_button", action="click")
+
+    headers = [
+        page._anchor_table.horizontalHeaderItem(i).text()
+        for i in range(page._anchor_table.columnCount())
+    ]
+    assert "类型" not in headers
+    assert headers[:6] == ["锚点ID", "动作区域", "主要动作", "OCR观测", "观测区域", "需确认"]
+
+    action_combo = page._anchor_table.cellWidget(0, 2)
+    actions = [action_combo.itemData(i) for i in range(action_combo.count())]
+    assert actions == ["click", "type", "hotkey", "press_enter"]
+
+
+def test_monitoring_audit_card_shows_strategy_and_measurement() -> None:
+    from smartaccess.desktop.viewmodels.monitoring_vm import MonitoringViewModel
+
+    html = MonitoringViewModel._format_audit_card(
+        {
+            "step_id": "step_1",
+            "status": "observed",
+            "action": "click",
+            "anchor_id": "搜索结果",
+            "match_mode": "contains",
+            "expected_text": "文件传输助手",
+            "actual_text": "文件传输助手",
+            "matched": True,
+            "attempts": 1,
+            "elapsed_seconds": 0.5,
+            "wait_strategy": {"type": "ocr_poll"},
+            "screenshot_path": "workspace/runs/demo/screenshots/step_1.png",
+            "trace_path": "workspace/runs/demo/run_trace.jsonl",
+            "workflow_path": "workspace/workflows/demo/draft.yaml",
+            "anchors_path": "workspace/anchors/weixin_01/anchors.yaml",
+        }
+    )
+
+    assert "ocr_poll" in html
+    assert "文件传输助手" in html
+    assert "通过" in html
+    assert "step_1.png" in html
+    assert "href=" in html
+    assert "run_trace.jsonl" in html
+    assert "anchors.yaml" in html
 
 
 def test_journey_projection_empty_workspace(tmp_path: Path) -> None:
@@ -190,7 +288,7 @@ def test_journey_projection_blocked_workflow(tmp_path: Path) -> None:
             metadata=WorkflowMetadata(
                 workflow_id="wf_blocked",
                 author="test",
-                instrument_profile="d1",
+                anchor_profile="d1",
                 experiment_type="smoke_test",
                 lifecycle_state="Draft",
             ),
@@ -278,5 +376,5 @@ def test_monitoring_vm_receives_runtime_events(tmp_path: Path) -> None:
 
     assert logs
     assert readings
-    assert "roi_status" in readings[-1]
+    assert "status_button" in readings[-1]
     assert "confidence" in readings[-1]

@@ -27,11 +27,11 @@ def _workflow(
             experiment_type="smoke_test",
             lifecycle_state="Draft",
         ),
-        roi_bindings={"voltage_panel": "roi_voltage_value"},
+        roi_bindings={"voltage_panel": "anchor_voltage_input"},
         steps=[WorkflowStep(**s) for s in (steps or [
             {"id": "input_target_voltage", "action": "type", "target": "anchor_voltage_input", "value": "4.20"},
         ])],
-        outputs=[WorkflowOutput(key="final_voltage", source="roi_voltage_value")],
+        outputs=[WorkflowOutput(key="final_voltage", source="anchor_voltage_input")],
         retry_policy=WorkflowRetryPolicy(max_attempts=2),
     )
 
@@ -42,10 +42,17 @@ def _facade(tmp_path: Path):
         device_id="d1",
         title_contains="ElectroChem Console",
         anchors=[
-            {"id": "anchor_voltage_input", "type": "input", "vision_mode": "none"},
-            {"id": "roi_voltage_value", "type": "observation", "vision_mode": "ocr"},
+            {
+                "id": "anchor_voltage_input",
+                "roi": {"x": 10, "y": 10, "width": 80, "height": 32},
+                "normalized_roi": {"x": 0.01, "y": 0.01, "width": 0.08, "height": 0.03},
+                "observe_roi": {"x": 120, "y": 10, "width": 120, "height": 32},
+                "observe_normalized_roi": {"x": 0.12, "y": 0.01, "width": 0.12, "height": 0.03},
+                "action_bindings": [{"action": "type"}],
+                "vision_mode": "ocr",
+            },
         ],
-        actions=["type", "wait_until"],
+        actions=["click", "type"],
         safety_limits={"max_voltage": 5.0, "min_voltage": 0.0},
     )
     facade.register_workflow(_workflow())
@@ -65,6 +72,9 @@ def test_full_run_completes_and_writes_trace(tmp_path: Path) -> None:
     # One trace record per workflow step.
     trace = facade.get_trace(session.session_id)
     assert len(trace) == len(workflow.steps)
+    assert trace[0].wait_strategy.type == "fixed_wait"
+    assert trace[0].matched is None
+    assert trace[0].actual_text is None
     assert all(step.status == RunStepStatus.SUCCEEDED for step in session.steps)
 
     # run_trace.jsonl is persisted under the workspace.
@@ -80,24 +90,40 @@ def test_low_confidence_triggers_recovery(tmp_path: Path) -> None:
     events: list[RuntimeEventName] = []
     facade.subscribe(lambda e: events.append(e.name))
 
-    workflow = facade.list_workflows()[0]
+    workflow = facade.register_workflow(_workflow(
+        "wf_low_confidence_ocr",
+        [
+            {
+                "id": "wait_for_voltage",
+                "action": "type",
+                "target": "anchor_voltage_input",
+                "value": "4.20",
+                "expected_text": "4.20",
+                "match_mode": "contains",
+                "timeout_seconds": 2,
+            }
+        ],
+    ))
     session = facade.start_run(workflow=workflow)
 
     assert session.status == RunSessionStatus.COMPLETED
     assert RuntimeEventName.RUN_RECOVERED in events
 
 
-def test_wait_until_missing_condition_fails_without_crashing(tmp_path: Path) -> None:
+def test_action_without_ocr_condition_uses_fixed_wait(tmp_path: Path) -> None:
     facade = _facade(tmp_path)
     workflow = facade.register_workflow(_workflow(
-        "wf_missing_condition",
-        [{"id": "wait_for_status", "action": "wait_until", "target": "roi_voltage_value"}],
+        "wf_fixed_wait",
+        [{"id": "focus_voltage", "action": "click", "target": "anchor_voltage_input", "wait_seconds": 0.0}],
     ))
 
     session = facade.start_run(workflow=workflow)
+    trace = facade.get_trace(session.session_id)
 
-    assert session.status == RunSessionStatus.FAILED
-    assert session.steps[0].status == RunStepStatus.FAILED
+    assert session.status == RunSessionStatus.COMPLETED
+    assert session.steps[0].status == RunStepStatus.SUCCEEDED
+    assert trace[0].wait_strategy.type == "fixed_wait"
+    assert trace[0].matched is None
 
 
 def test_observation_exception_fails_run_without_thread_crash(tmp_path: Path) -> None:
@@ -110,14 +136,10 @@ def test_observation_exception_fails_run_without_thread_crash(tmp_path: Path) ->
         [
             {
                 "id": "wait_for_status",
-                "action": "wait_until",
-                "target": "roi_voltage_value",
-                "condition": {
-                    "source": "voltage_panel",
-                    "operator": "not_empty",
-                    "timeout_seconds": 1,
-                    "poll_interval_seconds": 0.1,
-                },
+                "action": "click",
+                "target": "anchor_voltage_input",
+                "match_mode": "not_empty",
+                "timeout_seconds": 1,
             }
         ],
     ))
@@ -132,6 +154,36 @@ def test_observation_exception_fails_run_without_thread_crash(tmp_path: Path) ->
     assert session.steps[0].status == RunStepStatus.FAILED
     failed_payloads = [payload for name, payload in events if name == RuntimeEventName.RUN_FAILED]
     assert any("OCR init failed" in str(payload.get("detail")) for payload in failed_payloads)
+
+
+def test_ocr_trace_records_expected_actual_and_match(tmp_path: Path) -> None:
+    facade = _facade(tmp_path)
+    workflow = facade.register_workflow(_workflow(
+        "wf_ocr_trace",
+        [
+            {
+                "id": "wait_for_text",
+                "action": "type",
+                "target": "anchor_voltage_input",
+                "value": "4.20",
+                "expected_text": "4.20",
+                "match_mode": "contains",
+                "timeout_seconds": 2,
+            }
+        ],
+    ))
+
+    session = facade.start_run(workflow=workflow)
+    trace = facade.get_trace(session.session_id)
+
+    assert session.status == RunSessionStatus.COMPLETED
+    assert trace[0].expected_text == "4.20"
+    assert trace[0].actual_text
+    assert trace[0].match_mode == "contains"
+    assert trace[0].matched is True
+    assert trace[0].attempts >= 1
+    assert trace[0].wait_strategy.type == "ocr_poll"
+    assert trace[0].screenshot_path
 
 
 def test_safety_violation_blocks_run(tmp_path: Path) -> None:

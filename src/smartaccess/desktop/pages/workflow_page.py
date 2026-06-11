@@ -1,15 +1,12 @@
-"""Workflow design page: AI draft, context references, reasoning trace, and editable steps."""
+"""Workflow design page: AI draft, evidence trace, and editable steps."""
 
 from __future__ import annotations
 
 import html
-import re
-from urllib.parse import quote, unquote
 
-from PyQt6.QtCore import QSignalBlocker, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QButtonGroup,
     QComboBox,
     QDockWidget,
     QHBoxLayout,
@@ -23,7 +20,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QStackedWidget,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -42,44 +38,33 @@ from smartaccess.desktop.widgets.cards import (
     rich_text,
     section_title,
 )
-from smartaccess.desktop.workflow_projection import (
-    REFERENCE_CATEGORY_LABELS,
-    REFERENCE_CATEGORY_ORDER,
-    WorkflowContextSnapshot,
-    build_context_snapshot,
+from smartaccess.desktop.workflow_projection import WorkflowContextSnapshot, build_context_snapshot
+from smartaccess.shared.contracts.workflow import (
+    WorkflowContract,
+    WorkflowMetadata,
+    WorkflowStep,
 )
-from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowOutput, WorkflowStep
 
 _ACTION_NOTES = {
     "click": "单击控件",
-    "double_click": "双击控件",
     "type": "输入文本",
     "press_enter": "按回车键",
     "hotkey": "发送快捷键",
-    "wait": "固定等待",
-    "wait_until": "轮询直到条件满足",
-    "screenshot_check": "截图校验",
 }
 _OBSERVATION_TYPES = {"observation", "readout", "status", "region", "roi"}
 _MOVE_UP_GLYPH = "↑"
 _MOVE_DOWN_GLYPH = "↓"
 _DELETE_GLYPH = "×"
-_TAB_NAME_TO_INDEX = {"steps": 0, "bindings": 1, "outputs": 2}
-_PROMPT_REFERENCE_RE = re.compile(r"@(?:field:|confirm:)?[A-Za-z0-9_]+")
-_DEFAULT_PROMPT = "打开方法编辑器，设定目标参数，启动运行并等待状态变化。"
-_LEFT_MODE_DRAFT = 0
-_LEFT_MODE_REVIEW = 1
+_TAB_NAME_TO_INDEX = {"steps": 0}
+_STEP_CONDITION_ROLE = Qt.ItemDataRole.UserRole + 10
 
 
-def _ordered_unique_tokens(text: str) -> list[str]:
-    seen: set[str] = set()
-    tokens: list[str] = []
-    for match in _PROMPT_REFERENCE_RE.finditer(text or ""):
-        token = match.group(0)
-        if token not in seen:
-            seen.add(token)
-            tokens.append(token)
-    return tokens
+def _metadata_with_anchor_profile(
+    metadata: WorkflowMetadata, anchor_profile: str
+) -> WorkflowMetadata:
+    payload = metadata.model_dump(mode="json", exclude_none=True)
+    payload["anchor_profile"] = anchor_profile
+    return WorkflowMetadata.model_validate(payload)
 
 
 class WorkflowPage(QWidget):
@@ -88,12 +73,7 @@ class WorkflowPage(QWidget):
         self._vm = WorkflowViewModel(facade, self)
         self._current: WorkflowContract | None = None
         self._loading = False
-        self._syncing_prompt = False
         self._context_snapshot = build_context_snapshot(None)
-        self._active_reference_tokens: list[str] = []
-        self._invalid_reference_tokens: list[str] = []
-        self._reference_category = "observation"
-        self._step_conditions: dict[int, dict] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
@@ -106,13 +86,13 @@ class WorkflowPage(QWidget):
         self._draft_panel_toggle = QPushButton("AI 助手")
         self._draft_panel_toggle.setObjectName("Ghost")
         self._draft_panel_toggle.setCheckable(True)
-        self._draft_panel_toggle.setChecked(True)
+        self._draft_panel_toggle.setChecked(False)
         self._draft_panel_toggle.setToolTip("显示或隐藏左侧 AI 助手面板。")
         header_row.addWidget(self._draft_panel_toggle)
         self._review_panel_toggle = QPushButton("审阅面板")
         self._review_panel_toggle.setObjectName("Ghost")
         self._review_panel_toggle.setCheckable(True)
-        self._review_panel_toggle.setChecked(True)
+        self._review_panel_toggle.setChecked(False)
         self._review_panel_toggle.setToolTip("显示或隐藏右侧审阅面板。")
         header_row.addWidget(self._review_panel_toggle)
         root.addLayout(header_row)
@@ -144,6 +124,8 @@ class WorkflowPage(QWidget):
         )
         self._review_dock.setWidget(self._build_review_panel())
         self._inner.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._review_dock)
+        self._draft_dock.hide()
+        self._review_dock.hide()
         root.addWidget(self._inner, 1)
 
         self._draft_panel_toggle.toggled.connect(self._draft_dock.setVisible)
@@ -152,7 +134,7 @@ class WorkflowPage(QWidget):
         self._review_dock.visibilityChanged.connect(self._review_panel_toggle.setChecked)
 
         self._reload()
-        self._set_prompt_text(_DEFAULT_PROMPT)
+        self._set_prompt_text("")
 
     def on_show(self) -> None:
         self._reload()
@@ -180,36 +162,8 @@ class WorkflowPage(QWidget):
         left = Card()
         left.setMinimumWidth(420)
         left.add(section_title("AI 助手"))
-        left.add(self._build_left_mode_toggle())
-
-        self._left_stack = QStackedWidget()
-        self._left_stack.addWidget(self._build_draft_mode())
-        left.body().addWidget(self._left_stack, 1)
-        self._set_left_mode(_LEFT_MODE_DRAFT)
+        left.add(self._build_draft_mode())
         return left
-
-    def _build_left_mode_toggle(self) -> QWidget:
-        box = QWidget()
-        row = QHBoxLayout(box)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-
-        self._left_mode_group = QButtonGroup(self)
-        self._left_mode_group.setExclusive(True)
-        self._draft_mode_btn = QPushButton("起草")
-        self._draft_mode_btn.setObjectName("Segment")
-        self._draft_mode_btn.setCheckable(True)
-        self._review_mode_btn = QPushButton("审阅")
-        self._review_mode_btn.setObjectName("Segment")
-        self._review_mode_btn.setCheckable(True)
-        self._left_mode_group.addButton(self._draft_mode_btn, _LEFT_MODE_DRAFT)
-        self._left_mode_group.addButton(self._review_mode_btn, _LEFT_MODE_REVIEW)
-        self._left_mode_group.idClicked.connect(self._set_left_mode)
-
-        row.addWidget(self._draft_mode_btn)
-        row.addWidget(self._review_mode_btn)
-        row.addStretch(1)
-        return box
 
     def _build_draft_mode(self) -> QWidget:
         page = QWidget()
@@ -236,93 +190,46 @@ class WorkflowPage(QWidget):
         workflow_layout.addWidget(self._workflow_id_label)
         workflow_layout.addWidget(self._workflow_id)
 
-        device_box = QWidget()
-        device_layout = QVBoxLayout(device_box)
-        device_layout.setContentsMargins(0, 0, 0, 0)
-        device_layout.setSpacing(6)
-        self._device_label = QLabel("目标设备")
-        self._device_label.setObjectName("Body")
-        self._device = QComboBox()
-        self._device.currentIndexChanged.connect(self._on_device_changed)
-        device_layout.addWidget(self._device_label)
-        device_layout.addWidget(self._device)
+        anchor_profile_box = QWidget()
+        anchor_profile_layout = QVBoxLayout(anchor_profile_box)
+        anchor_profile_layout.setContentsMargins(0, 0, 0, 0)
+        anchor_profile_layout.setSpacing(6)
+        self._anchor_profile_label = QLabel("anchor_profile")
+        self._anchor_profile_label.setObjectName("Body")
+        self._anchor_profile = QComboBox()
+        self._anchor_profile.currentIndexChanged.connect(self._on_anchor_profile_changed)
+        anchor_profile_layout.addWidget(self._anchor_profile_label)
+        anchor_profile_layout.addWidget(self._anchor_profile)
 
         meta_row.addWidget(workflow_box, 1)
-        meta_row.addWidget(device_box, 1)
+        meta_row.addWidget(anchor_profile_box, 1)
         layout.addWidget(meta)
 
         self._prompt_label = QLabel("自动化目标")
         self._prompt_label.setObjectName("Body")
         layout.addWidget(self._prompt_label)
         self._prompt = QPlainTextEdit()
-        self._prompt.setPlaceholderText("描述要完成的实验或操作流程，可插入下方设备信息引用以明确目标区域。")
+        self._prompt.setPlaceholderText("用自然语言描述要完成的实验或操作流程。AI 会自动结合 Memory、Skill 和当前锚点集生成步骤。")
         self._prompt.setMaximumHeight(150)
-        self._prompt.textChanged.connect(self._on_prompt_changed)
         layout.addWidget(self._prompt)
 
-        layout.addWidget(section_title("已引用设备信息"))
-        layout.addWidget(hint_label("自动化目标中使用的设备信息会显示在这里，可直接移除。"))
-        self._reference_bar = QTextBrowser()
-        self._reference_bar.setOpenLinks(False)
-        self._reference_bar.setOpenExternalLinks(False)
-        self._reference_bar.anchorClicked.connect(self._handle_reference_bar_link)
-        self._reference_bar.setMaximumHeight(96)
-        layout.addWidget(self._reference_bar)
-        self._actual_reference_bar = QTextBrowser()
-        self._actual_reference_bar.setOpenLinks(False)
-        self._actual_reference_bar.setOpenExternalLinks(False)
-        self._actual_reference_bar.setMaximumHeight(92)
-        layout.addWidget(self._actual_reference_bar)
-
-        layout.addWidget(section_title("设备信息引用"))
-        layout.addWidget(hint_label("按类别筛选设备信息。点击引用项会插入到自动化目标中。"))
-        layout.addWidget(self._build_reference_filters())
-
-        self._reference_panel = QTextBrowser()
-        self._reference_panel.setOpenLinks(False)
-        self._reference_panel.setOpenExternalLinks(False)
-        self._reference_panel.anchorClicked.connect(self._handle_reference_panel_link)
-        self._reference_panel.setMinimumHeight(240)
-        layout.addWidget(self._reference_panel, 1)
-
-        generate = QPushButton("生成草稿")
+        generate = QPushButton("生成工作流")
         generate.clicked.connect(self._generate)
         layout.addWidget(generate)
-        return page
 
-    def _build_reference_filters(self) -> QWidget:
-        box = QWidget()
-        row = QHBoxLayout(box)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        self._reference_filter_group = QButtonGroup(self)
-        self._reference_filter_group.setExclusive(True)
-        self._reference_filter_buttons: dict[str, QPushButton] = {}
-        for category in REFERENCE_CATEGORY_ORDER:
-            button = QPushButton(REFERENCE_CATEGORY_LABELS[category])
-            button.setObjectName("Segment")
-            button.setCheckable(True)
-            self._reference_filter_group.addButton(button)
-            button.clicked.connect(
-                lambda _checked=False, chosen=category: self._set_reference_category(chosen)
-            )
-            self._reference_filter_buttons[category] = button
-            row.addWidget(button)
-        row.addStretch(1)
-        return box
+        layout.addWidget(section_title("生成依据与编排过程"))
+        self._reasoning = QTextBrowser()
+        self._reasoning.setObjectName("LogView")
+        self._reasoning.setOpenExternalLinks(False)
+        self._reasoning.setMinimumHeight(280)
+        layout.addWidget(self._reasoning, 1)
+        return page
 
     def _build_review_mode(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(10)
-
-        self._reasoning_section = CollapsibleSection("生成说明", expanded=True)
-        self._reasoning_section.add(hint_label("展示 AI 助手使用了哪些设备信息，以及生成了哪些步骤。"))
-        self._reasoning = QTextBrowser()
-        self._reasoning.setObjectName("LogView")
-        self._reasoning_section.add(self._reasoning)
-        layout.addWidget(self._reasoning_section)
 
         self._workflows_section = CollapsibleSection("已有工作流", expanded=True)
         self._workflows = QListWidget()
@@ -336,7 +243,7 @@ class WorkflowPage(QWidget):
     def _build_review_panel(self) -> QWidget:
         review = Card()
         review.setMinimumWidth(360)
-        review.add(section_title("生成记录"))
+        review.add(section_title("工作流列表"))
         review.add(self._build_review_mode())
         return review
 
@@ -353,7 +260,7 @@ class WorkflowPage(QWidget):
             hint_label("生成的步骤可在此手动修改、调整顺序或删除。确认无误后保存工作流。")
         )
         self._steps_table = QTableWidget(0, 7)
-        self._steps_table.setHorizontalHeaderLabels(["步骤 ID", "动作", "目标", "值", "条件", "上移/下移", ""])
+        self._steps_table.setHorizontalHeaderLabels(["步骤 ID", "动作", "anchor_id", "值", "条件", "上移/下移", ""])
         self._steps_table.verticalHeader().setDefaultSectionSize(52)
         steps_header = self._steps_table.horizontalHeader()
         steps_header.setStretchLastSection(False)
@@ -385,68 +292,6 @@ class WorkflowPage(QWidget):
         steps_layout.addWidget(step_controls)
         self._editor_tabs.addTab(steps_page, "步骤编排")
 
-        bindings_page = QWidget()
-        bindings_layout = QVBoxLayout(bindings_page)
-        bindings_layout.setContentsMargins(12, 12, 12, 12)
-        bindings_layout.setSpacing(8)
-        bindings_layout.addWidget(
-            hint_label("ROI 绑定 = 工作流逻辑名 -> 已校准锚点。两个工作流可以复用同一个设备锚点；左侧名称描述本流程里的用途，右侧锚点来自仪器画像。")
-        )
-        self._binding_table = QTableWidget(0, 3)
-        self._binding_table.setHorizontalHeaderLabels(["绑定名", "锚点 / ROI", ""])
-        self._binding_table.verticalHeader().setDefaultSectionSize(52)
-        binding_header = self._binding_table.horizontalHeader()
-        binding_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        binding_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        binding_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._binding_table.setColumnWidth(2, 44)
-        bindings_layout.addWidget(self._binding_table, 1)
-        binding_controls = QWidget()
-        binding_row = QHBoxLayout(binding_controls)
-        binding_row.setContentsMargins(0, 0, 0, 0)
-        add_binding = QPushButton("+ 添加绑定")
-        add_binding.setObjectName("Ghost")
-        add_binding.clicked.connect(self._add_binding_row)
-        binding_row.addWidget(add_binding)
-        fill_bindings = QPushButton("从仪器锚点填充")
-        fill_bindings.setObjectName("Ghost")
-        fill_bindings.clicked.connect(self._fill_bindings_from_anchors)
-        binding_row.addWidget(fill_bindings)
-        binding_row.addStretch(1)
-        bindings_layout.addWidget(binding_controls)
-        self._editor_tabs.addTab(bindings_page, "ROI 绑定")
-
-        outputs_page = QWidget()
-        outputs_layout = QVBoxLayout(outputs_page)
-        outputs_layout.setContentsMargins(12, 12, 12, 12)
-        outputs_layout.setSpacing(8)
-        outputs_layout.addWidget(
-            hint_label("声明工作流完成后要保留的结果：输出 Key 是结果名，来源可选择 ROI 绑定名或具体锚点，后续由 OCR / presence / template / color 观测写入。")
-        )
-        self._output_table = QTableWidget(0, 3)
-        self._output_table.setHorizontalHeaderLabels(["输出 Key", "来源", ""])
-        self._output_table.verticalHeader().setDefaultSectionSize(52)
-        output_header = self._output_table.horizontalHeader()
-        output_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        output_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        output_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._output_table.setColumnWidth(2, 44)
-        outputs_layout.addWidget(self._output_table, 1)
-        output_controls = QWidget()
-        output_row = QHBoxLayout(output_controls)
-        output_row.setContentsMargins(0, 0, 0, 0)
-        add_output = QPushButton("+ 添加输出")
-        add_output.setObjectName("Ghost")
-        add_output.clicked.connect(self._add_output_row)
-        output_row.addWidget(add_output)
-        fill_outputs = QPushButton("从 ROI 绑定生成输出")
-        fill_outputs.setObjectName("Ghost")
-        fill_outputs.clicked.connect(self._fill_outputs_from_bindings)
-        output_row.addWidget(fill_outputs)
-        output_row.addStretch(1)
-        outputs_layout.addWidget(output_controls)
-        self._editor_tabs.addTab(outputs_page, "输出项")
-
         right.add(self._editor_tabs)
 
         action_controls = QWidget()
@@ -471,14 +316,16 @@ class WorkflowPage(QWidget):
 
     # ------------------------------------------------------------------ #
     def _reload(self) -> None:
-        current_device = self._device.currentText() if hasattr(self, "_device") else ""
+        current_anchor_profile = (
+            self._anchor_profile.currentText() if hasattr(self, "_anchor_profile") else ""
+        )
         self._loading = True
-        self._device.clear()
-        self._device.addItems(self._vm.list_instrument_ids() or ["unknown_device"])
-        if current_device:
-            idx = self._device.findText(current_device)
+        self._anchor_profile.clear()
+        self._anchor_profile.addItems(self._vm.list_anchor_profiles() or ["unknown_device"])
+        if current_anchor_profile:
+            idx = self._anchor_profile.findText(current_anchor_profile)
             if idx >= 0:
-                self._device.setCurrentIndex(idx)
+                self._anchor_profile.setCurrentIndex(idx)
         self._loading = False
         self._gen_label.setText(f"当前 AI 助手：{self._vm.generator_label()}")
         selected_id = self._current.metadata.workflow_id if self._current else ""
@@ -501,20 +348,15 @@ class WorkflowPage(QWidget):
         try:
             workflow = self._vm.generate(
                 self._prompt.toPlainText(),
-                device_id=self._device.currentText() or None,
+                anchor_profile=self._anchor_profile.currentText() or None,
                 workflow_id=self._workflow_id.text().strip() or "wf_new_experiment",
-                prompt_references=self._context_snapshot.structured_prompt_references(
-                    self._active_reference_tokens
-                ),
             )
         except Exception as exc:  # noqa: BLE001
             self._refresh_reasoning_view(error=exc)
-            self._set_left_mode(_LEFT_MODE_REVIEW)
             QMessageBox.critical(self, "生成失败", str(exc))
             return
         self._show_workflow(workflow)
         self._reload()
-        self._set_left_mode(_LEFT_MODE_REVIEW)
 
     def _select_existing(self) -> None:
         if self._loading:
@@ -588,282 +430,228 @@ class WorkflowPage(QWidget):
     def _show_workflow(self, workflow: WorkflowContract) -> None:
         self._current = workflow
         self._workflow_id.setText(workflow.metadata.workflow_id)
-        self._sync_device_to_workflow(workflow)
+        self._sync_anchor_profile_to_workflow(workflow)
         self._refresh_context_panel()
         self._restore_prompt_for_workflow(workflow)
         self._populate_steps_table(workflow)
-        self._populate_binding_table(workflow)
-        self._populate_output_table(workflow)
         self._refresh_context_panel()
         self._refresh_reasoning_view()
-        self._precheck.setText("已加载工作流，可编辑步骤、 ROI 绑定和输出项后保存或运行标准化检查。")
+        self._precheck.setText("已加载工作流，可编辑步骤后保存或运行标准化检查。")
 
     def _restore_prompt_for_workflow(self, workflow: WorkflowContract) -> None:
         record = self._vm.draft_record(workflow.metadata.workflow_id)
         prompt = record.prompt if record is not None else ""
         self._set_prompt_text(prompt or "")
 
-    def _sync_device_to_workflow(self, workflow: WorkflowContract) -> None:
-        device_id = workflow.metadata.instrument_profile
-        idx = self._device.findText(device_id)
+    def _sync_anchor_profile_to_workflow(self, workflow: WorkflowContract) -> None:
+        anchor_profile = workflow.metadata.anchor_profile
+        idx = self._anchor_profile.findText(anchor_profile)
         if idx >= 0:
             self._loading = True
-            self._device.setCurrentIndex(idx)
+            self._anchor_profile.setCurrentIndex(idx)
             self._loading = False
 
-    def _on_device_changed(self) -> None:
+    def _on_anchor_profile_changed(self) -> None:
         if self._loading:
             return
         self._refresh_context_panel()
         self._refresh_reasoning_view()
-        if self._current is not None:
-            self._refresh_binding_combos()
-            self._refresh_output_combos()
-
-    def _on_prompt_changed(self) -> None:
-        if self._syncing_prompt:
-            return
-        self._set_left_mode(_LEFT_MODE_DRAFT)
-        self._sync_prompt_reference_state()
 
     def _set_prompt_text(self, text: str) -> None:
-        self._syncing_prompt = True
-        blocker = QSignalBlocker(self._prompt)
         self._prompt.setPlainText(text)
-        del blocker
-        self._syncing_prompt = False
-        self._sync_prompt_reference_state()
-
-    def _sync_prompt_reference_state(self) -> None:
-        tokens = _ordered_unique_tokens(self._prompt.toPlainText())
-        refs = self._context_snapshot.reference_map()
-        self._active_reference_tokens = [token for token in tokens if token in refs]
-        self._invalid_reference_tokens = [token for token in tokens if token not in refs]
-        self._refresh_reference_bar()
-        self._refresh_actual_reference_bar()
-        self._refresh_reference_panel()
-        self._refresh_reasoning_view()
-
-    def _set_left_mode(self, mode: int) -> None:
-        self._left_stack.setCurrentIndex(_LEFT_MODE_DRAFT)
-        draft_blocker = QSignalBlocker(self._draft_mode_btn)
-        review_blocker = QSignalBlocker(self._review_mode_btn)
-        self._draft_mode_btn.setChecked(True)
-        self._review_mode_btn.setChecked(False)
-        del draft_blocker
-        del review_blocker
-
-    def _set_reference_category(self, category: str) -> None:
-        if category not in REFERENCE_CATEGORY_ORDER:
-            return
-        if not self._context_snapshot.has_category(category):
-            return
-        self._reference_category = category
-        self._refresh_reference_filters()
-        self._refresh_reference_panel()
-
-    def _preferred_reference_category(self) -> str:
-        if self._context_snapshot.has_category("observation"):
-            return "observation"
-        if self._context_snapshot.has_category("action"):
-            return "action"
-        for category in REFERENCE_CATEGORY_ORDER:
-            if self._context_snapshot.has_category(category):
-                return category
-        return "observation"
-
-    def _refresh_reference_filters(self) -> None:
-        if not self._context_snapshot.has_category(self._reference_category):
-            self._reference_category = self._preferred_reference_category()
-        for category, button in self._reference_filter_buttons.items():
-            count = len(self._context_snapshot.items_for_category(category))
-            button.setText(
-                f"{REFERENCE_CATEGORY_LABELS[category]} ({count})" if count else REFERENCE_CATEGORY_LABELS[category]
-            )
-            button.setEnabled(count > 0)
-            blocker = QSignalBlocker(button)
-            button.setChecked(category == self._reference_category and count > 0)
-            del blocker
 
     def _refresh_context_panel(self) -> None:
-        profile = self._vm.get_instrument(self._device.currentText() or None)
+        profile = self._vm.get_anchor_profile(self._anchor_profile.currentText() or None)
         self._context_snapshot = build_context_snapshot(profile)
-        self._refresh_reference_filters()
-        self._sync_prompt_reference_state()
-
-    def _refresh_reference_panel(self) -> None:
-        self._reference_panel.setHtml(
-            self._context_snapshot.to_reference_panel_html(
-                self._reference_category,
-                active_tokens=set(self._active_reference_tokens),
-                interactive=True,
-            )
-        )
-
-    def _refresh_reference_bar(self) -> None:
-        if not self._active_reference_tokens and not self._invalid_reference_tokens:
-            self._reference_bar.setHtml(
-                f"<span style='color:{t.INK_SUBTLE};'>尚未引用设备信息。点击下方引用项可快速插入。</span>"
-            )
-            return
-        refs = self._context_snapshot.reference_map()
-        chips: list[str] = []
-        for token in self._active_reference_tokens:
-            item = refs[token]
-            chips.append(self._render_reference_chip(token, item.title, invalid=False, removable=True))
-        for token in self._invalid_reference_tokens:
-            chips.append(self._render_reference_chip(token, "未匹配当前设备", invalid=True, removable=False))
-        self._reference_bar.setHtml("".join(chips))
-
-    def _render_reference_chip(
-        self, token: str, title: str, *, invalid: bool, removable: bool
-    ) -> str:
-        bg = "#2a1417" if invalid else t.PRIMARY_SOFT
-        border = t.DANGER if invalid else t.PRIMARY
-        token_fg = t.DANGER if invalid else t.PRIMARY_HOVER
-        title_fg = t.INK_SUBTLE if invalid else t.INK_MUTED
-        remove_html = ""
-        if removable:
-            remove_html = (
-                f"<a href='remove:{quote(token, safe='')}' "
-                f"style='margin-left:8px;color:{t.INK};text-decoration:none;font-weight:700;'>×</a>"
-            )
-        return (
-            f"<span style='display:inline-block;margin:4px 6px 4px 0;padding:8px 10px;"
-            f"border-radius:999px;border:1px solid {border};background:{bg};'>"
-            f"<span style='color:{token_fg};font-weight:700;'>{html.escape(token)}</span>"
-            f"<span style='color:{title_fg};'> · {html.escape(title)}</span>"
-            f"{remove_html}</span>"
-        )
-
-    def _refresh_actual_reference_bar(self) -> None:
-        refs = self._context_snapshot.reference_map()
-        rows = self._record_reference_rows()
-        if not rows:
-            self._actual_reference_bar.setHtml(
-                f"<span style='color:{t.INK_SUBTLE};'>暂无本次生成实际带入的引用记录。</span>"
-            )
-            return
-        chips: list[str] = []
-        for row in rows:
-            token = row.get("token", "")
-            title = row.get("ref_id", token)
-            if token in refs:
-                title = refs[token].title
-            chips.append(
-                self._render_reference_chip(token, title, invalid=False, removable=False)
-            )
-        self._actual_reference_bar.setHtml(
-            f"<div style='color:{t.INK_SUBTLE};margin-bottom:4px;'>本次生成实际带入：</div>"
-            + "".join(chips)
-        )
-
-    def _record_reference_rows(self) -> list[dict[str, str]]:
-        if self._current is None:
-            return []
-        record = self._vm.draft_record(self._current.metadata.workflow_id)
-        if record is None:
-            return []
-        rows: list[dict[str, str]] = []
-        for row in record.context.get("prompt_references") or []:
-            if isinstance(row, dict):
-                rows.append(
-                    {
-                        "token": str(row.get("token") or ""),
-                        "category": str(row.get("category") or ""),
-                        "ref_id": str(row.get("ref_id") or ""),
-                    }
-                )
-        return rows
-
-    def _handle_reference_panel_link(self, url) -> None:
-        text = url.toString()
-        if not text.startswith("insert:"):
-            return
-        token = unquote(text.split(":", 1)[1])
-        self._insert_prompt_reference(token)
-
-    def _handle_reference_bar_link(self, url) -> None:
-        text = url.toString()
-        if not text.startswith("remove:"):
-            return
-        token = unquote(text.split(":", 1)[1])
-        self._remove_prompt_reference(token)
-
-    def _insert_prompt_reference(self, token: str) -> None:
-        match = self._find_reference_span(self._prompt.toPlainText(), token)
-        if match is not None:
-            cursor = self._prompt.textCursor()
-            cursor.setPosition(match[1])
-            self._prompt.setTextCursor(cursor)
-            self._prompt.setFocus()
-            self._sync_prompt_reference_state()
-            return
-
-        cursor = self._prompt.textCursor()
-        text = self._prompt.toPlainText()
-        pos = cursor.position()
-        before = text[pos - 1] if pos > 0 else ""
-        after = text[pos] if pos < len(text) else ""
-        prefix = "" if not before or before.isspace() else " "
-        suffix = "" if not after or after.isspace() else " "
-        cursor.insertText(f"{prefix}{token}{suffix}")
-        self._prompt.setTextCursor(cursor)
-        self._prompt.setFocus()
-        self._set_left_mode(_LEFT_MODE_DRAFT)
-
-    def _remove_prompt_reference(self, token: str) -> None:
-        pattern = self._reference_regex(token)
-        new_text = pattern.sub(" ", self._prompt.toPlainText())
-        new_text = re.sub(r"[ \t]{2,}", " ", new_text)
-        new_text = re.sub(r" *\n *", "\n", new_text)
-        self._set_prompt_text(new_text.strip())
-        self._prompt.setFocus()
-        self._set_left_mode(_LEFT_MODE_DRAFT)
-
-    @staticmethod
-    def _reference_regex(token: str) -> re.Pattern[str]:
-        return re.compile(rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])")
-
-    def _find_reference_span(self, text: str, token: str) -> tuple[int, int] | None:
-        match = self._reference_regex(token).search(text)
-        if match is None:
-            return None
-        return match.start(), match.end()
 
     def _refresh_reasoning_view(self, error: Exception | None = None) -> None:
-        active_tokens = set(self._active_reference_tokens)
         if self._current is not None:
             record = self._vm.draft_record(self._current.metadata.workflow_id)
             if record is not None:
-                device_id = record.context.get("instrument_profile") or None
-                profile = self._vm.get_instrument(device_id)
+                anchor_profile = record.context.get("anchor_profile") or None
+                profile = self._vm.get_anchor_profile(anchor_profile)
                 snapshot = build_context_snapshot(profile)
-                reasoning = record.reasoning or "_本次生成未提供推理过程。_"
-                self._reasoning.setMarkdown(
-                    f"{snapshot.to_markdown(active_tokens=active_tokens)}\n\n---\n\n{reasoning}"
-                )
+                self._reasoning.setHtml(self._reasoning_html(snapshot, record.reasoning, record.context))
                 return
-            self._reasoning.setMarkdown(
-                f"{self._context_snapshot.to_markdown(active_tokens=active_tokens)}\n\n---\n\n_尚无本工作流的 AI 推理记录。_"
-            )
+            self._reasoning.setHtml(self._reasoning_html(self._context_snapshot, "", {}))
             return
         if error is not None:
-            self._reasoning.setMarkdown(
-                f"{self._context_snapshot.to_markdown(active_tokens=active_tokens)}\n\n---\n\n## 生成失败\n\n```\n{error}\n```"
-            )
+            self._reasoning.setHtml(self._reasoning_error_html(error))
             return
-        self._reasoning.setMarkdown("_生成草稿后，这里会显示上下文快照和编排推理过程。_")
+        self._reasoning.setHtml(
+            f"<span style='color:{t.INK_SUBTLE};'>生成工作流后，这里会显示引用锚点、知识命中和编排过程。</span>"
+        )
+
+    def _reasoning_html(
+        self,
+        snapshot: WorkflowContextSnapshot,
+        reasoning: str,
+        context: dict,
+    ) -> str:
+        anchors = context.get("anchors") or []
+        knowledge_hits = context.get("_knowledge_hits") or []
+        workflow = self._current
+        rows: list[str] = [
+            "<div style='line-height:165%;'>",
+            self._evidence_header(snapshot),
+            self._evidence_section("知识命中", self._knowledge_hit_cards(knowledge_hits)),
+            self._evidence_section("引用锚点", self._anchor_cards(anchors, snapshot)),
+        ]
+        if workflow is not None:
+            rows.append(self._evidence_section("步骤编排", self._step_cards(workflow)))
+            rows.append(self._evidence_section("标准化结论", self._check_cards(workflow)))
+        if reasoning:
+            rows.append(self._evidence_section("生成器摘要", self._plain_reasoning_block(reasoning)))
+        rows.append("</div>")
+        return "".join(rows)
+
+    def _evidence_header(self, snapshot: WorkflowContextSnapshot) -> str:
+        return (
+            f"<div style='padding:10px 12px;border:1px solid {t.HAIRLINE_STRONG};"
+            f"background:{t.SURFACE_2};border-radius:8px;margin-bottom:10px;'>"
+            f"<div style='color:{t.INK};font-weight:700;'>"
+            f"{html.escape(snapshot.anchor_profile or '未选择锚点集')}</div>"
+            f"<div style='color:{t.INK_SUBTLE};font-size:12px;'>窗口标题："
+            f"{html.escape(snapshot.title_contains or '未配置')}</div>"
+            f"<div style='margin-top:6px;'>{self._tag('memory', 'Memory', t.WARNING)}"
+            f"{self._tag('skill', 'Skill', t.PRIMARY_HOVER)}"
+            f"{self._tag('action', '动作锚点', t.SUCCESS)}"
+            f"{self._tag('ocr', 'OCR 观测', '#22d3ee')}"
+            f"{self._tag('confirm', '需确认', t.DANGER)}</div>"
+            "</div>"
+        )
+
+    def _knowledge_hit_cards(self, hits: list[dict]) -> str:
+        if not hits:
+            return (
+                f"<div style='color:{t.INK_SUBTLE};'>未命中显式 Memory/Skill，按当前锚点集和内置编排规则生成。</div>"
+            )
+        cards: list[str] = []
+        for hit in hits:
+            kind = str(hit.get("kind") or hit.get("type") or "memory").lower()
+            color = t.PRIMARY_HOVER if "skill" in kind else t.WARNING
+            title = str(hit.get("title") or hit.get("id") or kind)
+            summary = str(hit.get("summary") or hit.get("content") or "")
+            cards.append(
+                self._mini_card(
+                    self._tag(kind, "Skill" if "skill" in kind else "Memory", color),
+                    title,
+                    summary,
+                )
+            )
+        return "".join(cards)
+
+    def _anchor_cards(self, anchors: list[dict], snapshot: WorkflowContextSnapshot) -> str:
+        rows: list[str] = []
+        if anchors:
+            for anchor in anchors:
+                anchor_id = str(anchor.get("id") or "")
+                can_observe = bool(anchor.get("observe_region"))
+                confirm = any(
+                    bool(binding.get("requires_confirmation"))
+                    for binding in anchor.get("action_bindings") or []
+                    if isinstance(binding, dict)
+                )
+                tags = self._tag("action", "action", t.SUCCESS)
+                if can_observe:
+                    tags += self._tag("ocr", "ocr", "#22d3ee")
+                if confirm:
+                    tags += self._tag("confirm", "confirm", t.DANGER)
+                actions = ", ".join(str(a) for a in anchor.get("supported_actions") or [])
+                rows.append(self._mini_card(tags, anchor_id, f"支持动作：{actions or 'click'}"))
+        else:
+            for item in snapshot.references:
+                color = "#22d3ee" if item.category == "observation" else t.SUCCESS
+                rows.append(self._mini_card(self._tag(item.category, item.category, color), item.ref_id, item.subtitle))
+        return "".join(rows) if rows else f"<div style='color:{t.INK_SUBTLE};'>当前锚点集暂无可用锚点。</div>"
+
+    def _step_cards(self, workflow: WorkflowContract) -> str:
+        if not workflow.steps:
+            return f"<div style='color:{t.INK_SUBTLE};'>尚未生成步骤。</div>"
+        rows: list[str] = []
+        for index, step in enumerate(workflow.steps, 1):
+            needs_ocr = bool(step.expected_text) or step.match_mode == "not_empty"
+            tags = self._tag("step", f"{index}", t.PRIMARY_HOVER)
+            tags += self._tag("action", step.action, t.SUCCESS)
+            tags += self._tag("ocr", "OCR 轮询" if needs_ocr else "固定等待", "#22d3ee" if needs_ocr else t.INK_SUBTLE)
+            if step.requires_confirmation:
+                tags += self._tag("confirm", "需确认", t.DANGER)
+            expectation = "无需观测校验"
+            if needs_ocr:
+                expectation = f"{step.match_mode} · {step.expected_text or '非空文本'} · {step.timeout_seconds or '默认'}s"
+            value = f" · value={step.value}" if step.value is not None else ""
+            rows.append(self._mini_card(tags, step.id, f"{step.anchor_id} · {expectation}{value}"))
+        return "".join(rows)
+
+    def _check_cards(self, workflow: WorkflowContract) -> str:
+        result = self._vm.standardize(workflow)
+        if result.ok:
+            return self._mini_card(self._tag("check", "check", t.SUCCESS), "标准化检查通过", "锚点、动作和 OCR 观测配置一致。")
+        return "".join(
+            self._mini_card(self._tag("check", "check", t.DANGER), "需要修复", issue)
+            for issue in result.issues
+        )
+
+    def _plain_reasoning_block(self, reasoning: str) -> str:
+        return (
+            f"<pre style='white-space:pre-wrap;color:{t.INK_MUTED};"
+            f"background:{t.SURFACE_2};border:1px solid {t.HAIRLINE};"
+            "border-radius:8px;padding:10px;'>"
+            f"{html.escape(reasoning[:2200])}</pre>"
+        )
+
+    def _reasoning_error_html(self, error: Exception) -> str:
+        return (
+            f"<div style='color:{t.DANGER};font-weight:700;margin-bottom:8px;'>生成失败</div>"
+            f"<div style='color:{t.INK_MUTED};white-space:pre-wrap;'>{html.escape(str(error))}</div>"
+        )
+
+    @staticmethod
+    def _tag(kind: str, label: str, color: str) -> str:
+        return (
+            f"<span style='display:inline-block;margin:2px 5px 2px 0;padding:2px 7px;"
+            f"border-radius:6px;border:1px solid {color};color:{color};"
+            f"background:{t.SURFACE_1};font-size:11px;font-weight:700;'>"
+            f"{html.escape(label)}</span>"
+        )
+
+    @staticmethod
+    def _mini_card(tags: str, title: str, detail: str) -> str:
+        return (
+            f"<div style='margin:6px 0;padding:8px 10px;border:1px solid {t.HAIRLINE};"
+            f"background:{t.SURFACE_2};border-radius:8px;'>"
+            f"<div>{tags}</div>"
+            f"<div style='color:{t.INK};font-weight:700;margin-top:3px;'>{html.escape(title)}</div>"
+            f"<div style='color:{t.INK_SUBTLE};font-size:12px;margin-top:2px;'>"
+            f"{html.escape(detail)}</div></div>"
+        )
+
+    @staticmethod
+    def _evidence_section(title: str, body: str) -> str:
+        return (
+            f"<div style='margin:12px 0;'>"
+            f"<div style='color:{t.INK};font-weight:700;margin-bottom:5px;'>{html.escape(title)}</div>"
+            f"{body}</div>"
+        )
 
     # --- editable steps --------------------------------------------------- #
     def _populate_steps_table(self, workflow: WorkflowContract) -> None:
         self._steps_table.setRowCount(0)
-        self._step_conditions: dict[int, dict] = {}
         for step in workflow.steps:
-            row = self._steps_table.rowCount()
-            self._insert_step_row(step.id, step.action, step.target or "", step.value or "")
-            if step.condition:
-                self._step_conditions[row] = dict(step.condition)
+            condition = None
+            if step.match_mode != "none":
+                condition = {
+                    "expected_text": step.expected_text or "",
+                    "match_mode": step.match_mode,
+                    "timeout_seconds": step.timeout_seconds or 10.0,
+                }
+            self._insert_step_row(
+                step.id,
+                step.action,
+                step.anchor_id or "",
+                step.value or "",
+                condition=condition,
+            )
 
     def _add_step_row(self) -> None:
         step_num = self._steps_table.rowCount() + 1
@@ -880,7 +668,14 @@ class WorkflowPage(QWidget):
         self._renumber_steps()
 
     def _insert_step_at(
-        self, step_id: str, action: str, target: str, value: str, row: int
+        self,
+        step_id: str,
+        action: str,
+        anchor_id: str,
+        value: str,
+        row: int,
+        *,
+        condition: dict | None = None,
     ) -> None:
         self._steps_table.insertRow(row)
         self._steps_table.setItem(row, 0, QTableWidgetItem(step_id))
@@ -894,8 +689,9 @@ class WorkflowPage(QWidget):
             action_combo.setCurrentIndex(idx)
         self._steps_table.setCellWidget(row, 1, action_combo)
 
-        self._steps_table.setItem(row, 2, QTableWidgetItem(target))
+        self._steps_table.setItem(row, 2, QTableWidgetItem(anchor_id))
         self._steps_table.setItem(row, 3, QTableWidgetItem(str(value)))
+        self._set_row_condition(row, condition)
 
         self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
 
@@ -916,7 +712,15 @@ class WorkflowPage(QWidget):
         self._steps_table.setCellWidget(row, 6, delete)
         self._rebind_step_buttons()
 
-    def _insert_step_row(self, step_id: str, action: str, target: str, value: str) -> None:
+    def _insert_step_row(
+        self,
+        step_id: str,
+        action: str,
+        anchor_id: str,
+        value: str,
+        *,
+        condition: dict | None = None,
+    ) -> None:
         row = self._steps_table.rowCount()
         self._steps_table.insertRow(row)
         self._steps_table.setItem(row, 0, QTableWidgetItem(step_id))
@@ -929,8 +733,9 @@ class WorkflowPage(QWidget):
         if idx >= 0:
             action_combo.setCurrentIndex(idx)
         self._steps_table.setCellWidget(row, 1, action_combo)
-        self._steps_table.setItem(row, 2, QTableWidgetItem(target))
+        self._steps_table.setItem(row, 2, QTableWidgetItem(anchor_id))
         self._steps_table.setItem(row, 3, QTableWidgetItem(str(value)))
+        self._set_row_condition(row, condition)
 
         self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
 
@@ -952,11 +757,6 @@ class WorkflowPage(QWidget):
 
     def _delete_step_row(self, row: int) -> None:
         self._steps_table.removeRow(row)
-        self._step_conditions = {
-            (idx - 1 if idx > row else idx): condition
-            for idx, condition in self._step_conditions.items()
-            if idx != row
-        }
         self._rebind_step_buttons()
         self._renumber_steps()
 
@@ -975,14 +775,8 @@ class WorkflowPage(QWidget):
         data2 = self._collect_step_row_data(row2)
         self._set_step_row_data(row1, data2)
         self._set_step_row_data(row2, data1)
-        # Swap conditions too
-        cond1 = self._step_conditions.pop(row1, None)
-        cond2 = self._step_conditions.pop(row2, None)
-        if cond2 is not None:
-            self._step_conditions[row1] = cond2
-        if cond1 is not None:
-            self._step_conditions[row2] = cond1
         self._renumber_steps()
+        self._rebind_step_buttons()
 
     def _renumber_steps(self) -> None:
         for row in range(self._steps_table.rowCount()):
@@ -994,58 +788,69 @@ class WorkflowPage(QWidget):
         """Open the condition editor for a step row."""
         from smartaccess.desktop.widgets.condition_editor import ConditionEditorDialog
 
-        sources = self._source_choices()
-        current = self._step_conditions.get(row)
-        dlg = ConditionEditorDialog(current, available_sources=sources, parent=self)
+        current = self._row_condition(row)
+        dlg = ConditionEditorDialog(current, parent=self)
         if dlg.exec() == ConditionEditorDialog.DialogCode.Accepted:
             condition = dlg.condition_dict()
-            self._step_conditions[row] = condition
+            if condition.get("match_mode") == "none":
+                self._set_row_condition(row, None)
+            else:
+                self._set_row_condition(row, condition)
             self._steps_table.setCellWidget(row, 4, self._make_condition_button(row))
 
     def _make_condition_button(self, row: int) -> QPushButton:
-        summary = self._condition_summary(self._step_conditions.get(row))
+        summary = self._condition_summary(self._row_condition(row))
         button = QPushButton(summary)
         button.setObjectName("Ghost")
-        button.setToolTip("编辑观测条件 (source/mode/operator/timeout_seconds)")
+        button.setToolTip("编辑 OCR 期望 (expected_text/match_mode/timeout_seconds)")
         button.setMinimumHeight(30)
         button.setMaximumWidth(210)
         button.clicked.connect(lambda _checked=False, r=row: self._edit_condition(r))
         return button
 
+    def _row_condition(self, row: int) -> dict | None:
+        item = self._steps_table.item(row, 0)
+        condition = item.data(_STEP_CONDITION_ROLE) if item is not None else None
+        return dict(condition) if isinstance(condition, dict) else None
+
+    def _set_row_condition(self, row: int, condition: dict | None) -> None:
+        item = self._steps_table.item(row, 0)
+        if item is not None:
+            item.setData(_STEP_CONDITION_ROLE, dict(condition) if condition else None)
+
     @staticmethod
     def _condition_summary(condition: dict | None) -> str:
         if not condition:
             return "未配置"
-        source = str(condition.get("source") or condition.get("roi") or "-")
-        mode = str(condition.get("mode") or "ocr")
-        operator = str(condition.get("operator") or "exists")
-        expected = str(condition.get("expected") or "")
-        timeout = condition.get("timeout_seconds") or condition.get("timeout") or ""
-        main = f"{source} · {mode} · {operator}"
+        match_mode = str(condition.get("match_mode") or "none")
+        expected = str(condition.get("expected_text") or "")
+        timeout = condition.get("timeout_seconds") or ""
+        main = f"OCR · {match_mode}"
         if expected:
             main = f"{main} {expected}"
         if timeout:
             main = f"{main} · {timeout}s"
         return main
 
-    def _collect_step_row_data(self, row: int) -> tuple[str, str, str, str]:
+    def _collect_step_row_data(self, row: int) -> tuple[str, str, str, str, dict | None]:
         step_id = self._table_text(self._steps_table, row, 0)
         action_combo = self._steps_table.cellWidget(row, 1)
         action = action_combo.currentData() if isinstance(action_combo, QComboBox) else "click"
-        target = self._table_text(self._steps_table, row, 2)
+        anchor_id = self._table_text(self._steps_table, row, 2)
         value = self._table_text(self._steps_table, row, 3)
-        return (step_id, action, target, value)
+        return (step_id, action, anchor_id, value, self._row_condition(row))
 
-    def _set_step_row_data(self, row: int, data: tuple[str, str, str, str]) -> None:
-        step_id, action, target, value = data
+    def _set_step_row_data(self, row: int, data: tuple[str, str, str, str, dict | None]) -> None:
+        step_id, action, anchor_id, value, condition = data
         self._steps_table.item(row, 0).setText(step_id)
         action_combo = self._steps_table.cellWidget(row, 1)
         if isinstance(action_combo, QComboBox):
             idx = action_combo.findData(action)
             if idx >= 0:
                 action_combo.setCurrentIndex(idx)
-        self._steps_table.item(row, 2).setText(target)
+        self._steps_table.item(row, 2).setText(anchor_id)
         self._steps_table.item(row, 3).setText(value)
+        self._set_row_condition(row, condition)
 
     def _rebind_step_buttons(self) -> None:
         for row in range(self._steps_table.rowCount()):
@@ -1073,199 +878,41 @@ class WorkflowPage(QWidget):
             step_id = self._table_text(self._steps_table, row, 0)
             action_combo = self._steps_table.cellWidget(row, 1)
             action = action_combo.currentData() if isinstance(action_combo, QComboBox) else "click"
-            target = self._table_text(self._steps_table, row, 2) or None
+            anchor_id = self._table_text(self._steps_table, row, 2) or None
             value_text = self._table_text(self._steps_table, row, 3)
             value = value_text if value_text else None
-            condition = self._step_conditions.get(row)
+            condition = self._row_condition(row)
             if not step_id:
                 raise ValueError("步骤 ID 不能为空")
             if not action:
                 raise ValueError(f"步骤 {step_id} 未选择动作")
-            steps.append(WorkflowStep(id=step_id, action=action, target=target, value=value, condition=condition))
+            step_payload = {
+                "id": step_id,
+                "action": action,
+                "anchor_id": anchor_id,
+                "value": value,
+            }
+            if condition:
+                step_payload["expected_text"] = condition.get("expected_text") or None
+                step_payload["match_mode"] = condition.get("match_mode") or "none"
+                step_payload["timeout_seconds"] = condition.get("timeout_seconds")
+            steps.append(
+                WorkflowStep(**step_payload)
+            )
         return steps
-
-    # --- editable ROI bindings ----------------------------------------- #
-    def _populate_binding_table(self, workflow: WorkflowContract) -> None:
-        self._binding_table.setRowCount(0)
-        for name, target in workflow.roi_bindings.items():
-            self._insert_binding_row(name, target)
-
-    def _add_binding_row(self) -> None:
-        self._insert_binding_row("", self._first_anchor_choice())
-
-    def _insert_binding_row(self, name: str, target: str) -> None:
-        row = self._binding_table.rowCount()
-        self._binding_table.insertRow(row)
-        self._binding_table.setItem(row, 0, QTableWidgetItem(name))
-        self._binding_table.setCellWidget(row, 1, self._make_anchor_combo(target))
-        delete = self._make_delete_button("删除绑定")
-        delete.clicked.connect(lambda _checked=False, r=row: self._delete_binding_row(r))
-        self._binding_table.setCellWidget(row, 2, delete)
-
-    def _delete_binding_row(self, row: int) -> None:
-        self._binding_table.removeRow(row)
-        self._rebind_table_delete_buttons(self._binding_table, self._delete_binding_row)
-        self._refresh_output_combos()
-
-    def _fill_bindings_from_anchors(self) -> None:
-        anchors = self._anchor_choices()
-        if not anchors:
-            QMessageBox.warning(self, "无可用锚点", "当前设备没有可用于绑定的锚点，请先完成设备校准。")
-            return
-        existing = {
-            self._table_text(self._binding_table, row, 0)
-            for row in range(self._binding_table.rowCount())
-        }
-        for anchor_id in anchors:
-            if anchor_id not in existing:
-                self._insert_binding_row(anchor_id, anchor_id)
-        self._refresh_output_combos()
-
-    def _collect_roi_bindings(self) -> dict[str, str]:
-        bindings: dict[str, str] = {}
-        valid_anchors = set(self._anchor_choices())
-        for row in range(self._binding_table.rowCount()):
-            name = self._table_text(self._binding_table, row, 0)
-            combo = self._binding_table.cellWidget(row, 1)
-            target = combo.currentText().strip() if isinstance(combo, QComboBox) else ""
-            if not name:
-                raise ValueError("ROI 绑定名不能为空")
-            if name in bindings:
-                raise ValueError(f"ROI 绑定名重复: {name}")
-            if not target:
-                raise ValueError(f"ROI 绑定 {name} 未选择锚点")
-            if valid_anchors and target not in valid_anchors:
-                raise ValueError(f"ROI 绑定 {name} 指向未校准锚点: {target}")
-            bindings[name] = target
-        return bindings
-
-    # --- editable outputs ----------------------------------------------- #
-    def _populate_output_table(self, workflow: WorkflowContract) -> None:
-        self._output_table.setRowCount(0)
-        for output in workflow.outputs:
-            self._insert_output_row(output.key, output.source)
-
-    def _add_output_row(self) -> None:
-        self._insert_output_row("", self._first_output_source())
-
-    def _insert_output_row(self, key: str, source: str) -> None:
-        row = self._output_table.rowCount()
-        self._output_table.insertRow(row)
-        self._output_table.setItem(row, 0, QTableWidgetItem(key))
-        self._output_table.setCellWidget(row, 1, self._make_source_combo(source))
-        delete = self._make_delete_button("删除输出")
-        delete.clicked.connect(lambda _checked=False, r=row: self._delete_output_row(r))
-        self._output_table.setCellWidget(row, 2, delete)
-
-    def _delete_output_row(self, row: int) -> None:
-        self._output_table.removeRow(row)
-        self._rebind_table_delete_buttons(self._output_table, self._delete_output_row)
-
-    def _fill_outputs_from_bindings(self) -> None:
-        try:
-            bindings = self._collect_roi_bindings()
-        except ValueError as exc:
-            QMessageBox.warning(self, "ROI 绑定未完成", str(exc))
-            return
-        if not bindings:
-            QMessageBox.warning(self, "无 ROI 绑定", "请先添加至少一个 ROI 绑定。")
-            return
-        existing = {
-            self._table_text(self._output_table, row, 0)
-            for row in range(self._output_table.rowCount())
-        }
-        for name, target in bindings.items():
-            if name not in existing:
-                self._insert_output_row(name, target)
-
-    def _collect_outputs(self, bindings: dict[str, str]) -> list[WorkflowOutput]:
-        outputs: list[WorkflowOutput] = []
-        seen: set[str] = set()
-        allowed_sources = set(bindings) | set(bindings.values()) | set(self._anchor_choices())
-        for row in range(self._output_table.rowCount()):
-            key = self._table_text(self._output_table, row, 0)
-            combo = self._output_table.cellWidget(row, 1)
-            source = combo.currentText().strip() if isinstance(combo, QComboBox) else ""
-            if not key:
-                raise ValueError("输出 Key 不能为空")
-            if key in seen:
-                raise ValueError(f"输出 Key 重复: {key}")
-            if not source:
-                raise ValueError(f"输出 {key} 未选择来源")
-            if allowed_sources and source not in allowed_sources:
-                raise ValueError(f"输出 {key} 的来源未绑定或未校准: {source}")
-            outputs.append(WorkflowOutput(key=key, source=source))
-            seen.add(key)
-        return outputs
 
     # --- combo/data helpers --------------------------------------------- #
     def _anchor_choices(self) -> list[str]:
-        profile = self._vm.get_instrument(self._device.currentText() or None)
+        profile = self._vm.get_anchor_profile(self._anchor_profile.currentText() or None)
         if profile is None:
             return []
         anchors = list(profile.anchors)
-        anchors.sort(key=lambda a: (a.type not in _OBSERVATION_TYPES and a.vision_mode == "none", a.id))
+        anchors.sort(key=lambda a: (a.observe_region is None, a.id))
         return [anchor.id for anchor in anchors]
 
     def _first_anchor_choice(self) -> str:
         choices = self._anchor_choices()
         return choices[0] if choices else ""
-
-    def _source_choices(self) -> list[str]:
-        choices: list[str] = []
-        try:
-            bindings = self._collect_roi_bindings()
-        except ValueError:
-            bindings = {}
-        for value in [*bindings.keys(), *bindings.values(), *self._anchor_choices()]:
-            if value and value not in choices:
-                choices.append(value)
-        return choices
-
-    def _first_output_source(self) -> str:
-        choices = self._source_choices()
-        return choices[0] if choices else ""
-
-    def _make_anchor_combo(self, current: str) -> QComboBox:
-        return self._make_combo(self._anchor_choices(), current)
-
-    def _make_source_combo(self, current: str) -> QComboBox:
-        return self._make_combo(self._source_choices(), current)
-
-    def _make_combo(self, choices: list[str], current: str) -> QComboBox:
-        combo = QComboBox()
-        combo.setEditable(True)
-        combo.setMinimumHeight(34)
-        seen: set[str] = set()
-        for choice in choices:
-            if choice and choice not in seen:
-                combo.addItem(choice)
-                seen.add(choice)
-        if current and current not in seen:
-            combo.addItem(current)
-        if current:
-            idx = combo.findText(current)
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
-            else:
-                combo.setEditText(current)
-        return combo
-
-    def _refresh_binding_combos(self) -> None:
-        for row in range(self._binding_table.rowCount()):
-            old = self._combo_text(self._binding_table, row, 1)
-            self._binding_table.setCellWidget(row, 1, self._make_anchor_combo(old))
-
-    def _refresh_output_combos(self) -> None:
-        for row in range(self._output_table.rowCount()):
-            old = self._combo_text(self._output_table, row, 1)
-            self._output_table.setCellWidget(row, 1, self._make_source_combo(old))
-
-    def _rebind_table_delete_buttons(self, table: QTableWidget, handler) -> None:
-        for row in range(table.rowCount()):
-            button = self._make_delete_button("删除此行")
-            button.clicked.connect(lambda _checked=False, r=row: handler(r))
-            table.setCellWidget(row, 2, button)
 
     @staticmethod
     def _make_icon_button(
@@ -1295,15 +942,13 @@ class WorkflowPage(QWidget):
         if self._current is None:
             raise ValueError("请先生成或选择一个工作流")
         steps = self._collect_steps()
-        bindings = self._collect_roi_bindings()
-        outputs = self._collect_outputs(bindings)
         workflow = self._current.model_copy(deep=True)
-        device_id = self._device.currentText().strip()
-        if device_id and device_id != "unknown_device":
-            workflow.metadata.instrument_profile = device_id
+        anchor_profile = self._anchor_profile.currentText().strip()
+        if anchor_profile and anchor_profile != "unknown_device":
+            workflow.metadata = _metadata_with_anchor_profile(workflow.metadata, anchor_profile)
         workflow.steps = steps
-        workflow.roi_bindings = bindings
-        workflow.outputs = outputs
+        workflow.roi_bindings = {}
+        workflow.outputs = []
         return workflow
 
     def _save_workflow(self) -> None:

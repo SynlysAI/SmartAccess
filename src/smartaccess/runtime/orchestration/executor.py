@@ -1,15 +1,9 @@
-"""Executor: translate workflow steps into UI-level actions.
-
-Wraps the :class:`AutomationProvider` port. Before running an action it checks
-the window is present, the target anchor is locatable, and the value satisfies
-the instrument's safety limits (SPEC §5.4). Failures raise typed errors the
-orchestrator maps onto incident types.
-"""
+"""Executor: translate workflow steps into UI-level actions."""
 
 from __future__ import annotations
 
 from smartaccess.runtime.application.ports import ActionOutcome, AutomationProvider
-from smartaccess.shared.contracts.instrument_profile import SafetyLimits
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorsContract
 from smartaccess.shared.contracts.workflow import WorkflowStep
 
 
@@ -18,7 +12,7 @@ class ExecutorError(RuntimeError):
 
 
 class WindowMissingError(ExecutorError):
-    """The instrument window could not be located."""
+    """The application window could not be located."""
 
 
 class AnchorMissingError(ExecutorError):
@@ -26,7 +20,7 @@ class AnchorMissingError(ExecutorError):
 
 
 class SafetyViolationError(ExecutorError):
-    """A parameter or action violated the instrument safety limits."""
+    """A parameter or action violated safety constraints."""
 
 
 class Executor:
@@ -34,39 +28,61 @@ class Executor:
 
     def __init__(self, automation: AutomationProvider) -> None:
         self._automation = automation
+        self._profile: AnchorsContract | None = None
 
-    def configure_profile(self, profile) -> None:
+    def configure_profile(self, profile: AnchorsContract | None) -> None:
+        self._profile = profile
         configure = getattr(self._automation, "configure_profile", None)
         if callable(configure):
             configure(profile)
 
     def ensure_window(self, title_contains: str | None) -> None:
         if not self._automation.window_present(title_contains):
-            raise WindowMissingError(f"未找到窗口: {title_contains}")
+            raise WindowMissingError(f"window not found: {title_contains}")
 
-    def requires_confirm(self, step: WorkflowStep, safety: SafetyLimits | None) -> bool:
-        return bool(safety and step.id in safety.requires_manual_confirm_for)
+    def requires_confirm(self, step: WorkflowStep, _safety) -> bool:
+        if step.requires_confirmation:
+            return True
+        anchor = self.anchor_for_step(step)
+        if anchor is None:
+            return False
+        return any(
+            bool(getattr(binding, "requires_confirmation", False))
+            for binding in anchor.action_bindings
+            if getattr(binding, "action", None) == step.action
+        )
 
-    def check_safety(self, step: WorkflowStep, safety: SafetyLimits | None) -> None:
-        if safety is None or step.value is None:
-            return
-        try:
-            value = float(step.value)
-        except (TypeError, ValueError):
-            return
-        if safety.max_voltage is not None and value > safety.max_voltage:
-            raise SafetyViolationError(f"参数越界: {value} > max {safety.max_voltage}")
-        if safety.min_voltage is not None and value < safety.min_voltage:
-            raise SafetyViolationError(f"参数越界: {value} < min {safety.min_voltage}")
+    def anchor_for_step(self, step: WorkflowStep) -> AnchorDefinition | None:
+        if self._profile is None:
+            return None
+        return self._profile.anchor_map().get(step.anchor_id)
 
-    def run_step(self, step: WorkflowStep, safety: SafetyLimits | None) -> ActionOutcome:
-        self.check_safety(step, safety)
-        if step.target and not self._automation.locate_anchor(step.target):
-            raise AnchorMissingError(f"未找到锚点: {step.target}")
-        outcome = self._automation.run_action(step.action, step.target, step.value)
+    def run_step(self, step: WorkflowStep, _safety) -> ActionOutcome:
+        anchor = self.anchor_for_step(step)
+        if anchor is None:
+            raise AnchorMissingError(f"unknown anchor: {step.anchor_id}")
+        if step.action not in anchor.supported_actions:
+            raise ExecutorError(f"unsupported action '{step.action}' for anchor '{step.anchor_id}'")
+        self._check_safety(step)
+        if not self._automation.locate_anchor(step.anchor_id):
+            raise AnchorMissingError(f"anchor not located: {step.anchor_id}")
+        outcome = self._automation.run_action(step.action, step.anchor_id, step.value)
         if not outcome.ok:
-            raise ExecutorError(outcome.detail or "动作执行失败")
+            raise ExecutorError(outcome.detail or "action failed")
         return outcome
 
     def screenshot(self, label: str) -> bytes:
         return self._automation.screenshot(label)
+
+    def _check_safety(self, step: WorkflowStep) -> None:
+        if self._profile is None or step.value is None:
+            return
+        safety = self._profile.safety_limits
+        try:
+            numeric = float(step.value)
+        except (TypeError, ValueError):
+            return
+        if safety.max_voltage is not None and numeric > safety.max_voltage:
+            raise SafetyViolationError(f"value {numeric} exceeds max_voltage {safety.max_voltage}")
+        if safety.min_voltage is not None and numeric < safety.min_voltage:
+            raise SafetyViolationError(f"value {numeric} below min_voltage {safety.min_voltage}")

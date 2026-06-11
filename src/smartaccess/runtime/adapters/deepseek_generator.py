@@ -37,8 +37,6 @@ class DeepSeekWorkflowGenerator:
             data = self._post("/chat/completions", payload)
             message = data["choices"][0]["message"]
             content = message["content"]
-            # DeepSeek-reasoner returns the chain-of-thought separately; capture
-            # it so the workflow page can show the model's analysis (item 13).
             reasoning = message.get("reasoning_content") or ""
             workflow_data = self._extract_structured(content)
             workflow_data = self._normalize_wait_values(workflow_data)
@@ -55,11 +53,21 @@ class DeepSeekWorkflowGenerator:
     def _format_reasoning(reasoning, workflow_data, prompt, context) -> str:
         prompt_references = context.get("prompt_references") or []
         lines = [
-            "## DeepSeek 编排推理过程",
+            "## 工作流编排摘要",
             f"**模型**：`{context.get('instrument_profile', '')}` 上下文 · 目标：{prompt.strip()[:120]}",
             "",
         ]
-        lines.append("### 已引用上下文")
+        hits = context.get("_knowledge_hits") or []
+        lines.append("### 知识命中")
+        if hits:
+            lines.extend(
+                f"- `{hit.get('id', hit.get('title', 'knowledge'))}` · {hit.get('summary', '')}"
+                for hit in hits
+            )
+        else:
+            lines.append("- 未命中显式 Memory/Skill，按当前锚点集和内置规则生成。")
+        lines.append("")
+        lines.append("### 显式上下文")
         if prompt_references:
             lines.extend(
                 f"- `{ref.get('token')}` → {ref.get('category')} / {ref.get('ref_id')}"
@@ -69,11 +77,11 @@ class DeepSeekWorkflowGenerator:
             lines.append("- 无显式引用，按完整设备上下文推断。")
         lines.append("")
         if reasoning:
-            lines += ["### 模型思考", reasoning.strip(), ""]
+            lines += ["### 模型摘要", "供应商返回了额外分析内容，已折叠为结构化编排摘要。", ""]
         else:
             lines += [
                 "### 模型分析",
-                "（当前模型未单独返回思维链；以下为对生成结果的结构化解读）",
+                "（当前模型未单独返回额外分析；以下为对生成结果的结构化解读）",
                 "",
             ]
         steps = workflow_data.get("steps", []) if isinstance(workflow_data, dict) else []
@@ -98,22 +106,22 @@ class DeepSeekWorkflowGenerator:
             "你是 SmartAccess 工作流设计器。只输出一个 JSON 对象，不要 Markdown。\n"
             "JSON 必须严格符合 WorkflowContract 格式：\n"
             "{\n"
-            '  "metadata": {"workflow_id": "...", "author": "...", "instrument_profile": "...", "experiment_type": "...", "lifecycle_state": "Draft"},\n'
+            '  "metadata": {"workflow_id": "...", "author": "...", "anchor_profile": "...", "experiment_type": "...", "lifecycle_state": "Draft"},\n'
             '  "preconditions": [],\n'
-            '  "roi_bindings": {},  // 必须是对象，不是数组\n'
-            '  "steps": [{"id": "step_1", "action": "click", "target": "anchor_id", "value": null}],  // 使用 target 和 value，不是 anchor 和 params\n'
-            '  "outputs": [{"key": "output_name", "source": "roi_id"}],\n'
+            '  "steps": [{"id": "step_1", "action": "click", "anchor_id": "anchor_id", "value": null, "match_mode": "none", "wait_seconds": 1.0}],\n'
             '  "retry_policy": {"max_attempts": 2}\n'
             "}\n"
-            "重要：steps 中的每个步骤必须使用 'target' 字段（不是 'anchor'），'value' 字段（不是 'params'）。\n"
+            "steps[].action 只能是 click、type、hotkey、press_enter。\n"
+            "禁止生成 double_click、wait、wait_until、screenshot_check。\n"
+            "等待不是动作：固定等待写 wait_seconds；OCR 等待写 expected_text、match_mode、timeout_seconds。\n"
+            "OCR 条件只使用 expected_text/match_mode/timeout_seconds，不要生成 source/mode/template/color/presence。\n"
+            "不要生成 roi_bindings 或 outputs；运行结果由 run_trace.jsonl 的 OCR 事实读取。\n"
             "只能使用已校准的 anchors/actions，危险步骤必须保留原始 step id 以便人工确认。\n"
-            "如果 user_prompt 或 context.prompt_references 提供了显式引用 token，优先围绕这些 ref_id 组织步骤、ROI 绑定和 outputs。\n"
+            "如果 user_prompt 或 context.prompt_references 提供了显式引用 token，优先围绕这些 ref_id 组织步骤。\n"
             "\n"
             "## 时间单位规则（极其重要！）\n"
             "所有等待时间单位必须为**秒(seconds)**，绝对不能使用毫秒。\n"
-            "- wait 的 value 是秒数，例如等待 3 秒应写 value: 3，不是 value: 3000。\n"
-            "- wait_until 和 screenshot_check 的 condition.timeout_seconds 也是秒。\n"
-            "- condition.poll_interval_seconds 也是秒，默认 1.0。\n"
+            "- wait_seconds 和 timeout_seconds 都是秒。\n"
             "- 永远不要输出 5000、3000 这样的毫秒值作为等待时间。\n"
             + knowledge_hint
         )
@@ -122,7 +130,7 @@ class DeepSeekWorkflowGenerator:
             "context": context,
             "required_metadata": {
                 "workflow_id": context.get("workflow_id", "wf_draft"),
-                "instrument_profile": context.get("instrument_profile", "unknown_device"),
+                "anchor_profile": context.get("anchor_profile") or context.get("instrument_profile", "unknown_device"),
                 "experiment_type": context.get("experiment_type", "generic_automation"),
                 "author": "deepseek-assistant",
                 "lifecycle_state": "Draft",
@@ -164,31 +172,28 @@ class DeepSeekWorkflowGenerator:
         import re
 
         notes: list[str] = []
+        workflow_data.pop("roi_bindings", None)
+        workflow_data.pop("outputs", None)
         for step in workflow_data.get("steps", []):
-            action = step.get("action", "")
-            value = step.get("value")
+            if "anchor_id" not in step and step.get("target"):
+                step["anchor_id"] = step.get("target")
 
-            # Normalize action value
-            if action in {"wait", "wait_until", "screenshot_check"} and value is not None:
-                val_str = str(value)
-                # Case 1: "5000ms" or "5000 ms" → strip unit, divide
+            for field in ("wait_seconds", "timeout_seconds"):
+                if step.get(field) is None:
+                    continue
+                val_str = str(step[field])
                 ms_match = re.match(r"^(\d+(?:\.\d+)?)\s*(?:ms|毫秒)$", val_str.strip())
                 if ms_match:
-                    ms_val = float(ms_match.group(1))
-                    step["value"] = ms_val / 1000.0
-                    notes.append(f"step {step.get('id')}: {val_str} → {step['value']}s (ms→s)")
-                else:
-                    try:
-                        num_val = float(val_str)
-                    except (ValueError, TypeError):
-                        continue
-                    if num_val >= 1000:
-                        step["value"] = num_val / 1000.0
-                        notes.append(f"step {step.get('id')}: {num_val} → {step['value']}s (疑似毫秒，已换算)")
-                    elif 301 <= num_val <= 999:
-                        notes.append(
-                            f"⚠ step {step.get('id')}: wait={num_val}s 超过 5 分钟，请人工确认是否为秒。"
-                        )
+                    step[field] = float(ms_match.group(1)) / 1000.0
+                    notes.append(f"step {step.get('id')}: {field} {val_str} -> {step[field]}s")
+                    continue
+                try:
+                    num_val = float(val_str)
+                except (ValueError, TypeError):
+                    continue
+                if num_val >= 1000:
+                    step[field] = num_val / 1000.0
+                    notes.append(f"step {step.get('id')}: {field} {num_val} -> {step[field]}s")
 
             # Normalize condition timeout → timeout_seconds
             condition = step.get("condition")
@@ -204,11 +209,13 @@ class DeepSeekWorkflowGenerator:
                         notes.append(f"step {step.get('id')} condition.timeout: {t_val}ms → {condition['timeout_seconds']}s")
                     else:
                         condition["timeout_seconds"] = t_val
-                # Ensure defaults
-                condition.setdefault("poll_interval_seconds", 1.0)
-                condition.setdefault("timeout_seconds", 30.0)
-                condition.setdefault("operator", "exists")
-                condition.setdefault("mode", "ocr")
+                if "expected_text" not in step and condition.get("expected") is not None:
+                    step["expected_text"] = str(condition.get("expected"))
+                if "match_mode" not in step:
+                    operator = condition.get("operator") or "contains"
+                    step["match_mode"] = "not_empty" if operator == "exists" else operator
+                if "timeout_seconds" not in step and condition.get("timeout_seconds") is not None:
+                    step["timeout_seconds"] = condition.get("timeout_seconds")
 
         if notes:
             self._normalization_notes = notes

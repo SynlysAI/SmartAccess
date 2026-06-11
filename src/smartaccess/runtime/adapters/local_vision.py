@@ -22,7 +22,7 @@ import numpy as np
 
 from smartaccess.runtime.application.ports import OcrReading
 from smartaccess.runtime.application.roi_resolver import resolve_anchor_roi
-from smartaccess.shared.contracts.instrument_profile import AnchorDefinition, RoiRect, VisionConfig
+from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
 
 # --------------------------------------------------------------------------- #
 # Optional dependency helpers
@@ -128,7 +128,7 @@ class LocalVisionProvider:
         *,
         screenshot: bytes | None,
         anchor: AnchorDefinition,
-        roi: RoiRect | None = None,
+        roi: PixelRegion | None = None,
     ) -> OcrReading:
         """OCR a specific anchor's ROI region."""
         _require_paddle()
@@ -417,7 +417,7 @@ class LocalVisionProvider:
         return self._crop_roi(img, self._resolved_roi(anchor, img))
 
     @staticmethod
-    def _crop_roi(img: np.ndarray, roi: RoiRect | None) -> np.ndarray | None:
+    def _crop_roi(img: np.ndarray, roi: PixelRegion | None) -> np.ndarray | None:
         if roi is None:
             return None
         h, w = img.shape[:2]
@@ -429,13 +429,13 @@ class LocalVisionProvider:
             return None
         return img[y1:y2, x1:x2]
 
-    def _vision_config(self, roi: str) -> VisionConfig | None:
+    def _vision_config(self, roi: str):
         anchor = self._profile_anchors.get(roi)
         if anchor is None:
             return None
         return anchor.vision_config
 
-    def _resolved_roi(self, anchor: AnchorDefinition, img: np.ndarray) -> RoiRect | None:
+    def _resolved_roi(self, anchor: AnchorDefinition, img: np.ndarray) -> PixelRegion | None:
         height, width = img.shape[:2]
         return resolve_anchor_roi(
             anchor,
