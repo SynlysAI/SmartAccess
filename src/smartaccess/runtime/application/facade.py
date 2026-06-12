@@ -30,6 +30,11 @@ from smartaccess.runtime.application.workspace_service import (
     DashboardProjection,
     WorkspaceService,
 )
+from smartaccess.runtime.application.workspace_settings import (
+    AI_PROFILE_DEVICE_ONBOARDING,
+    FIXED_DEVICE_ONBOARDING_AI_PROFILE,
+    WorkspaceSettingsStore,
+)
 from smartaccess.runtime.domain.incident import RecoveryAction
 from smartaccess.runtime.domain.run_session import RunSession, RunStep
 from smartaccess.runtime.domain.workflow import WorkflowLifecycleState
@@ -53,6 +58,8 @@ class AIAssistantStatus:
     model: str
     status: str
     detail: str
+    active_profile: str = ""
+    profiles: tuple[dict[str, Any], ...] = ()
 
 
 ConfirmHandler = Callable[[ConfirmRequest], bool]
@@ -77,6 +84,7 @@ class RuntimeFacade:
         observer: Observer,
         recovery: RecoveryEngine,
         ai_assistant_status: AIAssistantStatus | None = None,
+        workspace_settings: WorkspaceSettingsStore | None = None,
         max_retries: int = 2,
     ) -> None:
         self._event_bus = event_bus
@@ -89,6 +97,7 @@ class RuntimeFacade:
         self._workspace = workspace
         self._evaluation = evaluation
         self._ai_assistant_status = ai_assistant_status
+        self._workspace_settings = workspace_settings
         self._confirm_handler: ConfirmHandler = lambda _request: True
         self._orchestrator = Orchestrator(
             executor=executor,
@@ -186,13 +195,35 @@ class RuntimeFacade:
             detail="工作流草稿生成器可用" if label != "未配置" else "未配置工作流草稿生成器",
         )
 
-    def ai_model_options(self) -> dict[str, str]:
+    def ai_model_options(self) -> dict[str, Any]:
         status = self.ai_assistant_status()
         return {
+            "active_profile": status.active_profile,
             "provider": status.provider,
             "model": status.model,
             "base_url": status.detail.removeprefix("base_url=") if status.detail.startswith("base_url=") else "",
+            "profiles": list(status.profiles),
         }
+
+    def ai_profile_preferences(self) -> dict[str, str]:
+        if self._workspace_settings is None:
+            return {}
+        return self._workspace_settings.ai_profile_preferences()
+
+    def set_ai_profile_preference(self, purpose: str, profile_id: str) -> dict[str, str]:
+        if self._workspace_settings is None:
+            return {}
+        return self._workspace_settings.set_ai_profile_preference(purpose, profile_id)
+
+    def ai_profile_for_purpose(self, purpose: str) -> str:
+        profile_ids = {str(profile.get("profile_id") or "") for profile in self.ai_assistant_status().profiles}
+        if purpose == AI_PROFILE_DEVICE_ONBOARDING and FIXED_DEVICE_ONBOARDING_AI_PROFILE in profile_ids:
+            return FIXED_DEVICE_ONBOARDING_AI_PROFILE
+        preferences = self.ai_profile_preferences()
+        profile_id = preferences.get(purpose) or self.ai_assistant_status().active_profile
+        if profile_id in profile_ids:
+            return profile_id
+        return self.ai_assistant_status().active_profile
 
     def register_workflow(self, workflow: WorkflowContract) -> WorkflowContract:
         return self._workflow.register(workflow)

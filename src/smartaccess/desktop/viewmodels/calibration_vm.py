@@ -49,6 +49,10 @@ class CalibrationViewModel(ViewModel):
         options = getattr(self._facade, "ai_model_options", None)
         return options() if callable(options) else {}
 
+    def ai_profile_for_purpose(self, purpose: str) -> str:
+        selector = getattr(self._facade, "ai_profile_for_purpose", None)
+        return selector(purpose) if callable(selector) else ""
+
     def create_profile(
         self,
         *,

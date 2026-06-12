@@ -24,6 +24,14 @@ class WorkflowViewModel(ViewModel):
     def generator_label(self) -> str:
         return self._facade.workflow_generator_label()
 
+    def ai_model_options(self) -> dict:
+        options = getattr(self._facade, "ai_model_options", None)
+        return options() if callable(options) else {}
+
+    def ai_profile_for_purpose(self, purpose: str) -> str:
+        selector = getattr(self._facade, "ai_profile_for_purpose", None)
+        return selector(purpose) if callable(selector) else ""
+
     def list_anchor_profiles(self) -> list[str]:
         return [p.profile_id for p in self._facade.list_instruments()]
 
@@ -44,6 +52,7 @@ class WorkflowViewModel(ViewModel):
         anchor_profile: str | None,
         workflow_id: str,
         prompt_references: list[dict[str, str]] | None = None,
+        ai_profile_id: str | None = None,
     ) -> WorkflowContract:
         profile = self._facade.get_instrument(anchor_profile) if anchor_profile else None
         context = {
@@ -51,6 +60,8 @@ class WorkflowViewModel(ViewModel):
             "anchor_profile": anchor_profile or "unknown_device",
             "prompt_references": list(prompt_references or []),
         }
+        if ai_profile_id:
+            context["ai_profile_id"] = ai_profile_id
         if profile is not None:
             context["anchors"] = [a.model_dump(mode="json", exclude_none=True) for a in profile.anchors]
             context["actions"] = list(profile.actions)

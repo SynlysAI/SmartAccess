@@ -17,6 +17,7 @@ from smartaccess.shared.contracts.anchors import (
     AnchorsContract,
 )
 from smartaccess.shared.contracts.workflow import WorkflowContract
+from smartaccess.shared.config.settings import AIProfileConfig, normalize_ai_wire_api
 
 
 DEFAULT_AI_USER_AGENT = (
@@ -38,6 +39,9 @@ class OpenAICompatibleChatClient:
         provider_name: str = "OpenAI-compatible",
         timeout_seconds: float = 30.0,
         user_agent: str | None = None,
+        profiles: dict[str, AIProfileConfig] | None = None,
+        active_profile: str | None = None,
+        wire_api: str = "chat_completions",
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -45,6 +49,9 @@ class OpenAICompatibleChatClient:
         self._provider_name = provider_name
         self._timeout = timeout_seconds
         self._user_agent = (user_agent or DEFAULT_AI_USER_AGENT).strip() or DEFAULT_AI_USER_AGENT
+        self._profiles = dict(profiles or {})
+        self._active_profile = active_profile or ""
+        self._wire_api = normalize_ai_wire_api(wire_api)
         self.last_error = ""
         self.last_reasoning = ""
 
@@ -65,40 +72,94 @@ class OpenAICompatibleChatClient:
         return self._user_agent
 
     def generator_label(self) -> str:
+        profile = self._profiles.get(self._active_profile)
+        if profile:
+            return f"{profile.label} / {profile.model}"
         return f"{self._provider_name} / {self._model}"
 
-    def _request_config(self, context: dict[str, Any]) -> tuple[str, str, str]:
-        base_url = str(context.get("ai_base_url") or self._base_url).rstrip("/")
-        model = str(context.get("ai_model") or self._model)
-        provider = str(context.get("ai_provider") or self._provider_name)
-        return base_url, model, provider
+    def _request_config(self, context: dict[str, Any]) -> dict[str, Any]:
+        explicit_profile_id = str(context.get("ai_profile_id") or context.get("ai_profile") or "").strip()
+        profile_id = explicit_profile_id or self._active_profile
+        profile = self._profiles.get(profile_id) if profile_id else None
+        if profile is not None:
+            return {
+                "profile_id": profile.profile_id,
+                "label": profile.label,
+                "provider": profile.provider,
+                "api_key": profile.api_key or "",
+                "base_url": profile.base_url.rstrip("/"),
+                "model": profile.model,
+                "timeout": profile.timeout_seconds,
+                "user_agent": profile.user_agent or self._user_agent,
+                "wire_api": normalize_ai_wire_api(profile.wire_api),
+            }
+        if explicit_profile_id:
+            return {
+                "profile_id": explicit_profile_id,
+                "label": explicit_profile_id,
+                "provider": explicit_profile_id,
+                "api_key": "",
+                "base_url": self._base_url,
+                "model": self._model,
+                "timeout": self._timeout,
+                "user_agent": self._user_agent,
+                "wire_api": self._wire_api,
+            }
+        return {
+            "profile_id": "",
+            "label": self._provider_name,
+            "provider": self._provider_name,
+            "api_key": self._api_key,
+            "base_url": self._base_url,
+            "model": self._model,
+            "timeout": self._timeout,
+            "user_agent": self._user_agent,
+            "wire_api": self._wire_api,
+        }
 
-    def _post(self, path: str, payload: dict[str, Any], *, base_url: str | None = None) -> dict[str, Any]:
+    def _post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        timeout: float | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
         target_base_url = (base_url or self._base_url).rstrip("/")
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
             f"{target_base_url}{path}",
             data=body,
-            headers=self._headers(target_base_url),
+            headers=self._headers(target_base_url, api_key=api_key, user_agent=user_agent),
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self._timeout) as resp:  # noqa: S310 - user-configured LLM endpoint
+            with urlopen(request, timeout=timeout or self._timeout) as resp:  # noqa: S310 - user-configured LLM endpoint
                 return json.loads(resp.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(self._format_http_error(exc.code, detail)) from exc
+            raise RuntimeError(self._format_http_error(exc.code, detail, user_agent=user_agent)) from exc
         except URLError as exc:
             raise RuntimeError(str(exc.reason)) from exc
 
-    def _headers(self, target_base_url: str | None = None) -> dict[str, str]:
+    def _headers(
+        self,
+        target_base_url: str | None = None,
+        *,
+        api_key: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, str]:
         base_url = (target_base_url or self._base_url).rstrip("/")
+        selected_user_agent = (user_agent or self._user_agent).strip() or DEFAULT_AI_USER_AGENT
+        selected_api_key = self._api_key if api_key is None else api_key
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {selected_api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": self._user_agent,
+            "User-Agent": selected_user_agent,
         }
         origin = self._origin(base_url)
         if origin:
@@ -106,7 +167,14 @@ class OpenAICompatibleChatClient:
             headers["Referer"] = f"{origin}/"
         return headers
 
-    def _format_http_error(self, code: int, detail: str) -> str:
+    @staticmethod
+    def _ensure_api_key(request_config: dict[str, Any]) -> None:
+        if request_config.get("api_key"):
+            return
+        profile_label = request_config.get("label") or request_config.get("profile_id") or "selected AI profile"
+        raise RuntimeError(f"AI profile {profile_label!r} is missing an API key")
+
+    def _format_http_error(self, code: int, detail: str, *, user_agent: str | None = None) -> str:
         parsed = self._parse_error_payload(detail)
         message = self._error_message(parsed) if parsed is not None else self._collapse(detail)
         combined = self._collapse(json.dumps(parsed, ensure_ascii=False) if parsed is not None else detail).lower()
@@ -117,9 +185,10 @@ class OpenAICompatibleChatClient:
             or "cloudflare" in combined and "1010" in combined
         )
         if cloudflare_1010:
+            selected_user_agent = (user_agent or self._user_agent).strip() or DEFAULT_AI_USER_AGENT
             return (
                 "HTTP 403 Cloudflare 1010: endpoint blocked this request signature. "
-                f"Sent User-Agent={self._user_agent!r}. "
+                f"Sent User-Agent={selected_user_agent!r}. "
                 "Set SMARTACCESS_AI_USER_AGENT in .env to a browser User-Agent allowed by the provider, "
                 "or ask the provider to allow server-side API clients."
             )
@@ -204,10 +273,15 @@ class OpenAICompatibleChatClient:
         return cleaned
 
     @staticmethod
-    def _user_content(user_payload: dict[str, Any], context: dict[str, Any]) -> str | list[dict[str, Any]]:
+    def _user_content(
+        user_payload: dict[str, Any],
+        context: dict[str, Any],
+        *,
+        allow_image_url: bool = True,
+    ) -> str | list[dict[str, Any]]:
         text = json.dumps(user_payload, ensure_ascii=False)
         screenshot = context.get("screenshot")
-        if not isinstance(screenshot, dict) or not screenshot.get("data"):
+        if not allow_image_url or not isinstance(screenshot, dict) or not screenshot.get("data"):
             return text
         mime_type = str(screenshot.get("mime_type") or "image/png")
         data = str(screenshot["data"])
@@ -215,6 +289,23 @@ class OpenAICompatibleChatClient:
             {"type": "text", "text": text},
             {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{data}"}},
         ]
+
+    @staticmethod
+    def _allows_image_url_content(request_config: dict[str, Any]) -> bool:
+        provider = str(request_config.get("provider") or "").strip().lower()
+        label = str(request_config.get("label") or "").strip().lower()
+        # Most chat-compatible gateways in this app accept text-only message parts.
+        # Enable image_url only for profiles explicitly marked as vision-capable.
+        return "vision" in provider or "multimodal" in provider or "vision" in label
+
+    @staticmethod
+    def _request_label(request_config: dict[str, Any]) -> str:
+        return str(
+            request_config.get("label")
+            or request_config.get("provider")
+            or request_config.get("profile_id")
+            or "AI"
+        )
 
     @staticmethod
     def _message_content(data: dict[str, Any]) -> str:
@@ -237,29 +328,92 @@ class OpenAICompatibleChatClient:
         message = data["choices"][0]["message"]
         return str(message.get("reasoning_content") or "")
 
+    @staticmethod
+    def _response_content(data: dict[str, Any]) -> str:
+        output_text = data.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text
+        parts: list[str] = []
+        for item in data.get("output") or []:
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content") or []:
+                if not isinstance(content, dict):
+                    continue
+                text = content.get("text")
+                if text:
+                    parts.append(str(text))
+        if parts:
+            return "\n".join(parts)
+        raise ValueError("Responses API output does not contain text")
+
+    @staticmethod
+    def _response_reasoning(data: dict[str, Any]) -> str:
+        parts: list[str] = []
+        for item in data.get("output") or []:
+            if isinstance(item, dict) and item.get("type") == "reasoning":
+                summary = item.get("summary")
+                if isinstance(summary, str):
+                    parts.append(summary)
+                elif isinstance(summary, list):
+                    parts.extend(str(part.get("text") or part) for part in summary if part)
+        return "\n".join(part for part in parts if part)
+
+    @staticmethod
+    def _response_payload_from_chat(payload: dict[str, Any]) -> dict[str, Any]:
+        response_payload: dict[str, Any] = {
+            "model": payload["model"],
+            "input": payload["messages"],
+        }
+        if "temperature" in payload:
+            response_payload["temperature"] = payload["temperature"]
+        response_format = payload.get("response_format")
+        if isinstance(response_format, dict):
+            response_payload["text"] = {"format": response_format}
+        return response_payload
+
 
 class OpenAICompatibleWorkflowGenerator(OpenAICompatibleChatClient):
     """Generate workflow drafts through an OpenAI-compatible chat endpoint."""
 
     def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> WorkflowContract:
         self._normalization_notes: list[str] = []
-        base_url, _model, _provider = self._request_config(context)
+        request_config = self._request_config(context)
+        self._ensure_api_key(request_config)
         payload = self._chat_payload(prompt, context)
         try:
-            data = self._post("/chat/completions", payload, base_url=base_url)
-            workflow_data = self._extract_structured(self._message_content(data))
+            path = "/chat/completions"
+            output_parser = self._message_content
+            reasoning_parser = self._message_reasoning
+            if request_config["wire_api"] == "responses":
+                path = "/responses"
+                payload = self._response_payload_from_chat(payload)
+                output_parser = self._response_content
+                reasoning_parser = self._response_reasoning
+            data = self._post(
+                path,
+                payload,
+                base_url=request_config["base_url"],
+                api_key=request_config["api_key"],
+                timeout=request_config["timeout"],
+                user_agent=request_config["user_agent"],
+            )
+            workflow_data = self._extract_structured(output_parser(data))
             workflow_data = self._normalize_wait_values(workflow_data)
             self.last_reasoning = self._format_reasoning(
-                self._message_reasoning(data), workflow_data, prompt, context
+                reasoning_parser(data), workflow_data, prompt, context
             )
             return WorkflowContract.model_validate(workflow_data)
         except Exception as exc:
             self.last_error = str(exc)
             self.last_reasoning = f"## Generation failed\n\n```\n{exc}\n```"
-            raise RuntimeError(f"{self._provider_name} workflow generation failed: {exc}") from exc
+            raise RuntimeError(
+                f"{self._request_label(request_config)} workflow generation failed: {exc}"
+            ) from exc
 
     def _chat_payload(self, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
-        _base_url, model, _provider = self._request_config(context)
+        request_config = self._request_config(context)
+        model = request_config["model"]
         knowledge_hint = ""
         hits = context.get("_knowledge_hits")
         if hits:
@@ -374,16 +528,32 @@ class OpenAICompatibleInstrumentProfileGenerator(OpenAICompatibleChatClient):
     """Generate reviewable anchor profiles through an OpenAI-compatible chat endpoint."""
 
     def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> AnchorsContract:
-        base_url, _model, _provider = self._request_config(context)
+        request_config = self._request_config(context)
+        self._ensure_api_key(request_config)
         payload = self._chat_payload(prompt, context)
         try:
-            data = self._post("/chat/completions", payload, base_url=base_url)
+            path = "/chat/completions"
+            output_parser = self._message_content
+            reasoning_parser = self._message_reasoning
+            if request_config["wire_api"] == "responses":
+                path = "/responses"
+                payload = self._response_payload_from_chat(payload)
+                output_parser = self._response_content
+                reasoning_parser = self._response_reasoning
+            data = self._post(
+                path,
+                payload,
+                base_url=request_config["base_url"],
+                api_key=request_config["api_key"],
+                timeout=request_config["timeout"],
+                user_agent=request_config["user_agent"],
+            )
             profile_data = self._normalize_anchor_profile(
-                self._extract_structured(self._message_content(data)),
+                self._extract_structured(output_parser(data)),
                 context,
             )
             self.last_reasoning = self._format_reasoning(
-                self._message_reasoning(data), profile_data, prompt, context
+                reasoning_parser(data), profile_data, prompt, context
             )
             return AnchorsContract.model_validate(profile_data)
         except ValidationError as exc:
@@ -393,10 +563,13 @@ class OpenAICompatibleInstrumentProfileGenerator(OpenAICompatibleChatClient):
         except Exception as exc:
             self.last_error = str(exc)
             self.last_reasoning = f"## Generation failed\n\n{self.last_error}"
-            raise RuntimeError(f"{self._provider_name} anchor generation failed: {self.last_error}") from exc
+            raise RuntimeError(
+                f"{self._request_label(request_config)} anchor generation failed: {self.last_error}"
+            ) from exc
 
     def _chat_payload(self, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
-        _base_url, model, _provider = self._request_config(context)
+        request_config = self._request_config(context)
+        model = request_config["model"]
         system = (
             "You are the SmartAccess device onboarding and calibration assistant. "
             "Return only one JSON object, no Markdown.\n"
@@ -429,7 +602,14 @@ class OpenAICompatibleInstrumentProfileGenerator(OpenAICompatibleChatClient):
             "temperature": 0.2,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": self._user_content(user, context)},
+                {
+                    "role": "user",
+                    "content": self._user_content(
+                        user,
+                        context,
+                        allow_image_url=self._allows_image_url_content(request_config),
+                    ),
+                },
             ],
             "response_format": {"type": "json_object"},
         }

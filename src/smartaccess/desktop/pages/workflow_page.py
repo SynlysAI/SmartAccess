@@ -39,6 +39,7 @@ from smartaccess.desktop.widgets.cards import (
     section_title,
 )
 from smartaccess.desktop.workflow_projection import WorkflowContextSnapshot, build_context_snapshot
+from smartaccess.runtime.application.workspace_settings import AI_PROFILE_WORKFLOW
 from smartaccess.shared.contracts.workflow import (
     WorkflowContract,
     WorkflowMetadata,
@@ -356,6 +357,7 @@ class WorkflowPage(QWidget):
                 self._prompt.toPlainText(),
                 anchor_profile=self._anchor_profile.currentText() or None,
                 workflow_id=self._workflow_id.text().strip() or "wf_new_experiment",
+                ai_profile_id=self._workflow_ai_profile_id(),
             )
         except Exception as exc:  # noqa: BLE001
             self._refresh_reasoning_view(error=exc)
@@ -363,6 +365,9 @@ class WorkflowPage(QWidget):
             return
         self._show_workflow(workflow)
         self._reload()
+
+    def _workflow_ai_profile_id(self) -> str:
+        return self._vm.ai_profile_for_purpose(AI_PROFILE_WORKFLOW)
 
     def _select_existing(self) -> None:
         if self._loading:

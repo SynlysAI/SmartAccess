@@ -12,7 +12,11 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 from smartaccess.bootstrap import build_runtime_facade  # noqa: E402
 from smartaccess.desktop.journey_projection import build_journey_projection  # noqa: E402
 from smartaccess.desktop.widgets.workflow_journey import WorkflowJourneyGraph  # noqa: E402
-from smartaccess.shared.config.settings import AppSettings  # noqa: E402
+from smartaccess.runtime.application.workspace_settings import (  # noqa: E402
+    AI_PROFILE_DEVICE_ONBOARDING,
+    AI_PROFILE_WORKFLOW,
+)
+from smartaccess.shared.config.settings import AIProfileConfig, AppSettings  # noqa: E402
 from smartaccess.shared.contracts import load_yaml_contract  # noqa: E402
 from smartaccess.shared.contracts.workflow import (  # noqa: E402
     WorkflowContract,
@@ -32,6 +36,33 @@ def _app() -> QApplication:
 
 def _empty_facade(tmp_path: Path):
     return build_runtime_facade(AppSettings(workspace_dir=tmp_path))
+
+
+def _ai_profile_facade(tmp_path: Path):
+    return build_runtime_facade(
+        AppSettings(
+            workspace_dir=tmp_path,
+            ai_active_profile="codex",
+            ai_profiles={
+                "codex": AIProfileConfig(
+                    profile_id="codex",
+                    label="Codex",
+                    provider="codex",
+                    base_url="https://fufei.mossx.ai/v1",
+                    model="GPT-5.4",
+                    api_key="codex-key",
+                ),
+                "deepseek": AIProfileConfig(
+                    profile_id="deepseek",
+                    label="DeepSeek",
+                    provider="deepseek",
+                    base_url="https://api.deepseek.com",
+                    model="deepseek-chat",
+                    api_key="deepseek-key",
+                ),
+            },
+        )
+    )
 
 
 def _facade(tmp_path: Path):
@@ -244,11 +275,25 @@ def test_workflow_page_step_table_adapts_to_content_and_row_count(tmp_path: Path
     )
 
 
+def test_workflow_page_uses_central_ai_profile_configuration(tmp_path: Path) -> None:
+    _app()
+    from smartaccess.desktop.pages.workflow_page import WorkflowPage
+
+    facade = _ai_profile_facade(tmp_path)
+    facade.set_ai_profile_preference(AI_PROFILE_WORKFLOW, "deepseek")
+    page = WorkflowPage(facade)
+
+    assert not hasattr(page, "_ai_profile")
+    assert page._workflow_ai_profile_id() == "deepseek"
+
+
 def test_calibration_page_exposes_simplified_anchor_table(tmp_path: Path) -> None:
     _app()
     from smartaccess.desktop.pages.calibration_page import CalibrationPage
 
-    page = CalibrationPage(_empty_facade(tmp_path))
+    facade = _ai_profile_facade(tmp_path)
+    facade.set_ai_profile_preference(AI_PROFILE_DEVICE_ONBOARDING, "deepseek")
+    page = CalibrationPage(facade)
     page._insert_anchor_row(name="status_button", roi_name="status_button", action="click")
 
     headers = [
@@ -261,8 +306,54 @@ def test_calibration_page_exposes_simplified_anchor_table(tmp_path: Path) -> Non
     action_combo = page._anchor_table.cellWidget(0, 2)
     actions = [action_combo.itemData(i) for i in range(action_combo.count())]
     assert actions == ["click", "type", "hotkey", "press_enter"]
-    assert page._ai_base_url.text()
-    assert page._ai_model.text()
+    assert not hasattr(page, "_ai_profile")
+    assert page._device_onboarding_ai_profile_id() == "codex"
+
+
+def test_calibration_page_explains_codex_503_error() -> None:
+    from smartaccess.desktop.pages.calibration_page import CalibrationPage
+
+    message = CalibrationPage._friendly_ai_error(
+        RuntimeError(
+            "Codex anchor generation failed: HTTP 503: "
+            "Service temporarily unavailable | api_error"
+        )
+    )
+
+    assert "Codex 服务临时不可用" in message
+    assert "HTTP 503" in message
+
+
+def test_right_context_panel_persists_ai_profile_preferences(tmp_path: Path) -> None:
+    _app()
+    from smartaccess.desktop.shell.main_window import MainWindow
+    from PyQt6.QtWidgets import QLabel
+
+    facade = _ai_profile_facade(tmp_path)
+    window = MainWindow(facade)
+
+    assert window._right._workflow_ai_profile.currentData() == "codex"
+    assert window._right._device_ai_profile.currentData() == "codex"
+    assert not window._right._device_ai_profile.isEnabled()
+    assert window._right._device_ai_profile.findData("deepseek") == -1
+    labels = [label.text() for label in window._right.assistant.findChildren(QLabel)]
+    assert "配置工作流模型" in labels
+    assert "设备接入模型选择" in labels
+    assert labels.index("设备接入模型选择") < labels.index("配置工作流模型")
+    assistant_text = "\n".join(labels)
+    assert "接入模型:" not in assistant_text
+    assert "状态:" not in assistant_text
+    assert "提供方:" not in assistant_text
+    assert "Configured" not in assistant_text
+    assert "base_url" not in assistant_text
+
+    window._right._workflow_ai_profile.setCurrentIndex(
+        window._right._workflow_ai_profile.findData("deepseek")
+    )
+
+    assert facade.ai_profile_for_purpose(AI_PROFILE_WORKFLOW) == "deepseek"
+    assert facade.ai_profile_for_purpose(AI_PROFILE_DEVICE_ONBOARDING) == "codex"
+    assert (tmp_path / "config" / "app_settings.json").exists()
 
 
 def test_monitoring_audit_card_shows_strategy_and_measurement() -> None:

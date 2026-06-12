@@ -32,6 +32,7 @@ from smartaccess.runtime.application import (
     RunSessionService,
     TemplateService,
     WorkflowService,
+    WorkspaceSettingsStore,
     WorkspaceService,
 )
 from smartaccess.runtime.application.ai_runtime_store import AIRuntimeStore
@@ -108,6 +109,7 @@ def build_runtime_facade(
     vision = _build_vision(settings, mode=vision_provider, workspace_dir=workspace_dir)
     platform = _build_platform(settings, mode=platform_provider)
     artifact_store = FileArtifactStore(workspace_dir)
+    workspace_settings = WorkspaceSettingsStore(workspace_dir=workspace_dir)
     draft_generator = _build_workflow_generator(settings)
     instrument_draft_generator = _build_instrument_profile_generator(settings)
     ai_store = AIRuntimeStore(workspace_dir)
@@ -150,30 +152,28 @@ def build_runtime_facade(
         observer=Observer(vision),
         recovery=RecoveryEngine(),
         ai_assistant_status=_build_ai_status(settings),
+        workspace_settings=workspace_settings,
     )
 
 
 def _build_ai_status(settings: AppSettings) -> AIAssistantStatus:
-    provider = _active_ai_provider(settings)
-    if provider and settings.ai_configured:
+    active_profile = settings.ai_active_profile_config
+    if active_profile and active_profile.configured:
         return AIAssistantStatus(
-            provider=_provider_label(provider),
-            model=settings.ai_model,
+            provider=_provider_label(active_profile.provider),
+            model=active_profile.model,
             status="Configured",
-            detail=f"base_url={settings.ai_base_url}",
-        )
-    if settings.workflow_generator_provider == "deepseek" and settings.deepseek_configured:
-        return AIAssistantStatus(
-            provider="DeepSeek",
-            model=settings.deepseek_model,
-            status="Configured",
-            detail=f"base_url={settings.deepseek_base_url}",
+            detail=f"base_url={active_profile.base_url}",
+            active_profile=active_profile.profile_id,
+            profiles=tuple(settings.ai_profile_public_options()),
         )
     return AIAssistantStatus(
         provider="Template",
         model="Built-in template rules",
         status="Local template",
         detail="No online model configured; using local draft rules.",
+        active_profile=settings.ai_active_profile,
+        profiles=tuple(settings.ai_profile_public_options()),
     )
 
 
@@ -200,70 +200,57 @@ def _build_platform(settings: AppSettings, *, mode: str):
 
 
 def _build_workflow_generator(settings: AppSettings):
-    provider = _active_ai_provider(settings)
-    if provider and settings.ai_api_key:
-        if provider == "deepseek":
+    active_profile = settings.ai_active_profile_config
+    if active_profile and active_profile.configured:
+        if active_profile.provider.lower() == "deepseek":
             return DeepSeekWorkflowGenerator(
-                api_key=settings.ai_api_key,
-                base_url=settings.ai_base_url,
-                model=settings.ai_model,
-                timeout_seconds=settings.ai_timeout_seconds,
-                user_agent=settings.ai_user_agent,
+                api_key=active_profile.api_key or "",
+                base_url=active_profile.base_url,
+                model=active_profile.model,
+                timeout_seconds=active_profile.timeout_seconds,
+                user_agent=active_profile.user_agent,
+                profiles=settings.ai_profiles,
+                active_profile=active_profile.profile_id,
             )
         return OpenAICompatibleWorkflowGenerator(
-            api_key=settings.ai_api_key,
-            base_url=settings.ai_base_url,
-            model=settings.ai_model,
-            provider_name=_provider_label(provider),
-            timeout_seconds=settings.ai_timeout_seconds,
-            user_agent=settings.ai_user_agent,
-        )
-    if settings.workflow_generator_provider == "deepseek" and settings.deepseek_api_key:
-        return DeepSeekWorkflowGenerator(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
-            model=settings.deepseek_model,
-            timeout_seconds=settings.deepseek_timeout_seconds,
-            user_agent=settings.ai_user_agent,
+            api_key=active_profile.api_key or "",
+            base_url=active_profile.base_url,
+            model=active_profile.model,
+            provider_name=_provider_label(active_profile.provider),
+            timeout_seconds=active_profile.timeout_seconds,
+            user_agent=active_profile.user_agent,
+            profiles=settings.ai_profiles,
+            active_profile=active_profile.profile_id,
+            wire_api=active_profile.wire_api,
         )
     return TemplatePromptWorkflowGenerator()
 
 
 def _build_instrument_profile_generator(settings: AppSettings):
-    provider = _active_ai_provider(settings)
-    if provider and settings.ai_api_key:
-        if provider == "deepseek":
+    active_profile = settings.ai_active_profile_config
+    if active_profile and active_profile.configured:
+        if active_profile.provider.lower() == "deepseek":
             return DeepSeekInstrumentProfileGenerator(
-                api_key=settings.ai_api_key,
-                base_url=settings.ai_base_url,
-                model=settings.ai_model,
-                timeout_seconds=settings.ai_timeout_seconds,
-                user_agent=settings.ai_user_agent,
+                api_key=active_profile.api_key or "",
+                base_url=active_profile.base_url,
+                model=active_profile.model,
+                timeout_seconds=active_profile.timeout_seconds,
+                user_agent=active_profile.user_agent,
+                profiles=settings.ai_profiles,
+                active_profile=active_profile.profile_id,
             )
         return OpenAICompatibleInstrumentProfileGenerator(
-            api_key=settings.ai_api_key,
-            base_url=settings.ai_base_url,
-            model=settings.ai_model,
-            provider_name=_provider_label(provider),
-            timeout_seconds=settings.ai_timeout_seconds,
-            user_agent=settings.ai_user_agent,
-        )
-    if settings.workflow_generator_provider == "deepseek" and settings.deepseek_api_key:
-        return DeepSeekInstrumentProfileGenerator(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
-            model=settings.deepseek_model,
-            timeout_seconds=settings.deepseek_timeout_seconds,
-            user_agent=settings.ai_user_agent,
+            api_key=active_profile.api_key or "",
+            base_url=active_profile.base_url,
+            model=active_profile.model,
+            provider_name=_provider_label(active_profile.provider),
+            timeout_seconds=active_profile.timeout_seconds,
+            user_agent=active_profile.user_agent,
+            profiles=settings.ai_profiles,
+            active_profile=active_profile.profile_id,
+            wire_api=active_profile.wire_api,
         )
     return None
-
-
-def _active_ai_provider(settings: AppSettings) -> str | None:
-    provider = (settings.ai_provider or "").strip().lower()
-    if provider in {"", "template", "stub", "local"}:
-        return None
-    return provider
 
 
 def _provider_label(provider: str) -> str:
@@ -278,11 +265,9 @@ def _provider_label(provider: str) -> str:
 
 
 def _llm_provider_label(settings: AppSettings) -> str:
-    provider = _active_ai_provider(settings)
-    if provider and settings.ai_configured:
-        return f"{_provider_label(provider)} / {settings.ai_model}"
-    if settings.workflow_generator_provider == "deepseek" and settings.deepseek_configured:
-        return f"DeepSeek / {settings.deepseek_model}"
+    active_profile = settings.ai_active_profile_config
+    if active_profile and active_profile.configured:
+        return f"{_provider_label(active_profile.provider)} / {active_profile.model}"
     return "Template"
 
 

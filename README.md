@@ -31,6 +31,18 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 - 数据统一回传：运行结果从 `run_trace.jsonl` 的步骤级事实提取并上传到 SpecLabOS。
 - 可追溯和可扩展：以模板、契约和评测用例支撑后续仪器扩展。
 
+## 双层结构化架构
+
+SmartAccess 采用“AI 认知 + 工程落地”的双层结构化架构，不把大模型能力停留在对界面的单次识别上，而是将 AI 对仪器操作的理解能力、设备使用记忆的持续积累能力，以及软件工程中的标准接口、固定流程、实时通讯和审计机制组织成一个可交付系统。
+
+第一层是 **AI 理解层**。这一层充分发挥多模态大模型对界面截图、按钮语义、操作意图、历史经验和异常现象的综合理解能力，通过持续积累设备使用记忆，逐步形成面向不同仪器、不同上位机软件和不同实验场景的通用操作认知框架。它关注的是“看懂界面、理解任务、识别关键控件、推理下一步动作、判断执行反馈”，用于解决跨设备、跨场景、跨软件版本的识别适配问题。
+
+第二层是 **软件工程层**。这一层把 AI 给出的理解结果转化为稳定、可执行、可审计的工程资产：通过工具化调用接口封装点击、输入、快捷键、截图和 OCR 等动作；通过标准化识别方法沉淀锚点、观测区域和文本匹配规则；通过固定编排工作流约束执行顺序、等待策略和异常处理；通过实时通讯与平台同步机制回传执行状态、运行 trace 和结构化结果。它关注的是“能不能稳定运行、能不能复用、能不能追溯、能不能交付到真实实验室环境”。
+
+两层之间不是简单串联，而是相互增强：AI 理解层负责把复杂、异构、变化频繁的仪器界面转化为可解释的操作意图和锚点建议；软件工程层负责把这些建议固化为 `anchors.yaml`、`workflow.yaml`、`run_trace.jsonl` 和平台适配契约。最终系统实现了 AI 理解能力与软件工程能力的深度融合，形成一个非侵入式、可复用、可扩展的智能仪器监控与信息化系统。
+
+从产品形态上看，SmartAccess 的目标不是替代仪器厂商软件，而是在不改造原有上位机、不强依赖 SDK/API、不破坏实验人员既有习惯的前提下，为科学仪器增加一层“可观察、可执行、可回放、可接入平台”的智能外骨骼。
+
 ## 核心文档
 
 - [产品需求文档](docs/PRD.zh-CN.md)
@@ -103,13 +115,36 @@ SmartAccess 是一个面向科学仪器上位机软件的非侵入式实验接�
 
 ## 体系总览
 
-![SmartAccess 架构总览](docs/refer/SmartAccess.png)
+### 1. 产品总览海报
 
-上图中的关键关系已经在 [系统架构总览](docs/architecture/system-overview.md) 中文字化，重点包括：
+![SmartAccess 产品总览海报](docs/refer/smartaccess-product-overview.png)
 
-- `Action Flow`：用户意图经 AI Agent 生成线性工作流，再驱动 UI 自动化执行。
-- `Data Flow`：上位机状态、OCR 事实、运行日志、截图路径回流到 SmartAccess 和 SpecLabOS。
-- `API Flow`：SmartAccess 通过 FastAPI 适配层与 SpecLabOS 双向同步任务、模板和执行状态。
+### 2. 双层架构图
+
+![SmartAccess 双层结构化架构](docs/refer/smartaccess-two-layer-architecture.png)
+
+
+### 3. 非侵入式接入流程图
+
+![SmartAccess 非侵入式接入流程](docs/refer/smartaccess-noninvasive-workflow.png)
+
+
+### 4. 技术闭环图
+
+![SmartAccess 执行观测审计回传闭环](docs/refer/smartaccess-runtime-loop.png)
+
+### 5. 桌面端功能分区图
+
+![SmartAccess 桌面端功能分区](docs/refer/smartaccess-desktop-workbench.png)
+
+### 6. 平台集成场景图
+
+![SmartAccess 与 SpecLabOS 集成](docs/refer/smartaccess-speclabos-integration.png)
+
+### 7. 设备记忆与复用图
+
+![SmartAccess 设备使用记忆驱动复用](docs/refer/smartaccess-device-memory-reuse.png)
+
 
 ## AI 组件分层
 
@@ -152,17 +187,18 @@ copy .envexample .env
 - `SMARTACCESS_WORKSPACE_DIR`：运行时工作区，默认 `workspace`。
 - `SMARTACCESS_VISION_PROVIDER`：桌面真实 OCR 使用 `local`，测试可用 `stub`。
 - `SMARTACCESS_UDP_HOST` / `SMARTACCESS_UDP_PORT`：Edge API 下发 UDP 执行信号的目标。
-- `SMARTACCESS_WORKFLOW_GENERATOR`、`DEEPSEEK_API_KEY`：配置在线工作流/锚点生成能力。
-- `SMARTACCESS_AI_PROVIDER` / `SMARTACCESS_AI_BASE_URL` / `SMARTACCESS_AI_MODEL` / `SMARTACCESS_AI_API_KEY`：OpenAI-compatible 多模型配置。
-- `SMARTACCESS_AI_TIMEOUT_SECONDS`：AI 请求超时，单位秒。
+- `SMARTACCESS_AI_PROFILES` / `SMARTACCESS_AI_ACTIVE_PROFILE`：OpenAI-compatible 多模型档案列表与默认档案。
+- `SMARTACCESS_AI_PROFILE_{ID}_PROVIDER` / `SMARTACCESS_AI_PROFILE_{ID}_BASE_URL` / `SMARTACCESS_AI_PROFILE_{ID}_MODEL` / `SMARTACCESS_AI_PROFILE_{ID}_API_KEY`：单个模型档案配置。
+- `SMARTACCESS_AI_PROFILE_{ID}_TIMEOUT_SECONDS`：单个模型档案的请求超时，单位秒。
+- `SMARTACCESS_AI_PROFILE_{ID}_WIRE_API`：模型网关接口类型，Codex/Responses 网关使用 `responses`，DeepSeek 等 Chat Completions 兼容网关使用 `chat_completions`。
 - `SMARTACCESS_AI_USER_AGENT`：AI 请求头中的 `User-Agent`，用于兼容部分网关或 Cloudflare 策略。
 
 ### AI 配置与接入
 
 - 工作流草稿生成和设备接入页的 AI 辅助接入都已统一到 OpenAI-compatible 生成链路。
-- 桌面端设备接入页允许临时切换 `AI provider`、`AI base URL`、`AI model`，但不会把 API key 写入 workspace。
+- 桌面端右侧工具栏集中配置 AI profile：可分别选择“配置工作流”和“设备接入”使用的模型档案，选择会保存到 `workspace/config/app_settings.json`；工作流页和设备接入页内不再出现模型切换控件。
+- 每个模型档案使用自己的 API key，切换 Codex / DeepSeek 时不会复用另一个模型的 key。
 - 设备接入页发起 AI 辅助接入时，会把当前窗口截图作为多模态上下文一并发送，用于生成简化后的 `anchors.yaml` 建议。
-- `DEEPSEEK_*` 旧配置仍兼容；当 `SMARTACCESS_AI_*` 存在时优先使用新配置。
 - 启动时会自动读取项目根目录 `.env`；系统环境变量仍优先于 `.env`。
 
 ### Cloudflare / 网关限制

@@ -93,7 +93,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._nav_dock)
 
         # --- right toolbar dock ------------------------------------------ #
-        self._right = RightContextPanel()
+        self._right = RightContextPanel(facade)
         self._right_dock = self._make_dock("工具栏", self._right, width=336)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._right_dock)
 
@@ -220,24 +220,9 @@ class MainWindow(QMainWindow):
             f"运行记录: {len(projection.recent_runs)} 条",
             f"待处理异常: {len(projection.incidents)} 条",
         ]
-        ai_status = self._facade.ai_assistant_status()
-        assistant = [
-            f"接入模型: {ai_status.model}",
-            f"状态: {ai_status.status}",
-            f"提供方: {ai_status.provider}",
-            ai_status.detail,
-        ]
-        if row == 0:
-            assistant.append("主入口会用颜色区分当前卡在什么阶段，并给出下一步跳转。")
-        elif row == 2:
-            assistant.append("生成工作流时会带入已校准锚点、动作绑定、安全字段和当前设备工具。")
-        elif row == 1:
-            assistant.append("校准后会保存 ROI 坐标与归一化坐标，供运行时定位和 OCR 使用。")
-        elif row == 5:
-            assistant.append("运行概览页保留设备、模板、异常和最近运行的运营视角。")
         self._right.show_context(
             details=details,
-            assistant=assistant,
+            assistant=[],
             risk=risk_items,
             audit=audit,
         )

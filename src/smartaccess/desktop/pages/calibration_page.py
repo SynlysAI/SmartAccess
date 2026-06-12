@@ -39,6 +39,7 @@ from smartaccess.desktop.shell import theme as t
 from smartaccess.desktop.viewmodels.calibration_vm import CalibrationViewModel
 from smartaccess.desktop.widgets.cards import Card, hint_label, page_header, section_title
 from smartaccess.desktop.widgets.roi_canvas import RoiCanvas
+from smartaccess.runtime.application.workspace_settings import AI_PROFILE_DEVICE_ONBOARDING
 
 _ALL_ACTIONS = [
     ("click", "单击", "在锚点中心点击一次。"),
@@ -171,21 +172,6 @@ class CalibrationPage(QWidget):
         self._title.setPlaceholderText("选中窗口后可自动填入标题关键字")
         form.addRow("设备 ID *", self._device_id)
         form.addRow("窗口标题包含 *", self._title)
-        ai_options = self._vm.ai_model_options()
-        self._ai_provider = QComboBox()
-        for provider in ("Codex", "OpenAI-compatible", "OpenAI", "DeepSeek"):
-            self._ai_provider.addItem(provider, provider.lower())
-        configured_provider = ai_options.get("provider") or "Codex"
-        provider_index = self._ai_provider.findText(configured_provider)
-        if provider_index < 0:
-            self._ai_provider.addItem(configured_provider, configured_provider.lower())
-            provider_index = self._ai_provider.findText(configured_provider)
-        self._ai_provider.setCurrentIndex(max(0, provider_index))
-        self._ai_base_url = QLineEdit(ai_options.get("base_url") or "https://fufei.mossx.ai/v1")
-        self._ai_model = QLineEdit(ai_options.get("model") or "GPT-5.4")
-        form.addRow("AI provider", self._ai_provider)
-        form.addRow("AI base URL", self._ai_base_url)
-        form.addRow("AI model", self._ai_model)
         layout.addLayout(form)
 
         self._actions: dict[str, QCheckBox] = {}
@@ -467,9 +453,7 @@ class CalibrationPage(QWidget):
             "capture_height": height,
             "actions": list(_DEFAULT_ACTIONS),
             "anchors": self._collect_anchors_for_context(),
-            "ai_provider": self._ai_provider.currentText().strip(),
-            "ai_base_url": self._ai_base_url.text().strip(),
-            "ai_model": self._ai_model.text().strip(),
+            "ai_profile_id": self._device_onboarding_ai_profile_id(),
         }
         if self._latest_capture_bytes:
             context["screenshot"] = {
@@ -498,6 +482,9 @@ class CalibrationPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             self._apply_profile_draft(profile)
 
+    def _device_onboarding_ai_profile_id(self) -> str:
+        return self._vm.ai_profile_for_purpose(AI_PROFILE_DEVICE_ONBOARDING)
+
     @staticmethod
     def _friendly_ai_error(exc: Exception) -> str:
         text = str(exc)
@@ -506,6 +493,12 @@ class CalibrationPage(QWidget):
             return (
                 "AI 辅助接入建议暂时不可用：模型返回的锚点字段不完整。\n"
                 "请继续手动标注动作区域和观察区域，或调整提示让 AI 只给出锚点名称建议。"
+            )
+        if "Codex" in text and "HTTP 503" in text:
+            return (
+                "AI 辅助接入建议暂时不可用：Codex 服务临时不可用。\n"
+                f"{text}\n"
+                "请稍后重试或检查 Codex 网关状态；也可以继续手动校准。"
             )
         return f"AI 辅助接入建议暂时不可用：{text}"
 
