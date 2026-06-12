@@ -25,6 +25,7 @@ from .run_session_service import RunSessionService
 from .template_service import TemplateRecord, TemplateService
 from .workflow_service import StandardizationResult, WorkflowService
 from .workspace_service import DashboardProjection, WorkspaceService
+from .workspace_settings import WorkspaceSettingsStore
 
 # NOTE: RuntimeFacade is intentionally NOT imported here. It depends on the
 # orchestration package, which in turn imports these application submodules;
@@ -60,4 +61,5 @@ __all__ = [
     "WorkflowDraftGenerator",
     "WorkflowService",
     "WorkspaceService",
+    "WorkspaceSettingsStore",
 ]
