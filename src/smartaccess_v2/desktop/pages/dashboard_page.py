@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from smartaccess_v2.desktop.widgets.cards import create_card
+from smartaccess_v2.desktop.widgets.table_style import configure_data_table
 from smartaccess_v2.desktop.viewmodels.dashboard_vm import DashboardViewModel
 from smartaccess_v2.runtime.application.facade import RuntimeFacade
 
@@ -33,24 +35,29 @@ class DashboardPage(QWidget):
         title.setObjectName("PageTitle")
         root.addWidget(title)
 
+        stats_card, stats_layout = create_card(margins=(14, 14, 14, 14), spacing=10)
         self._stats = QGridLayout()
-        root.addLayout(self._stats)
+        stats_layout.addLayout(self._stats)
+        root.addWidget(stats_card)
+
         refresh_btn = QPushButton("刷新")
         refresh_btn.setObjectName("Secondary")
         refresh_btn.clicked.connect(self._refresh)
         root.addWidget(refresh_btn)
 
+        runs_card, runs_layout = create_card(margins=(0, 0, 0, 0), spacing=0)
         self._runs = QTableWidget(0, 3)
         self._runs.setHorizontalHeaderLabels(("会话", "工作流", "状态"))
-        self._runs.verticalHeader().setVisible(False)
-        self._runs.horizontalHeader().setStretchLastSection(True)
-        root.addWidget(self._runs, 1)
+        configure_data_table(self._runs, row_height=42, stretch_last=True)
+        runs_layout.addWidget(self._runs)
+        root.addWidget(runs_card, 1)
 
+        incidents_card, incidents_layout = create_card(margins=(0, 0, 0, 0), spacing=0)
         self._incidents = QTableWidget(0, 4)
         self._incidents.setHorizontalHeaderLabels(("异常", "会话", "类型", "详情"))
-        self._incidents.verticalHeader().setVisible(False)
-        self._incidents.horizontalHeader().setStretchLastSection(True)
-        root.addWidget(self._incidents, 1)
+        configure_data_table(self._incidents, row_height=42, stretch_last=True)
+        incidents_layout.addWidget(self._incidents)
+        root.addWidget(incidents_card, 1)
         self._refresh()
 
     def closeEvent(self, event) -> None:  # noqa: N802
