@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -162,9 +163,18 @@ class MainWindow(QMainWindow):
             导航列表部件。
         """
 
-        self._nav.setFixedWidth(232)
-        for title, hint in _NAV_ITEMS:
+        self._nav.setFixedWidth(248)
+        self._nav.setIconSize(QSize(18, 18))
+        icons = [
+            QStyle.StandardPixmap.SP_ComputerIcon,
+            QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            QStyle.StandardPixmap.SP_MediaPlay,
+            QStyle.StandardPixmap.SP_DirIcon,
+            QStyle.StandardPixmap.SP_FileDialogInfoView,
+        ]
+        for index, (title, hint) in enumerate(_NAV_ITEMS):
             item = QListWidgetItem(title)
+            item.setIcon(self.style().standardIcon(icons[index]))
             item.setToolTip(hint)
             self._nav.addItem(item)
         return self._nav
@@ -179,12 +189,9 @@ class MainWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("RightPanel")
         panel.setFixedWidth(320)
-        panel.setStyleSheet(
-            "#RightPanel{background:#ffffff;border-left:1px solid #dbe2ee;}"
-        )
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
         title = QLabel("上下文")
         title.setObjectName("PageTitle")
         layout.addWidget(title)
