@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from smartaccess_v2.bootstrap.runtime import build_runtime_facade
+from smartaccess_v2.bootstrap.runtime import (
+    build_edge_app,
+    build_experiment_service,
+    build_runtime_facade,
+    serve_edge_api,
+)
 from smartaccess_v2.shared.config.settings import AppSettings
 from smartaccess_v2.shared.logging import configure_logging
 
