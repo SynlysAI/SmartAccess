@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from smartaccess_v2.desktop.widgets.cards import create_card
+from smartaccess_v2.desktop.widgets.table_style import configure_data_table
 from smartaccess_v2.desktop.viewmodels.template_vm import TemplateViewModel
 from smartaccess_v2.runtime.application.facade import RuntimeFacade
 from smartaccess_v2.runtime.application.template_service import TemplateRecord
@@ -38,15 +40,18 @@ class TemplatePage(QWidget):
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(12)
         root.addLayout(self._build_header())
-        root.addLayout(self._build_filters())
 
+        filter_card, filter_layout = create_card(margins=(14, 14, 14, 14), spacing=10)
+        filter_layout.addLayout(self._build_filters())
+        root.addWidget(filter_card)
+
+        table_card, table_layout = create_card(margins=(0, 0, 0, 0), spacing=0)
         self._table = QTableWidget(0, len(self.HEADERS))
         self._table.setHorizontalHeaderLabels(self.HEADERS)
-        self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        configure_data_table(self._table, row_height=42, stretch_last=True)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.horizontalHeader().setStretchLastSection(True)
-        root.addWidget(self._table, 1)
+        table_layout.addWidget(self._table)
+        root.addWidget(table_card, 1)
         self._reload_instruments()
         self._reload_workflows()
         self._refresh()
