@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
-    QHeaderView,
     QLineEdit,
     QPushButton,
     QTableWidget,
@@ -19,6 +18,11 @@ from PyQt6.QtWidgets import (
 )
 
 from smartaccess_v2.desktop.widgets.condition_editor import ConditionEditor
+from smartaccess_v2.desktop.widgets.table_style import (
+    configure_data_table,
+    interactive_header,
+    set_embedded_editor_height,
+)
 
 ACTION_OPTIONS = [
     ("click", "单击"),
@@ -57,11 +61,8 @@ class WorkflowStepTable(QTableWidget):
         self.setHorizontalHeaderLabels(
             ["步骤 ID", "动作", "锚点", "值", "等待", "OCR 条件", "确认", ""]
         )
-        self.verticalHeader().setVisible(False)
-        self.verticalHeader().setDefaultSectionSize(46)
-        header = self.horizontalHeader()
-        for column in range(self.columnCount()):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        configure_data_table(self, row_height=46)
+        interactive_header(self)
         self.setColumnWidth(0, 160)
         self.setColumnWidth(1, 92)
         self.setColumnWidth(2, 150)
@@ -88,9 +89,11 @@ class WorkflowStepTable(QTableWidget):
         self.setCellWidget(row, 1, self._action_combo(step.action))
         self.setCellWidget(row, 2, self._anchor_combo(anchor_ids, step.anchor_id))
         value = QLineEdit("" if step.value is None else str(step.value))
+        set_embedded_editor_height(value)
         value.textChanged.connect(lambda _text: self.rows_changed.emit())
         self.setCellWidget(row, 3, value)
         wait = QDoubleSpinBox()
+        set_embedded_editor_height(wait)
         wait.setRange(0, 3600)
         wait.setDecimals(1)
         wait.setSingleStep(0.5)
@@ -109,6 +112,7 @@ class WorkflowStepTable(QTableWidget):
         condition.timeout_seconds.valueChanged.connect(lambda _value: self.rows_changed.emit())
         self.setCellWidget(row, 5, condition)
         confirm = QComboBox()
+        set_embedded_editor_height(confirm)
         confirm.addItem("否", False)
         confirm.addItem("是", True)
         confirm.setCurrentIndex(1 if step.requires_confirmation else 0)
@@ -150,9 +154,11 @@ class WorkflowStepTable(QTableWidget):
         self.setCellWidget(target, 1, self._action_combo("wait"))
         self.setCellWidget(target, 2, self._anchor_combo([], None))
         value = QLineEdit("")
+        set_embedded_editor_height(value)
         value.setEnabled(False)
         self.setCellWidget(target, 3, value)
         wait = QDoubleSpinBox()
+        set_embedded_editor_height(wait)
         wait.setRange(0, 3600)
         wait.setDecimals(1)
         wait.setValue(1.0)
@@ -163,6 +169,7 @@ class WorkflowStepTable(QTableWidget):
         condition.setEnabled(False)
         self.setCellWidget(target, 5, condition)
         confirm = QComboBox()
+        set_embedded_editor_height(confirm)
         confirm.addItem("否", False)
         confirm.setEnabled(False)
         self.setCellWidget(target, 6, confirm)
@@ -203,6 +210,7 @@ class WorkflowStepTable(QTableWidget):
         """创建动作下拉框。"""
 
         combo = QComboBox()
+        set_embedded_editor_height(combo)
         for key, label in ACTION_OPTIONS:
             combo.addItem(label, key)
         index = combo.findData(action)
@@ -214,6 +222,7 @@ class WorkflowStepTable(QTableWidget):
         """创建锚点下拉框。"""
 
         combo = QComboBox()
+        set_embedded_editor_height(combo)
         combo.addItem("", "")
         for item in anchor_ids:
             combo.addItem(item, item)
@@ -237,7 +246,7 @@ class WorkflowStepTable(QTableWidget):
             button = QPushButton(label)
             button.setToolTip(tooltip)
             button.setObjectName("TableDanger" if danger else "TableAction")
-            button.setFixedSize(52, 26)
+            button.setFixedSize(54, 30)
             button.clicked.connect(callback)
             layout.addWidget(button)
         return widget

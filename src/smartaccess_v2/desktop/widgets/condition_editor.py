@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QWidget
 
+from smartaccess_v2.desktop.widgets.table_style import set_embedded_editor_height
+
 
 class ConditionEditor(QWidget):
     """编辑工作流步骤 OCR 期望条件。"""
@@ -16,6 +18,8 @@ class ConditionEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self.match_mode = QComboBox()
+        self.match_mode.setObjectName("ConditionMode")
+        set_embedded_editor_height(self.match_mode)
         for key, label in [
             ("none", "无"),
             ("contains", "包含"),
@@ -25,8 +29,12 @@ class ConditionEditor(QWidget):
         ]:
             self.match_mode.addItem(label, key)
         self.expected_text = QLineEdit()
+        self.expected_text.setObjectName("ConditionText")
         self.expected_text.setPlaceholderText("期望文本")
+        set_embedded_editor_height(self.expected_text)
         self.timeout_seconds = QDoubleSpinBox()
+        self.timeout_seconds.setObjectName("ConditionTimeout")
+        set_embedded_editor_height(self.timeout_seconds)
         self.timeout_seconds.setRange(0, 3600)
         self.timeout_seconds.setDecimals(1)
         self.timeout_seconds.setSingleStep(0.5)
