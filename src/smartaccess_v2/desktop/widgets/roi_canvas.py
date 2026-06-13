@@ -10,12 +10,14 @@ from PyQt6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
+    QGraphicsTextItem,
     QGraphicsView,
     QWidget,
 )
 
 PLACEHOLDER_WIDTH = 640
 PLACEHOLDER_HEIGHT = 420
+PLACEHOLDER_TEXT_WIDTH = 260
 HANDLE_SIZE = 9.0
 ROI_COLORS = [
     ("#1f6fd6", "#1f6fd6"),
@@ -202,11 +204,11 @@ class RoiCanvas(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._image_item: QGraphicsPixmapItem | None = None
         self._placeholder: QGraphicsRectItem | None = None
-        self._placeholder_text: QGraphicsSimpleTextItem | None = None
+        self._placeholder_text: QGraphicsTextItem | None = None
         self._rois: dict[str, _RoiItem] = {}
         self._color_index = 0
         self._source_size = (PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
-        self._show_placeholder("扫描窗口并捕获截图后，在此编辑 ROI")
+        self._show_placeholder("截图后在此编辑 ROI")
 
     def load_image(self, data: bytes) -> None:
         """加载截图背景。
@@ -386,9 +388,12 @@ class RoiCanvas(QGraphicsView):
         )
         frame.setZValue(-1)
         self._placeholder = frame
-        text = self._scene.addSimpleText(message)
-        text.setBrush(QBrush(QColor("#526179")))
-        text.setFont(QFont("Segoe UI", 11))
-        text.setPos(20, PLACEHOLDER_HEIGHT / 2 - 12)
+        text = QGraphicsTextItem(message)
+        text.setDefaultTextColor(QColor("#526179"))
+        text.setFont(QFont("Microsoft YaHei", 11))
+        text.setTextWidth(PLACEHOLDER_TEXT_WIDTH)
+        text_rect = text.boundingRect()
+        text.setPos(24, PLACEHOLDER_HEIGHT / 2 - text_rect.height() / 2)
+        self._scene.addItem(text)
         self._placeholder_text = text
         self._scene.setSceneRect(QRectF(0, 0, PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT))
