@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from smartaccess_v2.desktop.viewmodels.workflow_vm import WorkflowViewModel
+from smartaccess_v2.desktop.widgets.cards import create_card
 from smartaccess_v2.desktop.widgets.workflow_step_table import StepRow, WorkflowStepTable
 from smartaccess_v2.runtime.application.facade import RuntimeFacade
 from smartaccess_v2.shared.contracts.workflow import (
@@ -102,11 +103,8 @@ class WorkflowPage(QWidget):
     def _build_left_panel(self) -> QWidget:
         """构建左侧工作流列表。"""
 
-        panel = QWidget()
-        panel.setMinimumWidth(300)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 12, 0)
-        layout.setSpacing(8)
+        panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
+        panel.setMinimumWidth(310)
         label = QLabel("工作流")
         label.setObjectName("PageHint")
         layout.addWidget(label)
@@ -120,10 +118,7 @@ class WorkflowPage(QWidget):
     def _build_editor(self) -> QWidget:
         """构建右侧步骤编辑区。"""
 
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        panel, layout = create_card(margins=(14, 14, 14, 14), spacing=12)
 
         form = QFormLayout()
         self._workflow_id = QLineEdit()
@@ -145,6 +140,7 @@ class WorkflowPage(QWidget):
         layout.addLayout(form)
 
         self._ai_prompt = QTextEdit()
+        self._ai_prompt.setObjectName("PromptEditor")
         self._ai_prompt.setPlaceholderText("输入实验步骤或自动化目标，点击 AI生成")
         self._ai_prompt.setMaximumHeight(92)
         layout.addWidget(self._ai_prompt)
@@ -152,6 +148,7 @@ class WorkflowPage(QWidget):
         self._steps = WorkflowStepTable()
         layout.addWidget(self._steps, 1)
         self._result = QTextEdit()
+        self._result.setObjectName("ResultEditor")
         self._result.setReadOnly(True)
         self._result.setMaximumHeight(120)
         layout.addWidget(self._result)
