@@ -362,6 +362,88 @@ class RuntimeFacade:
             force=force,
         )
 
+    def delete_template_version_cloud_first(
+        self,
+        template_id: str,
+        template_version: str,
+        *,
+        force: bool = False,
+    ) -> TemplateRecord:
+        """先删云端再删本地模板版本。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+            force: 是否强制删除发布版本。
+
+        Returns:
+            已删除的模板记录。
+        """
+
+        return self._templates.delete_version_cloud_first(
+            template_id,
+            template_version,
+            force=force,
+        )
+
+    def update_template_version(
+        self,
+        template_id: str,
+        template_version: str,
+        *,
+        anchor_profile: str | None = None,
+    ) -> TemplateRecord:
+        """更新模板版本元数据。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+            anchor_profile: 新设备锚点配置 ID。
+
+        Returns:
+            更新后的模板记录。
+        """
+
+        return self._templates.update_version_metadata(
+            template_id,
+            template_version,
+            anchor_profile=anchor_profile,
+        )
+
+    def rollback_template(
+        self,
+        template_id: str,
+        template_version: str,
+    ) -> TemplateRecord:
+        """回滚到指定模板版本。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+
+        Returns:
+            回滚后的模板记录。
+        """
+
+        return self._templates.rollback(template_id, template_version)
+
+    def fetch_template(
+        self,
+        template_id: str,
+        template_version: str,
+    ) -> WorkflowContract:
+        """读取本地模板工作流。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+
+        Returns:
+            工作流契约。
+        """
+
+        return self._templates.fetch(template_id, template_version)
+
     def sync_platform_outbox(self):
         """同步平台 outbox。"""
 

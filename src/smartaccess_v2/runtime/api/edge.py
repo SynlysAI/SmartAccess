@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
-from typing import Any
+from fastapi import APIRouter, FastAPI, HTTPException
 
-from fastapi import APIRouter, FastAPI
-
+from smartaccess_v2.runtime.adapters import (
+    EchoInstructionGenerator,
+    StubProcessExecutorClient,
+    UdpProcessExecutorClient,
+)
+from smartaccess_v2.runtime.application.experiment_service import ExperimentService
 from smartaccess_v2.runtime.application.facade import RuntimeFacade
+from smartaccess_v2.runtime.domain.experiment import (
+    InstructionGenerationError,
+    NotReadyToExecuteError,
+    PreparationInProgressError,
+    ProcessExecutionError,
+)
 from smartaccess_v2.shared.contracts.edge_api import (
     ApiResponse,
     ExecuteRequest,
@@ -17,161 +25,108 @@ from smartaccess_v2.shared.contracts.edge_api import (
     TriggerGenerateRequest,
 )
 
-SIGNAL_TRIGGER = "generate_instruction"
-SIGNAL_EXECUTE = "execute_process"
 
-
-class EdgeApiState:
-    """Edge API 进程内状态。"""
-
-    def __init__(self, facade: RuntimeFacade) -> None:
-        """初始化 API 状态。
-
-        Args:
-            facade: 运行时门面。
-        """
-
-        self.facade = facade
-        self.last_request_id: str | None = None
-        self.last_plan_updated_at: str | None = None
-        self.last_triggered_at: str | None = None
-        self.instructions: list[str] = []
-        self.status = "idle"
-        self.detail = "等待任务"
-        self.current_command = ""
-
-
-def create_edge_app(facade: RuntimeFacade) -> FastAPI:
+def create_edge_app(service: ExperimentService | RuntimeFacade) -> FastAPI:
     """创建独立 Edge API 应用。
 
     Args:
-        facade: 运行时门面。
+        service: 实验触发服务，或用于兼容旧 v2 调用的运行时门面。
 
     Returns:
         FastAPI 应用。
     """
 
-    app = FastAPI(title="SmartAccess Edge API")
-    app.include_router(create_edge_router(facade))
+    app = FastAPI(
+        title="SmartAccess Edge API",
+        version="0.1.0",
+        description="设备侧实验触发、执行与状态查询接口",
+    )
+    app.include_router(create_edge_router(service))
     return app
 
 
-def create_edge_router(facade: RuntimeFacade) -> APIRouter:
+def create_edge_router(service: ExperimentService | RuntimeFacade) -> APIRouter:
     """创建 Edge API 路由。
 
     Args:
-        facade: 运行时门面。
+        service: 实验触发服务，或用于兼容旧 v2 调用的运行时门面。
 
     Returns:
         FastAPI 路由。
     """
 
     router = APIRouter()
-    state = EdgeApiState(facade)
+    experiment_service = _coerce_service(service)
 
     @router.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         """返回服务健康状态。"""
 
-        return HealthResponse(
-            ok=True,
-            service="SmartAccess",
-            timestamp=_now(),
-            udp_target=_udp_target(facade),
-        )
+        return experiment_service.health()
 
     @router.post("/api/v1/experiment/trigger", response_model=ApiResponse)
     def trigger(request: TriggerGenerateRequest) -> ApiResponse:
         """接收实验计划并生成本地执行指令。"""
 
-        request_id = request.request_id or _request_id()
-        state.last_request_id = request_id
-        state.last_plan_updated_at = _now()
-        state.status = "generated"
-        state.detail = "实验计划已接收"
-        state.instructions = _instructions_from_plan(request.experiment_plan)
-        return ApiResponse(
-            ok=True,
-            message="实验计划已接收",
-            request_id=request_id,
-            signal=SIGNAL_TRIGGER,
-            timestamp=_now(),
-            instructions=state.instructions,
-        )
+        try:
+            return experiment_service.trigger(request)
+        except PreparationInProgressError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except InstructionGenerationError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @router.post("/api/v1/experiment/execute", response_model=ApiResponse)
-    def execute(request: ExecuteRequest) -> ApiResponse:
+    def execute(request: ExecuteRequest | None = None) -> ApiResponse:
         """触发执行最近生成的指令。"""
 
-        request_id = request.request_id or state.last_request_id or _request_id()
-        state.last_request_id = request_id
-        state.last_triggered_at = _now()
-        state.status = "executing"
-        state.detail = "执行信号已发送"
-        state.current_command = state.instructions[0] if state.instructions else ""
-        return ApiResponse(
-            ok=True,
-            message="执行信号已发送",
-            request_id=request_id,
-            signal=SIGNAL_EXECUTE,
-            timestamp=_now(),
-            instructions=state.instructions or None,
-        )
+        try:
+            return experiment_service.execute(request)
+        except NotReadyToExecuteError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ProcessExecutionError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @router.get("/api/v1/experiment/status", response_model=StatusResponse)
     def status() -> StatusResponse:
         """返回最近一次实验触发状态。"""
 
-        return StatusResponse(
-            ok=True,
-            request_id=state.last_request_id,
-            status=state.status,
-            detail=state.detail,
-            current_command=state.current_command,
-            last_plan_updated_at=state.last_plan_updated_at,
-            last_triggered_at=state.last_triggered_at,
-            generated_at=_now(),
-        )
+        try:
+            return experiment_service.status()
+        except ProcessExecutionError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return router
 
 
-def _instructions_from_plan(experiment_plan: str) -> list[str]:
-    """把实验计划切分成基础指令列表。
+def _coerce_service(service: ExperimentService | RuntimeFacade) -> ExperimentService:
+    """把兼容输入转换为实验触发服务。
 
     Args:
-        experiment_plan: 实验计划文本。
+        service: 实验触发服务或运行时门面。
 
     Returns:
-        指令列表。
+        实验触发服务。
     """
 
-    lines = [
-        line.strip(" -\t")
-        for line in experiment_plan.splitlines()
-        if line.strip(" -\t")
-    ]
-    return lines or [experiment_plan.strip()]
-
-
-def _udp_target(facade: RuntimeFacade) -> dict[str, Any]:
-    """返回兼容旧接口的 UDP 目标摘要。"""
-
-    settings = facade.settings()
-    return {
-        "enabled": True,
-        "host": settings.udp_host,
-        "port": settings.udp_port,
-    }
-
-
-def _request_id() -> str:
-    """生成请求 ID。"""
-
-    return f"req_{uuid.uuid4().hex[:12]}"
-
-
-def _now() -> str:
-    """返回当前 UTC ISO 时间。"""
-
-    return datetime.now(timezone.utc).isoformat()
+    if isinstance(service, ExperimentService):
+        return service
+    settings = service.settings()
+    enabled = settings.process_executor_provider.lower() == "udp"
+    executor = (
+        UdpProcessExecutorClient(
+            host=settings.udp_host,
+            port=settings.udp_port,
+            timeout_s=settings.udp_timeout_seconds,
+        )
+        if enabled
+        else StubProcessExecutorClient()
+    )
+    return ExperimentService(
+        instruction_generator=EchoInstructionGenerator(),
+        executor_client=executor,
+        udp_target={
+            "enabled": enabled,
+            "host": settings.udp_host,
+            "port": settings.udp_port,
+        },
+    )

@@ -266,6 +266,100 @@ class TemplateService:
             self._records.pop(template_id, None)
         return target
 
+    def update_version_metadata(
+        self,
+        template_id: str,
+        template_version: str,
+        *,
+        anchor_profile: str | None = None,
+    ) -> TemplateRecord:
+        """更新模板版本元数据。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+            anchor_profile: 新的设备锚点配置 ID。
+
+        Returns:
+            更新后的模板记录。
+        """
+
+        target = self._find_record(template_id, template_version)
+        if anchor_profile is not None:
+            target.anchor_profile = anchor_profile
+            path = self._template_path(target.identity)
+            if path.exists():
+                workflow = load_yaml_contract(path, WorkflowContract)
+                workflow.metadata.anchor_profile = anchor_profile
+                dump_yaml_contract(workflow, path)
+        return target
+
+    def delete_version_cloud_first(
+        self,
+        template_id: str,
+        template_version: str,
+        *,
+        force: bool = False,
+    ) -> TemplateRecord:
+        """先删除云端模板，再删除本地副本。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+            force: 是否允许删除已发布版本。
+
+        Returns:
+            已删除的模板记录。
+        """
+
+        target = self._find_record(template_id, template_version)
+        if target.status == TemplateVersionStatus.PUBLISHED and not force:
+            raise ValueError("当前发布版本需要 force=True 确认后才能删除")
+        try:
+            self._platform.delete_template(template_id, template_version)
+        except TemplateVersionMissing:
+            pass
+        except Exception as exc:  # noqa: BLE001 - 云端失败时保留本地副本
+            raise RuntimeError(
+                f"云端删除模板 {template_id}@{template_version} 失败，本地副本已保留。"
+            ) from exc
+        return self.delete_version(template_id, template_version, force=True)
+
+    def rollback(self, template_id: str, template_version: str) -> TemplateRecord:
+        """回滚到指定模板版本。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+
+        Returns:
+            回滚后成为发布版本的模板记录。
+        """
+
+        records = self._records.get(template_id, [])
+        target = self._find_record(template_id, template_version)
+        for record in records:
+            if record.status == TemplateVersionStatus.PUBLISHED:
+                record.status = TemplateVersionStatus.ROLLED_BACK
+        target.status = TemplateVersionStatus.PUBLISHED
+        return target
+
+    def fetch(self, template_id: str, template_version: str) -> WorkflowContract:
+        """读取本地可执行模板工作流。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+
+        Returns:
+            工作流契约。
+        """
+
+        path = self._template_path(TemplateIdentity(template_id, template_version))
+        if not path.exists():
+            raise TemplateVersionMissing(template_id, template_version)
+        return load_yaml_contract(path, WorkflowContract)
+
     def _template_path(self, identity: TemplateIdentity) -> Path:
         """返回模板工作流路径。"""
 
@@ -286,3 +380,31 @@ class TemplateService:
                 records[index] = record
                 return
         records.append(record)
+
+    def _find_record(
+        self,
+        template_id: str,
+        template_version: str,
+    ) -> TemplateRecord:
+        """查找模板版本记录。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+
+        Returns:
+            模板记录。
+        """
+
+        records = self._records.get(template_id, [])
+        target = next(
+            (
+                item
+                for item in records
+                if item.identity.template_version == template_version
+            ),
+            None,
+        )
+        if target is None:
+            raise TemplateVersionMissing(template_id, template_version)
+        return target

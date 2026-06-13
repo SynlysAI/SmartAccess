@@ -47,12 +47,14 @@ class TemplatePage(QWidget):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.horizontalHeader().setStretchLastSection(True)
         root.addWidget(self._table, 1)
+        self._reload_instruments()
         self._reload_workflows()
         self._refresh()
 
     def on_show(self) -> None:
         """页面显示时刷新数据。"""
 
+        self._reload_instruments()
         self._reload_workflows()
         self._refresh()
 
@@ -67,9 +69,20 @@ class TemplatePage(QWidget):
         self._workflow_combo = QComboBox()
         self._workflow_combo.setMinimumWidth(280)
         row.addWidget(self._workflow_combo)
+        self._anchor_combo = QComboBox()
+        self._anchor_combo.setMinimumWidth(180)
+        row.addWidget(self._anchor_combo)
         publish_btn = QPushButton("发布")
         publish_btn.clicked.connect(self._publish)
         row.addWidget(publish_btn)
+        update_btn = QPushButton("更新设备")
+        update_btn.setObjectName("Secondary")
+        update_btn.clicked.connect(self._update_anchor_profile)
+        row.addWidget(update_btn)
+        rollback_btn = QPushButton("回滚")
+        rollback_btn.setObjectName("Secondary")
+        rollback_btn.clicked.connect(self._rollback)
+        row.addWidget(rollback_btn)
         refresh_btn = QPushButton("刷新云端")
         refresh_btn.setObjectName("Secondary")
         refresh_btn.clicked.connect(self._refresh_cloud)
@@ -116,6 +129,18 @@ class TemplatePage(QWidget):
         if index >= 0:
             self._workflow_combo.setCurrentIndex(index)
 
+    def _reload_instruments(self) -> None:
+        """刷新设备锚点配置下拉框。"""
+
+        current = self._anchor_combo.currentData()
+        self._anchor_combo.clear()
+        self._anchor_combo.addItem("选择设备", "")
+        for profile_id in self._vm.instruments():
+            self._anchor_combo.addItem(profile_id, profile_id)
+        index = self._anchor_combo.findData(current)
+        if index >= 0:
+            self._anchor_combo.setCurrentIndex(index)
+
     def _refresh(self) -> None:
         """刷新模板表格。"""
 
@@ -153,6 +178,50 @@ class TemplatePage(QWidget):
         """刷新云端模板索引。"""
 
         self._vm.refresh_cloud()
+
+    def _update_anchor_profile(self) -> None:
+        """更新选中模板版本的设备锚点配置。"""
+
+        record = self._selected_record()
+        anchor_profile = self._anchor_combo.currentData()
+        if record is None:
+            QMessageBox.information(self, "更新设备", "请先选择模板版本")
+            return
+        if not anchor_profile:
+            QMessageBox.information(self, "更新设备", "请先选择设备")
+            return
+        try:
+            self._vm.update_anchor_profile(
+                record.identity.template_id,
+                record.identity.template_version,
+                str(anchor_profile),
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "更新失败", str(exc))
+
+    def _rollback(self) -> None:
+        """回滚选中的模板版本。"""
+
+        record = self._selected_record()
+        if record is None:
+            QMessageBox.information(self, "回滚模板", "请先选择模板版本")
+            return
+        reply = QMessageBox.question(
+            self,
+            "回滚模板",
+            f"确认回滚到 {record.identity.template_id}@{record.identity.template_version}？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._vm.rollback(
+                record.identity.template_id,
+                record.identity.template_version,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "回滚失败", str(exc))
 
     def _sync_outbox(self) -> None:
         """同步平台补传队列。"""

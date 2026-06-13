@@ -41,6 +41,8 @@ class AppSettings(BaseModel):
     edge_api_port: int = Field(default=7000, ge=1, le=65535)
     udp_host: str = Field(default="127.0.0.1")
     udp_port: int = Field(default=8889, ge=1, le=65535)
+    udp_timeout_seconds: float = Field(default=6.0, gt=0)
+    process_executor_provider: str = Field(default="stub")
 
     @classmethod
     def from_env(cls) -> "AppSettings":
@@ -109,6 +111,12 @@ class AppSettings(BaseModel):
             edge_api_port=int(_get("SMARTACCESS_EDGE_API_PORT", "7000") or "7000"),
             udp_host=_get("SMARTACCESS_UDP_HOST", "127.0.0.1") or "127.0.0.1",
             udp_port=int(_get("SMARTACCESS_UDP_PORT", "8889") or "8889"),
+            udp_timeout_seconds=float(
+                _get("SMARTACCESS_UDP_TIMEOUT_SECONDS", "6") or "6"
+            ),
+            process_executor_provider=(
+                _get("SMARTACCESS_PROCESS_EXECUTOR_PROVIDER", "stub") or "stub"
+            ),
         )
 
     @staticmethod
