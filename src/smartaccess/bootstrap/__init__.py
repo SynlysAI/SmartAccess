@@ -19,6 +19,10 @@ from smartaccess.runtime.adapters import (
     UdpProcessExecutorClient,
     Win32AutomationProvider,
 )
+from smartaccess.runtime.adapters.codex_generator import (
+    CodexInstrumentProfileGenerator,
+    CodexWorkflowGenerator,
+)
 from smartaccess.runtime.adapters.inmemory import (
     EchoInstructionGenerator,
     StubProcessExecutorClient,
@@ -210,6 +214,13 @@ def _build_workflow_generator(settings: AppSettings):
                 timeout_seconds=settings.ai_timeout_seconds,
                 user_agent=settings.ai_user_agent,
             )
+        if provider == "codex":
+            return CodexWorkflowGenerator(
+                api_key=settings.ai_api_key,
+                base_url=settings.ai_base_url,
+                model=settings.ai_model,
+                timeout_seconds=settings.ai_timeout_seconds,
+            )
         return OpenAICompatibleWorkflowGenerator(
             api_key=settings.ai_api_key,
             base_url=settings.ai_base_url,
@@ -239,6 +250,13 @@ def _build_instrument_profile_generator(settings: AppSettings):
                 model=settings.ai_model,
                 timeout_seconds=settings.ai_timeout_seconds,
                 user_agent=settings.ai_user_agent,
+            )
+        if provider == "codex":
+            return CodexInstrumentProfileGenerator(
+                api_key=settings.ai_api_key,
+                base_url=settings.ai_base_url,
+                model=settings.ai_model,
+                timeout_seconds=settings.ai_timeout_seconds,
             )
         return OpenAICompatibleInstrumentProfileGenerator(
             api_key=settings.ai_api_key,
