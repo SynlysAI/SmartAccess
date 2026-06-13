@@ -34,7 +34,7 @@ def build_qss() -> str:
 QWidget {{
     background-color: {CANVAS};
     color: {TEXT};
-    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
     font-size: 13px;
 }}
 QMainWindow, QMainWindow > QWidget {{
