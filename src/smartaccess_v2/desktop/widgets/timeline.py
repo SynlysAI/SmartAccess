@@ -5,6 +5,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
+from smartaccess_v2.desktop.widgets.table_style import configure_data_table
 from smartaccess_v2.runtime.domain.run_session import RunSession
 
 
@@ -23,6 +24,7 @@ class TimelineTable(QTableWidget):
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.horizontalHeader().setStretchLastSection(True)
+        configure_data_table(self, row_height=42, stretch_last=True)
 
     def set_session(self, session: RunSession | None) -> None:
         """显示指定运行会话。

@@ -9,10 +9,15 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QHeaderView,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+)
+
+from smartaccess_v2.desktop.widgets.table_style import (
+    configure_data_table,
+    interactive_header,
+    set_embedded_editor_height,
 )
 
 ACTION_OPTIONS = [
@@ -49,13 +54,10 @@ class AnchorTable(QTableWidget):
         self.setHorizontalHeaderLabels(
             ["锚点 ID", "动作区域", "动作", "OCR", "观察区域", "确认", ""]
         )
-        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        configure_data_table(self, row_height=44)
+        header = interactive_header(self)
+        header.setStretchLastSection(False)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.verticalHeader().setDefaultSectionSize(44)
-        self.verticalHeader().setVisible(False)
-        header = self.horizontalHeader()
-        for column in range(self.columnCount()):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
         self.setColumnWidth(0, 150)
         self.setColumnWidth(1, 150)
         self.setColumnWidth(2, 112)
@@ -86,7 +88,7 @@ class AnchorTable(QTableWidget):
         delete_btn = QPushButton("删除")
         delete_btn.setObjectName("TableDanger")
         delete_btn.setToolTip("删除锚点")
-        delete_btn.setFixedSize(56, 28)
+        delete_btn.setFixedSize(58, 30)
         delete_btn.clicked.connect(lambda _checked=False, r=row: self.row_delete_requested.emit(r))
         self.setCellWidget(row, 6, delete_btn)
         self._store_row(row, row_data)
@@ -209,6 +211,7 @@ class AnchorTable(QTableWidget):
         """创建动作下拉框。"""
 
         combo = QComboBox()
+        set_embedded_editor_height(combo)
         for key, label in ACTION_OPTIONS:
             combo.addItem(label, key)
         index = combo.findData(action)
@@ -220,6 +223,8 @@ class AnchorTable(QTableWidget):
         """创建复选框。"""
 
         checkbox = QCheckBox()
+        checkbox.setObjectName("TableCheck")
+        set_embedded_editor_height(checkbox)
         checkbox.setChecked(checked)
         if role == "ocr":
             checkbox.toggled.connect(lambda value: self._emit_ocr_changed(checkbox, value))
