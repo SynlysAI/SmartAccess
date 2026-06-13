@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 from smartaccess_v2.desktop.viewmodels.calibration_vm import CalibrationViewModel
 from smartaccess_v2.desktop.widgets.anchor_table import AnchorRow, AnchorTable
+from smartaccess_v2.desktop.widgets.cards import create_card
 from smartaccess_v2.desktop.widgets.roi_canvas import RoiCanvas
 from smartaccess_v2.runtime.adapters.window_scanner import capture_error_reason
 from smartaccess_v2.runtime.application.facade import RuntimeFacade
@@ -99,11 +100,8 @@ class CalibrationPage(QWidget):
     def _build_left_panel(self) -> QWidget:
         """构建左侧设备和窗口面板。"""
 
-        panel = QWidget()
-        panel.setMinimumWidth(290)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 12, 0)
-        layout.setSpacing(10)
+        panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
+        panel.setMinimumWidth(300)
 
         form = QFormLayout()
         self._device_id = QLineEdit()
@@ -140,10 +138,7 @@ class CalibrationPage(QWidget):
     def _build_center_panel(self) -> QWidget:
         """构建中间 ROI 画布区域。"""
 
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 12, 0)
-        layout.setSpacing(8)
+        panel, layout = create_card(margins=(10, 10, 10, 10), spacing=8)
         self._canvas = RoiCanvas()
         layout.addWidget(self._canvas, 1)
         return panel
@@ -151,11 +146,8 @@ class CalibrationPage(QWidget):
     def _build_right_panel(self) -> QWidget:
         """构建右侧锚点表格区域。"""
 
-        panel = QWidget()
-        panel.setMinimumWidth(500)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
+        panel.setMinimumWidth(520)
         row = QHBoxLayout()
         add_btn = QPushButton("添加锚点")
         add_btn.clicked.connect(self._add_anchor)

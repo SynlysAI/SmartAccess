@@ -195,8 +195,9 @@ class RoiCanvas(QGraphicsView):
 
         self._scene = QGraphicsScene()
         super().__init__(self._scene, parent)
+        self.setObjectName("RoiCanvas")
         self._scene.setParent(self)
-        self.setBackgroundBrush(QBrush(QColor("#edf2f7")))
+        self.setBackgroundBrush(QBrush(QColor("#F0F3F8")))
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._image_item: QGraphicsPixmapItem | None = None
