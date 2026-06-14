@@ -31,6 +31,7 @@ def _selectable_msg(parent, icon, title, text):
     for label in box.findChildren(QLabel):
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return box
+from smartaccess_v2.desktop.widgets.background_worker import BackgroundTask
 from smartaccess_v2.desktop.widgets.cards import create_card
 from smartaccess_v2.desktop.widgets.table_style import NoWheelComboBox
 from smartaccess_v2.desktop.widgets.workflow_step_table import StepRow, WorkflowStepTable
@@ -91,10 +92,10 @@ class WorkflowPage(QWidget):
         check_btn.setObjectName("Secondary")
         check_btn.clicked.connect(self._standardize)
         row.addWidget(check_btn)
-        ai_btn = QPushButton("AI生成")
-        ai_btn.setObjectName("Secondary")
-        ai_btn.clicked.connect(self._ai_generate)
-        row.addWidget(ai_btn)
+        self._ai_btn = QPushButton("AI生成")
+        self._ai_btn.setObjectName("Secondary")
+        self._ai_btn.clicked.connect(self._ai_generate)
+        row.addWidget(self._ai_btn)
         save_btn = QPushButton("保存")
         save_btn.clicked.connect(self._save)
         row.addWidget(save_btn)
@@ -414,15 +415,35 @@ class WorkflowPage(QWidget):
                 {action for item in anchors for action in item["supported_actions"]}
             ),
         }
-        try:
-            workflow = self._vm.draft_workflow(prompt, context)
-        except Exception as exc:  # noqa: BLE001
-            _selectable_msg(self, QMessageBox.Icon.Critical, "AI生成失败", str(exc)).exec()
-            return
-        self._load_workflow(workflow)
-        self._reload_workflows(workflow.metadata.workflow_id)
+
+        self._ai_btn.setEnabled(False)
+        self._ai_btn.setText("生成中...")
+        self._set_result("AI 生成中，请稍候...")
+
+        self._ai_task = BackgroundTask(
+            lambda: self._vm.draft_workflow(prompt, context), parent=self
+        )
+        self._ai_task.done.connect(self._on_ai_generate_done)
+        self._ai_task.error.connect(self._on_ai_generate_error)
+        self._ai_task.start()
+
+    def _on_ai_generate_done(self, result: object) -> None:
+        """AI 生成工作流完成后的回调。"""
+
+        self._ai_btn.setEnabled(True)
+        self._ai_btn.setText("AI生成")
+        self._load_workflow(result)
+        self._reload_workflows(result.metadata.workflow_id)
         self._steps.scrollToTop()
         self._set_result(self._vm.ai_reasoning() or "AI 工作流已生成")
+
+    def _on_ai_generate_error(self, msg: str) -> None:
+        """AI 生成工作流失败后的回调。"""
+
+        self._ai_btn.setEnabled(True)
+        self._ai_btn.setText("AI生成")
+        self._clear_result()
+        _selectable_msg(self, QMessageBox.Icon.Critical, "AI生成失败", msg).exec()
 
     def _build_workflow(self) -> WorkflowContract:
         """从编辑器构建工作流契约。"""

@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 from smartaccess_v2.desktop.viewmodels.calibration_vm import CalibrationViewModel
 from smartaccess_v2.desktop.widgets.anchor_table import AnchorRow, AnchorTable
+from smartaccess_v2.desktop.widgets.background_worker import BackgroundTask
 from smartaccess_v2.desktop.widgets.cards import create_card
 from smartaccess_v2.desktop.widgets.roi_canvas import RoiCanvas
 from smartaccess_v2.runtime.adapters.window_scanner import capture_error_reason
@@ -155,10 +156,10 @@ class CalibrationPage(QWidget):
         add_btn.setObjectName("TableToolbarButton")
         add_btn.clicked.connect(self._add_anchor)
         row.addWidget(add_btn)
-        ai_btn = QPushButton("AI辅助接入")
-        ai_btn.setObjectName("TableToolbarButton")
-        ai_btn.clicked.connect(self._ai_assist)
-        row.addWidget(ai_btn)
+        self._ai_btn = QPushButton("AI辅助接入")
+        self._ai_btn.setObjectName("TableToolbarButton")
+        self._ai_btn.clicked.connect(self._ai_assist)
+        row.addWidget(self._ai_btn)
         row.addStretch(1)
         layout.addLayout(row)
         self._table = AnchorTable()
@@ -368,6 +369,7 @@ class CalibrationPage(QWidget):
         )
         if not ok or not prompt.strip():
             return
+        prompt = prompt.strip()
         device_id = self._device_id.text().strip() or "new_device"
         title = self._title_contains.text().strip() or self._selected_title
         width, height = self._canvas.source_size()
@@ -383,18 +385,36 @@ class CalibrationPage(QWidget):
                 "mime_type": "image/png",
                 "data": base64.b64encode(self._latest_capture).decode("ascii"),
             }
-        try:
-            profile = self._vm.draft_profile(prompt.strip(), context)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "AI生成失败", str(exc))
-            return
-        self._load_profile(profile)
+
+        self._ai_btn.setEnabled(False)
+        self._ai_btn.setText("生成中...")
+
+        self._ai_task = BackgroundTask(
+            lambda: self._vm.draft_profile(prompt, context), parent=self
+        )
+        self._ai_task.done.connect(self._on_ai_assist_done)
+        self._ai_task.error.connect(self._on_ai_assist_error)
+        self._ai_task.start()
+
+    def _on_ai_assist_done(self, result: object) -> None:
+        """AI 辅助接入完成后的回调。"""
+
+        self._ai_btn.setEnabled(True)
+        self._ai_btn.setText("AI辅助接入")
+        self._load_profile(result)
         reasoning = self._vm.ai_reasoning()
         QMessageBox.information(
             self,
             "AI建议已加载",
-            f"已生成 {len(profile.anchors)} 个锚点。\n\n{reasoning[:800]}",
+            f"已生成 {len(result.anchors)} 个锚点。\n\n{reasoning[:800]}",
         )
+
+    def _on_ai_assist_error(self, msg: str) -> None:
+        """AI 辅助接入失败后的回调。"""
+
+        self._ai_btn.setEnabled(True)
+        self._ai_btn.setText("AI辅助接入")
+        QMessageBox.critical(self, "AI生成失败", msg)
 
     def _collect_anchors(self) -> list[dict]:
         """从表格和画布收集锚点契约数据。"""
