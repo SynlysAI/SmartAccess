@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from smartaccess_v2.desktop.widgets.table_style import (
     NoWheelComboBox,
+    TableCheckBox,
     configure_data_table,
     interactive_header,
     set_embedded_editor_height,
@@ -53,19 +54,19 @@ class AnchorTable(QTableWidget):
 
         super().__init__(0, 7, parent)
         self.setHorizontalHeaderLabels(
-            ["锚点 ID", "动作区域", "动作", "OCR", "观察区域", "确认", ""]
+            ["锚点 ID", "动作区域", "动作", "OCR", "观察区域", "确认", "操作"]
         )
-        configure_data_table(self, row_height=44)
+        configure_data_table(self, row_height=38)
         header = interactive_header(self)
         header.setStretchLastSection(False)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.setColumnWidth(0, 150)
-        self.setColumnWidth(1, 150)
-        self.setColumnWidth(2, 112)
-        self.setColumnWidth(3, 58)
-        self.setColumnWidth(4, 150)
-        self.setColumnWidth(5, 58)
-        self.setColumnWidth(6, 42)
+        self.setColumnWidth(0, 170)
+        self.setColumnWidth(1, 130)
+        self.setColumnWidth(2, 118)
+        self.setColumnWidth(3, 50)
+        self.setColumnWidth(4, 130)
+        self.setColumnWidth(5, 50)
+        self.setColumnWidth(6, 50)
         self.itemChanged.connect(self._on_item_changed)
 
     def minimumSizeHint(self):
@@ -99,10 +100,12 @@ class AnchorTable(QTableWidget):
         delete_btn = QPushButton("×")
         delete_btn.setObjectName("TableDanger")
         delete_btn.setToolTip("删除锚点")
-        delete_btn.setFixedSize(28, 28)
+        delete_btn.setFixedSize(22, 22)
         delete_btn.clicked.connect(lambda _checked=False, r=row: self.row_delete_requested.emit(r))
         self.setCellWidget(row, 6, delete_btn)
         self._store_row(row, row_data)
+        self._stash_roi_name(row, 1, row_data.action_roi)
+        self._stash_roi_name(row, 4, row_data.observe_roi or "")
         self.rebind_row_widgets()
         return row
 
@@ -119,8 +122,8 @@ class AnchorTable(QTableWidget):
         if row < 0 or row >= self.rowCount():
             return None
         anchor_id = self._item_text(row, 0)
-        action_roi = self._item_text(row, 1).split("  ")[0].strip()
-        observe_roi = self._item_text(row, 4).split("  ")[0].strip()
+        action_roi = self._roi_name(row, 1)
+        observe_roi = self._roi_name(row, 4)
         if not anchor_id or not action_roi:
             return None
         return AnchorRow(
@@ -152,20 +155,31 @@ class AnchorTable(QTableWidget):
         return row_data
 
     def update_roi_label(self, roi_name: str, label: str) -> None:
-        """更新引用指定 ROI 的坐标显示。"""
+        """更新引用指定 ROI 的坐标显示。
+
+        ROI 名称存入 UserRole 供 row_model 读取，单元格仅显示坐标文本。
+        """
 
         for row in range(self.rowCount()):
             for column in (1, 4):
                 text = self._item_text(row, column)
-                name = text.split("  ")[0].strip()
+                item = self.item(row, column)
+                stored = item.data(Qt.ItemDataRole.UserRole) if item else ""
+                name = str(stored) if stored else text.split("  ")[0].strip()
                 if name == roi_name:
                     self._set_item(row, column, label)
+                    item = self.item(row, column)
+                    if item is not None:
+                        item.setData(Qt.ItemDataRole.UserRole, roi_name)
 
     def clear_observe_roi(self, row: int) -> str:
         """清空指定行观察 ROI。"""
 
-        observe = self._item_text(row, 4).split("  ")[0].strip()
+        observe = self._roi_name(row, 4)
         self._set_item(row, 4, "")
+        item = self.item(row, 4)
+        if item is not None:
+            item.setData(Qt.ItemDataRole.UserRole, "")
         checkbox = self.cellWidget(row, 3)
         if isinstance(checkbox, QCheckBox):
             checkbox.blockSignals(True)
@@ -183,6 +197,7 @@ class AnchorTable(QTableWidget):
 
         if 0 <= row < self.rowCount():
             self._set_item(row, 4, roi_name)
+            self._stash_roi_name(row, 4, roi_name)
 
     def remove_rows_by_roi(self, roi_name: str) -> None:
         """根据动作 ROI 删除对应锚点行。"""
@@ -234,7 +249,7 @@ class AnchorTable(QTableWidget):
     def _checkbox(self, checked: bool, role: str) -> QCheckBox:
         """创建复选框。"""
 
-        checkbox = QCheckBox()
+        checkbox = TableCheckBox()
         checkbox.setObjectName("TableCheck")
         set_embedded_editor_height(checkbox)
         checkbox.setChecked(checked)
@@ -287,6 +302,34 @@ class AnchorTable(QTableWidget):
 
         item = self.item(row, column)
         return item.text().strip() if item else ""
+
+    def _stash_roi_name(self, row: int, column: int, name: str) -> None:
+        """将 ROI 名称存入单元格 UserRole。"""
+
+        if not name:
+            return
+        item = self.item(row, column)
+        if item is not None:
+            item.setData(Qt.ItemDataRole.UserRole, name)
+
+    def _roi_name(self, row: int, column: int) -> str:
+        """从 UserRole 或文本解析 ROI 名称。
+
+        Args:
+            row: 行号。
+            column: 列号（1=动作区域，4=观察区域）。
+
+        Returns:
+            ROI 名称，如果没有则返回空字符串。
+        """
+
+        item = self.item(row, column)
+        if item is not None:
+            stored = item.data(Qt.ItemDataRole.UserRole)
+            if stored:
+                return str(stored)
+            return item.text().strip().split("  ")[0].strip()
+        return ""
 
     def _combo_data(self, row: int, column: int) -> str:
         """读取下拉框数据。"""

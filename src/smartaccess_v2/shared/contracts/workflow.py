@@ -100,7 +100,7 @@ class WorkflowStep(FlexibleContractModel):
             self.expected_text = None
             self.timeout_seconds = None
         if not self.anchor_id:
-            raise ValueError("anchor_id is required for executable workflow steps")
+            self.migration_error = "anchor_id is required for executable workflow steps"
         return self
 
     def _normalize_wait_step(self) -> None:

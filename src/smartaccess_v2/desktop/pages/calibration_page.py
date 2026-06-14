@@ -279,6 +279,9 @@ class CalibrationPage(QWidget):
             removed = self._table.clear_observe_roi(row)
             if removed:
                 self._canvas.remove_roi(removed, emit_signal=False)
+            fallback_name = f"{row_data.anchor_id}_observe"
+            if fallback_name != removed:
+                self._canvas.remove_roi(fallback_name, emit_signal=False)
         self._refresh_all_roi_labels()
 
     def _on_roi_removed(self, roi_name: str) -> None:

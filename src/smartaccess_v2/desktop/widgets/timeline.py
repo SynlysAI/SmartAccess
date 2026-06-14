@@ -24,7 +24,7 @@ class TimelineTable(QTableWidget):
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.horizontalHeader().setStretchLastSection(True)
-        configure_data_table(self, row_height=42, stretch_last=True)
+        configure_data_table(self, row_height=38, stretch_last=True)
 
     def set_session(self, session: RunSession | None) -> None:
         """显示指定运行会话。
