@@ -61,7 +61,7 @@ class CalibrationPage(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([220, 302, 350])
+        splitter.setSizes([280, 302, 350])
         root.addWidget(splitter, 1)
 
         self._canvas.roi_changed.connect(self._on_roi_changed)
@@ -102,7 +102,7 @@ class CalibrationPage(QWidget):
         """构建左侧设备和窗口面板。"""
 
         panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
-        panel.setMinimumWidth(220)
+        panel.setMinimumWidth(280)
 
         form = QFormLayout()
         self._device_id = QLineEdit()

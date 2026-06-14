@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -125,7 +125,6 @@ class WorkflowPage(QWidget):
             QSizePolicy.Policy.Expanding,
         )
 
-        form = QFormLayout()
         self._workflow_id = QLineEdit()
         self._workflow_id.setPlaceholderText("wf_new_experiment")
         self._anchor_profile = NoWheelComboBox()
@@ -136,19 +135,28 @@ class WorkflowPage(QWidget):
             self._lifecycle.addItem(state, state)
         self._template_id = QLineEdit()
         self._template_version = QLineEdit()
-        form.addRow("工作流 ID", self._workflow_id)
-        form.addRow("设备", self._anchor_profile)
-        form.addRow("作者", self._author)
-        form.addRow("状态", self._lifecycle)
-        form.addRow("模板 ID", self._template_id)
-        form.addRow("模板版本", self._template_version)
-        layout.addLayout(form)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(8)
+        grid.addWidget(QLabel("工作流 ID"), 0, 0)
+        grid.addWidget(self._workflow_id, 0, 1)
+        grid.addWidget(QLabel("设备"), 0, 2)
+        grid.addWidget(self._anchor_profile, 0, 3)
+        grid.addWidget(QLabel("作者"), 1, 0)
+        grid.addWidget(self._author, 1, 1)
+        grid.addWidget(QLabel("状态"), 1, 2)
+        grid.addWidget(self._lifecycle, 1, 3)
+        grid.addWidget(QLabel("模板 ID"), 2, 0)
+        grid.addWidget(self._template_id, 2, 1)
+        grid.addWidget(QLabel("模板版本"), 2, 2)
+        grid.addWidget(self._template_version, 2, 3)
+        layout.addLayout(grid)
 
         layout.addLayout(self._build_step_toolbar())
         self._steps = WorkflowStepTable()
         self._steps.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Expanding,
         )
         layout.addWidget(self._steps)
         layout.addWidget(self._build_result_box())

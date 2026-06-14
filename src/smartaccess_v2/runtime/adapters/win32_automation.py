@@ -13,6 +13,7 @@ from smartaccess_v2.shared.contracts.anchors import AnchorDefinition, AnchorsCon
 
 from .window_scanner import WindowScanner, capture_window as _capture_real_window
 
+SW_RESTORE = 9
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 VK_CONTROL = 0x11
@@ -120,6 +121,7 @@ class Win32AutomationProvider:
         if target and anchor is None:
             return ActionOutcome(ok=False, detail=f"未找到锚点: {target}")
         if self._hwnd:
+            self._restore_window(self._hwnd)
             self._user32.SetForegroundWindow(self._hwnd)
             time.sleep(0.1)
         try:
@@ -133,6 +135,7 @@ class Win32AutomationProvider:
 
         if self._hwnd is None:
             return b""
+        self._restore_window(self._hwnd)
         return _capture_real_window(self._hwnd) or b""
 
     def _configure_api(self) -> None:
@@ -164,6 +167,17 @@ class Win32AutomationProvider:
             else self._scanner.scan()
         )
         return windows[0].hwnd if windows else None
+
+    def _restore_window(self, hwnd: int) -> None:
+        """还原最小化的窗口。
+
+        Args:
+            hwnd: 目标窗口句柄。
+        """
+
+        if self._user32.IsIconic(hwnd):
+            self._user32.ShowWindow(hwnd, SW_RESTORE)
+            time.sleep(0.05)
 
     def _anchor(self, anchor_id: str | None) -> AnchorDefinition | None:
         """按 ID 查找锚点。"""
