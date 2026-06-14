@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
 
-from smartaccess_v2.desktop.widgets.table_style import set_embedded_editor_height
+from smartaccess_v2.desktop.widgets.table_style import (
+    NoWheelComboBox,
+    NoWheelDoubleSpinBox,
+    set_embedded_editor_height,
+)
 
 
 class ConditionEditor(QWidget):
@@ -17,7 +21,7 @@ class ConditionEditor(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        self.match_mode = QComboBox()
+        self.match_mode = NoWheelComboBox()
         self.match_mode.setObjectName("ConditionMode")
         set_embedded_editor_height(self.match_mode)
         for key, label in [
@@ -32,7 +36,7 @@ class ConditionEditor(QWidget):
         self.expected_text.setObjectName("ConditionText")
         self.expected_text.setPlaceholderText("期望文本")
         set_embedded_editor_height(self.expected_text)
-        self.timeout_seconds = QDoubleSpinBox()
+        self.timeout_seconds = NoWheelDoubleSpinBox()
         self.timeout_seconds.setObjectName("ConditionTimeout")
         set_embedded_editor_height(self.timeout_seconds)
         self.timeout_seconds.setRange(0, 3600)

@@ -3,7 +3,42 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QWidget
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QAbstractScrollArea,
+    QComboBox,
+    QDoubleSpinBox,
+    QHeaderView,
+    QSizePolicy,
+    QTableWidget,
+    QWidget,
+)
+
+
+class NoWheelComboBox(QComboBox):
+    """禁用悬停滚轮切换选项的下拉框。"""
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        """忽略滚轮事件，交给外层滚动区域处理。
+
+        Args:
+            event: Qt 滚轮事件。
+        """
+
+        event.ignore()
+
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """禁用悬停滚轮修改数值的数字输入框。"""
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        """忽略滚轮事件，避免误触修改参数。
+
+        Args:
+            event: Qt 滚轮事件。
+        """
+
+        event.ignore()
 
 
 def configure_data_table(
@@ -21,6 +56,11 @@ def configure_data_table(
     """
 
     table.setObjectName("DataTable")
+    table.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
+    table.setSizePolicy(
+        QSizePolicy.Policy.Expanding,
+        QSizePolicy.Policy.Expanding,
+    )
     table.setAlternatingRowColors(True)
     table.setShowGrid(False)
     table.setWordWrap(False)

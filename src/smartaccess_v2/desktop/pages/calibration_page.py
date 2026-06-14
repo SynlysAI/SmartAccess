@@ -60,7 +60,7 @@ class CalibrationPage(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([310, 760, 520])
+        splitter.setSizes([220, 302, 350])
         root.addWidget(splitter, 1)
 
         self._canvas.roi_changed.connect(self._on_roi_changed)
@@ -88,6 +88,10 @@ class CalibrationPage(QWidget):
         title.setObjectName("PageTitle")
         row.addWidget(title)
         row.addStretch(1)
+        new_btn = QPushButton("新建")
+        new_btn.setObjectName("Secondary")
+        new_btn.clicked.connect(self._new_profile)
+        row.addWidget(new_btn)
         ai_btn = QPushButton("AI辅助接入")
         ai_btn.setObjectName("Secondary")
         ai_btn.clicked.connect(self._ai_assist)
@@ -101,7 +105,7 @@ class CalibrationPage(QWidget):
         """构建左侧设备和窗口面板。"""
 
         panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
-        panel.setMinimumWidth(300)
+        panel.setMinimumWidth(220)
 
         form = QFormLayout()
         self._device_id = QLineEdit()
@@ -139,7 +143,9 @@ class CalibrationPage(QWidget):
         """构建中间 ROI 画布区域。"""
 
         panel, layout = create_card(margins=(10, 10, 10, 10), spacing=8)
+        panel.setMinimumSize(100, 100)
         self._canvas = RoiCanvas()
+        self._canvas.setMinimumSize(80, 80)
         layout.addWidget(self._canvas, 1)
         return panel
 
@@ -147,9 +153,10 @@ class CalibrationPage(QWidget):
         """构建右侧锚点表格区域。"""
 
         panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
-        panel.setMinimumWidth(520)
+        panel.setMinimumWidth(350)
         row = QHBoxLayout()
         add_btn = QPushButton("添加锚点")
+        add_btn.setObjectName("TableToolbarButton")
         add_btn.clicked.connect(self._add_anchor)
         row.addWidget(add_btn)
         row.addStretch(1)
@@ -194,8 +201,7 @@ class CalibrationPage(QWidget):
         self._selected_hwnd = data["hwnd"]
         self._selected_title = data["title"]
         self._capture_btn.setEnabled(self._selected_hwnd is not None)
-        if not self._title_contains.text().strip():
-            self._title_contains.setText(self._selected_title)
+        self._title_contains.setText(self._selected_title)
 
     def _capture(self) -> None:
         """捕获选中窗口截图。"""
@@ -302,7 +308,6 @@ class CalibrationPage(QWidget):
         if not rect:
             return roi_name
         return (
-            f"{roi_name}  "
             f"({rect['x']:.0f},{rect['y']:.0f},"
             f"{rect['width']:.0f},{rect['height']:.0f})"
         )
@@ -334,6 +339,7 @@ class CalibrationPage(QWidget):
                 anchors=anchors,
                 capture_width=width,
                 capture_height=height,
+                capture_data=self._latest_capture,
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "保存失败", str(exc))
@@ -454,6 +460,9 @@ class CalibrationPage(QWidget):
         self._table.setRowCount(0)
         self._device_id.setText(profile.device_id)
         self._title_contains.setText(profile.window_signature.title_contains or "")
+        self._latest_capture = self._vm.load_instrument_capture(profile.profile_id)
+        if self._latest_capture:
+            self._canvas.load_image(self._latest_capture)
         for anchor in profile.anchors:
             pixel = anchor.action_region.pixel
             self._canvas.add_roi(
@@ -488,6 +497,22 @@ class CalibrationPage(QWidget):
                 )
             )
         self._refresh_all_roi_labels()
+
+    def _new_profile(self) -> None:
+        """清空当前设备编辑状态。"""
+
+        self._selected_hwnd = None
+        self._selected_title = ""
+        self._latest_capture = None
+        self._device_id.clear()
+        self._title_contains.clear()
+        self._capture_btn.setEnabled(False)
+        self._windows.blockSignals(True)
+        self._windows.clearSelection()
+        self._windows.setCurrentRow(-1)
+        self._windows.blockSignals(False)
+        self._canvas.clear_all()
+        self._table.setRowCount(0)
 
     def _instrument_menu(self, pos) -> None:
         """显示设备列表右键菜单。"""

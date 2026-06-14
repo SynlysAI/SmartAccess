@@ -65,6 +65,7 @@ class MainWindow(QMainWindow):
         )
 
         self.setWindowTitle("SmartAccess")
+        self.setMinimumSize(800, 500)
         self._nav = QListWidget()
         self._nav.setObjectName("NavList")
         self._stack = QStackedWidget()
@@ -163,7 +164,7 @@ class MainWindow(QMainWindow):
             导航列表部件。
         """
 
-        self._nav.setFixedWidth(248)
+        self._nav.setFixedWidth(200)
         self._nav.setIconSize(QSize(18, 18))
         icons = [
             QStyle.StandardPixmap.SP_ComputerIcon,
@@ -188,7 +189,7 @@ class MainWindow(QMainWindow):
 
         panel = QFrame()
         panel.setObjectName("RightPanel")
-        panel.setFixedWidth(320)
+        panel.setFixedWidth(260)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)

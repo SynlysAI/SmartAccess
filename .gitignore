@@ -3,5 +3,10 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
-workspace/
-docs/refer/
+workspace
+docs/refer
+.superpowers
+workspace_v2
+.codegraph
+.idea
+.vscode
