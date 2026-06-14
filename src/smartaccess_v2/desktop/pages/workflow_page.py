@@ -13,9 +13,11 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QInputDialog,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
-    QTextEdit,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +43,7 @@ class WorkflowPage(QWidget):
         self._vm = WorkflowViewModel(facade, self)
         self._current: WorkflowContract | None = None
         self._anchor_ids: list[str] = []
+        self._last_ai_prompt = ""
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 18)
@@ -75,18 +78,6 @@ class WorkflowPage(QWidget):
         new_btn.setObjectName("Secondary")
         new_btn.clicked.connect(self._new_workflow)
         row.addWidget(new_btn)
-        add_action_btn = QPushButton("添加动作")
-        add_action_btn.setObjectName("Secondary")
-        add_action_btn.clicked.connect(self._add_action)
-        row.addWidget(add_action_btn)
-        insert_action_btn = QPushButton("插入动作")
-        insert_action_btn.setObjectName("Secondary")
-        insert_action_btn.clicked.connect(self._insert_action)
-        row.addWidget(insert_action_btn)
-        wait_btn = QPushButton("插入等待")
-        wait_btn.setObjectName("Secondary")
-        wait_btn.clicked.connect(self._insert_wait)
-        row.addWidget(wait_btn)
         check_btn = QPushButton("检查")
         check_btn.setObjectName("Secondary")
         check_btn.clicked.connect(self._standardize)
@@ -119,6 +110,10 @@ class WorkflowPage(QWidget):
         """构建右侧步骤编辑区。"""
 
         panel, layout = create_card(margins=(14, 14, 14, 14), spacing=12)
+        panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
 
         form = QFormLayout()
         self._workflow_id = QLineEdit()
@@ -139,18 +134,73 @@ class WorkflowPage(QWidget):
         form.addRow("模板版本", self._template_version)
         layout.addLayout(form)
 
-        self._ai_prompt = QTextEdit()
-        self._ai_prompt.setObjectName("PromptEditor")
-        self._ai_prompt.setPlaceholderText("输入实验步骤或自动化目标，点击 AI生成")
-        self._ai_prompt.setMaximumHeight(92)
-        layout.addWidget(self._ai_prompt)
-
+        layout.addLayout(self._build_step_toolbar())
         self._steps = WorkflowStepTable()
-        layout.addWidget(self._steps, 1)
-        self._result = QTextEdit()
-        self._result.setObjectName("ResultEditor")
+        self._steps.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        layout.addWidget(self._steps)
+        layout.addWidget(self._build_result_box())
+        return panel
+
+    def _build_step_toolbar(self) -> QHBoxLayout:
+        """构建步骤表局部操作栏。
+
+        Returns:
+            步骤表局部操作按钮布局。
+        """
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        label = QLabel("步骤")
+        label.setObjectName("PageHint")
+        row.addWidget(label)
+        row.addStretch(1)
+        add_action_btn = QPushButton("添加动作")
+        add_action_btn.setObjectName("TableToolbarButton")
+        add_action_btn.clicked.connect(self._add_action)
+        row.addWidget(add_action_btn)
+        insert_action_btn = QPushButton("插入动作")
+        insert_action_btn.setObjectName("TableToolbarButton")
+        insert_action_btn.clicked.connect(self._insert_action)
+        row.addWidget(insert_action_btn)
+        wait_btn = QPushButton("插入等待")
+        wait_btn.setObjectName("TableToolbarButton")
+        wait_btn.clicked.connect(self._insert_wait)
+        row.addWidget(wait_btn)
+        return row
+
+    def _build_result_box(self) -> QWidget:
+        """构建检查和 AI 生成结果展示区。
+
+        Returns:
+            位于步骤表下方的独立结果区域。
+        """
+
+        panel = QWidget()
+        panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(6)
+
+        label = QLabel("信息")
+        label.setObjectName("PageHint")
+        layout.addWidget(label)
+
+        self._result = QPlainTextEdit()
+        self._result.setObjectName("WorkflowResult")
         self._result.setReadOnly(True)
+        self._result.setPlaceholderText("检查或 AI 生成结果会显示在这里。")
+        self._result.setMinimumHeight(50)
         self._result.setMaximumHeight(120)
+        self._result.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         layout.addWidget(self._result)
         return panel
 
@@ -168,19 +218,30 @@ class WorkflowPage(QWidget):
         self._anchor_profile.blockSignals(False)
         self._on_profile_changed()
 
-    def _reload_workflows(self) -> None:
-        """刷新工作流列表。"""
+    def _reload_workflows(self, selected_workflow_id: str | None = None) -> None:
+        """刷新工作流列表。
 
-        current_id = self._current.metadata.workflow_id if self._current else None
+        Args:
+            selected_workflow_id: 刷新后需要保留选中的工作流 ID。
+        """
+
+        current_id = selected_workflow_id
+        if current_id is None and self._current is not None:
+            current_id = self._current.metadata.workflow_id
+        self._workflow_list.blockSignals(True)
         self._workflow_list.clear()
+        selected_item: QListWidgetItem | None = None
         for workflow in self._vm.list_workflows():
             item = QListWidgetItem(workflow.metadata.workflow_id)
             item.setData(Qt.ItemDataRole.UserRole, workflow.metadata.workflow_id)
             self._workflow_list.addItem(item)
             if workflow.metadata.workflow_id == current_id:
-                self._workflow_list.setCurrentItem(item)
+                selected_item = item
         if self._workflow_list.count() == 0:
             self._workflow_list.addItem("暂无工作流")
+        elif selected_item is not None:
+            self._workflow_list.setCurrentItem(selected_item)
+        self._workflow_list.blockSignals(False)
 
     def _on_profile_changed(self) -> None:
         """设备变化时刷新锚点列表。"""
@@ -200,7 +261,7 @@ class WorkflowPage(QWidget):
         self._template_id.clear()
         self._template_version.clear()
         self._steps.set_steps([], self._anchor_ids)
-        self._result.clear()
+        self._clear_result()
 
     def _select_workflow(self) -> None:
         """列表选择工作流后加载编辑。"""
@@ -251,7 +312,7 @@ class WorkflowPage(QWidget):
             for step in workflow.steps
         ]
         self._steps.set_steps(rows, self._anchor_ids)
-        self._result.clear()
+        self._clear_result()
 
     def _add_action(self) -> None:
         """在步骤末尾添加普通动作。"""
@@ -283,7 +344,7 @@ class WorkflowPage(QWidget):
             return
         self._current = saved
         self._reload_workflows()
-        self._result.setPlainText(f"已保存：{saved.metadata.workflow_id}")
+        self._set_result(f"已保存：{saved.metadata.workflow_id}")
 
     def _standardize(self) -> None:
         """执行标准化检查。"""
@@ -295,17 +356,29 @@ class WorkflowPage(QWidget):
             QMessageBox.critical(self, "检查失败", str(exc))
             return
         if result.ok:
-            self._result.setPlainText("标准化检查通过")
+            self._set_result("标准化检查通过")
         else:
-            self._result.setPlainText("\n".join(result.issues))
+            self._set_result("\n".join(result.issues))
 
     def _ai_generate(self) -> None:
         """根据文本描述调用 AI 生成工作流。"""
 
-        prompt = self._ai_prompt.toPlainText().strip()
+        prompt, ok = QInputDialog.getMultiLineText(
+            self,
+            "AI生成工作流",
+            (
+                "输入实验步骤或自动化目标。\n"
+                f"当前 AI：{self._vm.ai_label()}"
+            ),
+            self._last_ai_prompt,
+        )
+        if not ok:
+            return
+        prompt = prompt.strip()
         if not prompt:
             QMessageBox.warning(self, "缺少描述", "请输入实验步骤或自动化目标。")
             return
+        self._last_ai_prompt = prompt
         workflow_id = self._workflow_id.text().strip() or self._next_workflow_id()
         anchor_profile = self._anchor_profile.currentData()
         if not anchor_profile:
@@ -338,8 +411,9 @@ class WorkflowPage(QWidget):
             QMessageBox.critical(self, "AI生成失败", str(exc))
             return
         self._load_workflow(workflow)
-        self._reload_workflows()
-        self._result.setPlainText(self._vm.ai_reasoning() or "AI 工作流已生成")
+        self._reload_workflows(workflow.metadata.workflow_id)
+        self._steps.scrollToTop()
+        self._set_result(self._vm.ai_reasoning() or "AI 工作流已生成")
 
     def _build_workflow(self) -> WorkflowContract:
         """从编辑器构建工作流契约。"""
@@ -412,3 +486,20 @@ class WorkflowPage(QWidget):
         while f"workflow_{index}" in existing:
             index += 1
         return f"workflow_{index}"
+
+    def _set_result(self, message: str) -> None:
+        """设置步骤区状态提示。
+
+        Args:
+            message: 完整状态文本。
+        """
+
+        text = message.strip()
+        self._result.setPlainText(text)
+        self._result.setToolTip(text)
+
+    def _clear_result(self) -> None:
+        """清空步骤区状态提示。"""
+
+        self._result.clear()
+        self._result.setToolTip("")

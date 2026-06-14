@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from smartaccess_v2.desktop.widgets.table_style import (
+    NoWheelComboBox,
     configure_data_table,
     interactive_header,
     set_embedded_editor_height,
@@ -64,8 +65,18 @@ class AnchorTable(QTableWidget):
         self.setColumnWidth(3, 58)
         self.setColumnWidth(4, 150)
         self.setColumnWidth(5, 58)
-        self.setColumnWidth(6, 72)
+        self.setColumnWidth(6, 42)
         self.itemChanged.connect(self._on_item_changed)
+
+    def minimumSizeHint(self):
+        """返回表格可接受的最小宽度，避免撑大父级窗口。"""
+
+        return QSize(300, 120)
+
+    def sizeHint(self):
+        """返回合理默认尺寸，控制表格对布局空间的诉求。"""
+
+        return QSize(520, 220)
 
     def add_anchor(self, row_data: AnchorRow) -> int:
         """新增锚点行。
@@ -85,10 +96,10 @@ class AnchorTable(QTableWidget):
         self.setCellWidget(row, 3, self._checkbox(row_data.ocr_enabled, "ocr"))
         self._set_item(row, 4, row_data.observe_roi)
         self.setCellWidget(row, 5, self._checkbox(row_data.requires_confirmation, "confirm"))
-        delete_btn = QPushButton("删除")
+        delete_btn = QPushButton("×")
         delete_btn.setObjectName("TableDanger")
         delete_btn.setToolTip("删除锚点")
-        delete_btn.setFixedSize(58, 30)
+        delete_btn.setFixedSize(28, 28)
         delete_btn.clicked.connect(lambda _checked=False, r=row: self.row_delete_requested.emit(r))
         self.setCellWidget(row, 6, delete_btn)
         self._store_row(row, row_data)
@@ -210,7 +221,8 @@ class AnchorTable(QTableWidget):
     def _action_combo(self, action: str) -> QComboBox:
         """创建动作下拉框。"""
 
-        combo = QComboBox()
+        combo = NoWheelComboBox()
+        combo.setObjectName("TableComboBox")
         set_embedded_editor_height(combo)
         for key, label in ACTION_OPTIONS:
             combo.addItem(label, key)

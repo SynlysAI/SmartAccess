@@ -126,10 +126,48 @@ class AnchorService:
         if path.parent.exists():
             shutil.rmtree(path.parent)
 
+    def save_capture(self, profile_id: str, data: bytes) -> Path:
+        """保存设备校准截图。
+
+        Args:
+            profile_id: 锚点配置 ID。
+            data: PNG 截图字节。
+
+        Returns:
+            已保存截图路径。
+        """
+
+        path = self._capture_path(profile_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return path
+
+    def load_capture(self, profile_id: str | None) -> bytes | None:
+        """读取设备校准截图。
+
+        Args:
+            profile_id: 锚点配置 ID。
+
+        Returns:
+            PNG 截图字节；不存在时返回 None。
+        """
+
+        if not profile_id:
+            return None
+        path = self._capture_path(profile_id)
+        if not path.exists():
+            return None
+        return path.read_bytes()
+
     def _profile_path(self, profile_id: str) -> Path:
         """返回锚点配置路径。"""
 
         return self._workspace_dir / "anchors" / profile_id / "anchors.yaml"
+
+    def _capture_path(self, profile_id: str) -> Path:
+        """返回设备校准截图路径。"""
+
+        return self._workspace_dir / "anchors" / profile_id / "capture.png"
 
     @staticmethod
     def _coerce_anchor(raw: dict[str, Any]) -> AnchorDefinition:

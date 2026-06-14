@@ -296,7 +296,7 @@ class RoiCanvas(QGraphicsView):
 
         self._clear_background()
         self.clear_rois()
-        self._show_placeholder("扫描窗口并捕获截图后，在此编辑 ROI")
+        self._show_placeholder("截图后在此编辑 ROI")
 
     def roi_names(self) -> list[str]:
         """返回所有 ROI 名称。"""

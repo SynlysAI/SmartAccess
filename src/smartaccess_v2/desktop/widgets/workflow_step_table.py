@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
 
 from smartaccess_v2.desktop.widgets.condition_editor import ConditionEditor
 from smartaccess_v2.desktop.widgets.table_style import (
+    NoWheelComboBox,
+    NoWheelDoubleSpinBox,
     configure_data_table,
     interactive_header,
     set_embedded_editor_height,
@@ -63,6 +65,7 @@ class WorkflowStepTable(QTableWidget):
         )
         configure_data_table(self, row_height=46)
         interactive_header(self)
+        self.setMinimumHeight(120)
         self.setColumnWidth(0, 160)
         self.setColumnWidth(1, 92)
         self.setColumnWidth(2, 150)
@@ -70,7 +73,7 @@ class WorkflowStepTable(QTableWidget):
         self.setColumnWidth(4, 90)
         self.setColumnWidth(5, 320)
         self.setColumnWidth(6, 64)
-        self.setColumnWidth(7, 184)
+        self.setColumnWidth(7, 104)
 
     def set_steps(self, steps: list[StepRow], anchor_ids: list[str]) -> None:
         """替换全部步骤。"""
@@ -92,7 +95,8 @@ class WorkflowStepTable(QTableWidget):
         set_embedded_editor_height(value)
         value.textChanged.connect(lambda _text: self.rows_changed.emit())
         self.setCellWidget(row, 3, value)
-        wait = QDoubleSpinBox()
+        wait = NoWheelDoubleSpinBox()
+        wait.setObjectName("TableSpinBox")
         set_embedded_editor_height(wait)
         wait.setRange(0, 3600)
         wait.setDecimals(1)
@@ -111,7 +115,8 @@ class WorkflowStepTable(QTableWidget):
         condition.expected_text.textChanged.connect(lambda _text: self.rows_changed.emit())
         condition.timeout_seconds.valueChanged.connect(lambda _value: self.rows_changed.emit())
         self.setCellWidget(row, 5, condition)
-        confirm = QComboBox()
+        confirm = NoWheelComboBox()
+        confirm.setObjectName("TableComboBox")
         set_embedded_editor_height(confirm)
         confirm.addItem("否", False)
         confirm.addItem("是", True)
@@ -157,7 +162,8 @@ class WorkflowStepTable(QTableWidget):
         set_embedded_editor_height(value)
         value.setEnabled(False)
         self.setCellWidget(target, 3, value)
-        wait = QDoubleSpinBox()
+        wait = NoWheelDoubleSpinBox()
+        wait.setObjectName("TableSpinBox")
         set_embedded_editor_height(wait)
         wait.setRange(0, 3600)
         wait.setDecimals(1)
@@ -168,7 +174,8 @@ class WorkflowStepTable(QTableWidget):
         condition = ConditionEditor()
         condition.setEnabled(False)
         self.setCellWidget(target, 5, condition)
-        confirm = QComboBox()
+        confirm = NoWheelComboBox()
+        confirm.setObjectName("TableComboBox")
         set_embedded_editor_height(confirm)
         confirm.addItem("否", False)
         confirm.setEnabled(False)
@@ -209,7 +216,8 @@ class WorkflowStepTable(QTableWidget):
     def _action_combo(self, action: str) -> QComboBox:
         """创建动作下拉框。"""
 
-        combo = QComboBox()
+        combo = NoWheelComboBox()
+        combo.setObjectName("TableComboBox")
         set_embedded_editor_height(combo)
         for key, label in ACTION_OPTIONS:
             combo.addItem(label, key)
@@ -221,7 +229,8 @@ class WorkflowStepTable(QTableWidget):
     def _anchor_combo(self, anchor_ids: list[str], anchor_id: str | None) -> QComboBox:
         """创建锚点下拉框。"""
 
-        combo = QComboBox()
+        combo = NoWheelComboBox()
+        combo.setObjectName("TableComboBox")
         set_embedded_editor_height(combo)
         combo.addItem("", "")
         for item in anchor_ids:
@@ -239,14 +248,14 @@ class WorkflowStepTable(QTableWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         for label, tooltip, danger, callback in [
-            ("上移", "上移", False, lambda _checked=False, r=row: self._move_row(r, -1)),
-            ("下移", "下移", False, lambda _checked=False, r=row: self._move_row(r, 1)),
-            ("删除", "删除", True, lambda _checked=False, r=row: self._delete_row(r)),
+            ("↑", "上移", False, lambda _checked=False, r=row: self._move_row(r, -1)),
+            ("↓", "下移", False, lambda _checked=False, r=row: self._move_row(r, 1)),
+            ("×", "删除", True, lambda _checked=False, r=row: self._delete_row(r)),
         ]:
             button = QPushButton(label)
             button.setToolTip(tooltip)
             button.setObjectName("TableDanger" if danger else "TableAction")
-            button.setFixedSize(54, 30)
+            button.setFixedSize(28, 28)
             button.clicked.connect(callback)
             layout.addWidget(button)
         return widget

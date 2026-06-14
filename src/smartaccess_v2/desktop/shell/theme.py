@@ -79,7 +79,7 @@ QListWidget#NavList {{
 }}
 QListWidget#NavList::item {{
     min-height: 42px;
-    padding: 10px 12px 10px 36px;
+    padding: 10px 12px 10px 22px;
     margin: 4px 0px;
     border-radius: 8px;
     color: {TEXT_MUTED};
@@ -140,25 +140,46 @@ QPushButton#TableAction {{
     background: {SURFACE};
     color: {PRIMARY_HOVER};
     border: 1px solid {BORDER_STRONG};
-    border-radius: 5px;
-    padding: 0px 6px;
-    min-height: 24px;
-    font-size: 12px;
+    border-radius: 14px;
+    padding: 0px;
+    min-width: 26px;
+    min-height: 26px;
+    font-size: 16px;
     font-weight: 600;
 }}
 QPushButton#TableAction:hover {{
     border-color: {PRIMARY};
     background: {PRIMARY_SOFT};
 }}
+QPushButton#TableToolbarButton {{
+    background: {SURFACE};
+    color: {TEXT_MUTED};
+    border: 1px solid {BORDER_STRONG};
+    border-radius: 5px;
+    padding: 3px 10px;
+    min-height: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}}
+QPushButton#TableToolbarButton:hover {{
+    background: {SURFACE_ALT};
+    border-color: {PRIMARY};
+    color: {PRIMARY_HOVER};
+}}
 QPushButton#TableDanger {{
     background: {DANGER_SOFT};
     color: {DANGER};
     border: 1px solid #FDA4AF;
-    border-radius: 5px;
-    padding: 0px 6px;
-    min-height: 24px;
-    font-size: 12px;
-    font-weight: 600;
+    border-radius: 14px;
+    padding: 0px;
+    min-width: 26px;
+    min-height: 26px;
+    font-size: 18px;
+    font-weight: 700;
+}}
+QPushButton#TableDanger:hover {{
+    background: #FFE4E6;
+    border-color: {DANGER};
 }}
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QTextBrowser {{
     background: {SURFACE};
@@ -173,9 +194,42 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QPlainTextEdit:focus, QTextEdit:focus {{
     border: 1px solid {PRIMARY};
 }}
+QPlainTextEdit#WorkflowResult {{
+    background: {SURFACE_ALT};
+    border: 1px solid {BORDER};
+}}
 QComboBox::drop-down {{
+    width: 26px;
+    border-left: 1px solid {BORDER};
+    background: {SURFACE_ALT};
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}}
+QComboBox#TableComboBox::drop-down, QComboBox#ConditionMode::drop-down {{
     width: 24px;
-    border: none;
+}}
+QComboBox#TableComboBox, QComboBox#ConditionMode {{
+    padding-right: 28px;
+}}
+QDoubleSpinBox#TableSpinBox, QDoubleSpinBox#ConditionTimeout {{
+    padding-right: 20px;
+}}
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+    subcontrol-origin: border;
+    width: 18px;
+    background: {SURFACE_ALT};
+    border-left: 1px solid {BORDER};
+}}
+QDoubleSpinBox::up-button {{
+    subcontrol-position: top right;
+    border-top-right-radius: 6px;
+}}
+QDoubleSpinBox::down-button {{
+    subcontrol-position: bottom right;
+    border-bottom-right-radius: 6px;
+}}
+QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
+    background: {PRIMARY_SOFT};
 }}
 QCheckBox {{
     background: transparent;

@@ -222,6 +222,31 @@ class RuntimeFacade:
             capture_height=capture_height,
         )
 
+    def save_instrument_capture(self, device_id: str, data: bytes) -> Path:
+        """保存设备校准截图。
+
+        Args:
+            device_id: 设备 ID。
+            data: PNG 截图字节。
+
+        Returns:
+            保存后的截图路径。
+        """
+
+        return self._anchors.save_capture(device_id, data)
+
+    def load_instrument_capture(self, device_id: str | None) -> bytes | None:
+        """读取设备校准截图。
+
+        Args:
+            device_id: 设备 ID。
+
+        Returns:
+            PNG 截图字节；不存在时返回 None。
+        """
+
+        return self._anchors.load_capture(device_id)
+
     def draft_instrument_from_prompt(
         self,
         prompt: str,
