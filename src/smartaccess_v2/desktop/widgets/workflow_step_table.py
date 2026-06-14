@@ -289,6 +289,16 @@ class WorkflowStepTable(QTableWidget):
         wait = self.cellWidget(row, 4)
         if wait is not None:
             wait.setEnabled(True)
+        if is_wait:
+            anchor = self.cellWidget(row, 2)
+            if isinstance(anchor, QComboBox):
+                anchor.setCurrentIndex(0)
+            value = self.cellWidget(row, 3)
+            if isinstance(value, QLineEdit):
+                value.clear()
+            confirm = self.cellWidget(row, 6)
+            if isinstance(confirm, QCheckBox):
+                confirm.setChecked(False)
 
     def _move_row(self, row: int, delta: int) -> None:
         """移动行。"""

@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
 
         bar = QFrame()
         bar.setObjectName("TopBar")
-        bar.setFixedHeight(56)
+        bar.setFixedHeight(44)
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(16, 0, 16, 0)
         layout.setSpacing(10)
