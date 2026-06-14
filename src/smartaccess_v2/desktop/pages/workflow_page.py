@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -23,7 +22,17 @@ from PyQt6.QtWidgets import (
 )
 
 from smartaccess_v2.desktop.viewmodels.workflow_vm import WorkflowViewModel
+
+
+def _selectable_msg(parent, icon, title, text):
+    """创建可选中文本的消息弹窗。"""
+
+    box = QMessageBox(icon, title, text, QMessageBox.StandardButton.Ok, parent)
+    for label in box.findChildren(QLabel):
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    return box
 from smartaccess_v2.desktop.widgets.cards import create_card
+from smartaccess_v2.desktop.widgets.table_style import NoWheelComboBox
 from smartaccess_v2.desktop.widgets.workflow_step_table import StepRow, WorkflowStepTable
 from smartaccess_v2.runtime.application.facade import RuntimeFacade
 from smartaccess_v2.shared.contracts.workflow import (
@@ -55,7 +64,7 @@ class WorkflowPage(QWidget):
         splitter.addWidget(self._build_editor())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([320, 920])
+        splitter.setSizes([240, 740])
         root.addWidget(splitter, 1)
         self._reload_profiles()
         self._reload_workflows()
@@ -95,7 +104,7 @@ class WorkflowPage(QWidget):
         """构建左侧工作流列表。"""
 
         panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
-        panel.setMinimumWidth(310)
+        panel.setMinimumWidth(240)
         label = QLabel("工作流")
         label.setObjectName("PageHint")
         layout.addWidget(label)
@@ -118,10 +127,10 @@ class WorkflowPage(QWidget):
         form = QFormLayout()
         self._workflow_id = QLineEdit()
         self._workflow_id.setPlaceholderText("wf_new_experiment")
-        self._anchor_profile = QComboBox()
+        self._anchor_profile = NoWheelComboBox()
         self._anchor_profile.currentIndexChanged.connect(self._on_profile_changed)
         self._author = QLineEdit("smartaccess")
-        self._lifecycle = QComboBox()
+        self._lifecycle = NoWheelComboBox()
         for state in ("Draft", "Standardized", "Published"):
             self._lifecycle.addItem(state, state)
         self._template_id = QLineEdit()
@@ -340,7 +349,7 @@ class WorkflowPage(QWidget):
             workflow = self._build_workflow()
             saved = self._vm.save_workflow(workflow)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "保存失败", str(exc))
+            _selectable_msg(self, QMessageBox.Icon.Critical, "保存失败", str(exc)).exec()
             return
         self._current = saved
         self._reload_workflows()
@@ -353,7 +362,7 @@ class WorkflowPage(QWidget):
             workflow = self._build_workflow()
             result = self._vm.standardize(workflow)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "检查失败", str(exc))
+            _selectable_msg(self, QMessageBox.Icon.Critical, "检查失败", str(exc)).exec()
             return
         if result.ok:
             self._set_result("标准化检查通过")
@@ -376,13 +385,13 @@ class WorkflowPage(QWidget):
             return
         prompt = prompt.strip()
         if not prompt:
-            QMessageBox.warning(self, "缺少描述", "请输入实验步骤或自动化目标。")
+            _selectable_msg(self, QMessageBox.Icon.Warning, "缺少描述", "请输入实验步骤或自动化目标。").exec()
             return
         self._last_ai_prompt = prompt
         workflow_id = self._workflow_id.text().strip() or self._next_workflow_id()
         anchor_profile = self._anchor_profile.currentData()
         if not anchor_profile:
-            QMessageBox.warning(self, "缺少设备", "请先选择设备。")
+            _selectable_msg(self, QMessageBox.Icon.Warning, "缺少设备", "请先选择设备。").exec()
             return
         profile = self._vm.get_anchor_profile(str(anchor_profile))
         anchors = []
@@ -408,7 +417,7 @@ class WorkflowPage(QWidget):
         try:
             workflow = self._vm.draft_workflow(prompt, context)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "AI生成失败", str(exc))
+            _selectable_msg(self, QMessageBox.Icon.Critical, "AI生成失败", str(exc)).exec()
             return
         self._load_workflow(workflow)
         self._reload_workflows(workflow.metadata.workflow_id)

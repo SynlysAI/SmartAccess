@@ -48,7 +48,7 @@ class TemplatePage(QWidget):
         table_card, table_layout = create_card(margins=(0, 0, 0, 0), spacing=0)
         self._table = QTableWidget(0, len(self.HEADERS))
         self._table.setHorizontalHeaderLabels(self.HEADERS)
-        configure_data_table(self._table, row_height=42, stretch_last=True)
+        configure_data_table(self._table, row_height=38, stretch_last=True)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table_layout.addWidget(self._table)
         root.addWidget(table_card, 1)

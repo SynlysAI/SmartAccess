@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QSizePolicy, QWidget
 
 from smartaccess_v2.desktop.widgets.table_style import (
     NoWheelComboBox,
@@ -18,6 +18,8 @@ class ConditionEditor(QWidget):
         """初始化条件编辑器。"""
 
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(26)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -43,6 +45,7 @@ class ConditionEditor(QWidget):
         self.timeout_seconds.setDecimals(1)
         self.timeout_seconds.setSingleStep(0.5)
         self.timeout_seconds.setSuffix(" s")
+        self.timeout_seconds.setMaximumWidth(90)
         layout.addWidget(self.match_mode, 0)
         layout.addWidget(self.expected_text, 1)
         layout.addWidget(self.timeout_seconds, 0)

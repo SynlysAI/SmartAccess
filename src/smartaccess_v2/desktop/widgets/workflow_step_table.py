@@ -7,6 +7,7 @@ from typing import Any
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
@@ -21,6 +22,7 @@ from smartaccess_v2.desktop.widgets.condition_editor import ConditionEditor
 from smartaccess_v2.desktop.widgets.table_style import (
     NoWheelComboBox,
     NoWheelDoubleSpinBox,
+    TableCheckBox,
     configure_data_table,
     interactive_header,
     set_embedded_editor_height,
@@ -61,18 +63,18 @@ class WorkflowStepTable(QTableWidget):
         super().__init__(0, 8, parent)
         self._anchor_ids: list[str] = []
         self.setHorizontalHeaderLabels(
-            ["步骤 ID", "动作", "锚点", "值", "等待", "OCR 条件", "确认", ""]
+            ["步骤 ID", "动作", "锚点", "值", "等待", "OCR 条件", "确认", "操作"]
         )
-        configure_data_table(self, row_height=46)
+        configure_data_table(self, row_height=38)
         interactive_header(self)
         self.setMinimumHeight(120)
-        self.setColumnWidth(0, 160)
-        self.setColumnWidth(1, 92)
-        self.setColumnWidth(2, 150)
-        self.setColumnWidth(3, 140)
-        self.setColumnWidth(4, 90)
-        self.setColumnWidth(5, 320)
-        self.setColumnWidth(6, 64)
+        self.setColumnWidth(0, 80)
+        self.setColumnWidth(1, 118)
+        self.setColumnWidth(2, 180)
+        self.setColumnWidth(3, 170)
+        self.setColumnWidth(4, 108)
+        self.setColumnWidth(5, 360)
+        self.setColumnWidth(6, 50)
         self.setColumnWidth(7, 104)
 
     def set_steps(self, steps: list[StepRow], anchor_ids: list[str]) -> None:
@@ -115,13 +117,7 @@ class WorkflowStepTable(QTableWidget):
         condition.expected_text.textChanged.connect(lambda _text: self.rows_changed.emit())
         condition.timeout_seconds.valueChanged.connect(lambda _value: self.rows_changed.emit())
         self.setCellWidget(row, 5, condition)
-        confirm = NoWheelComboBox()
-        confirm.setObjectName("TableComboBox")
-        set_embedded_editor_height(confirm)
-        confirm.addItem("否", False)
-        confirm.addItem("是", True)
-        confirm.setCurrentIndex(1 if step.requires_confirmation else 0)
-        confirm.currentIndexChanged.connect(lambda _idx: self.rows_changed.emit())
+        confirm = self._checkbox(step.requires_confirmation)
         self.setCellWidget(row, 6, confirm)
         self.setCellWidget(row, 7, self._row_buttons(row))
         self._sync_action_controls(row)
@@ -174,10 +170,7 @@ class WorkflowStepTable(QTableWidget):
         condition = ConditionEditor()
         condition.setEnabled(False)
         self.setCellWidget(target, 5, condition)
-        confirm = NoWheelComboBox()
-        confirm.setObjectName("TableComboBox")
-        set_embedded_editor_height(confirm)
-        confirm.addItem("否", False)
+        confirm = self._checkbox(False)
         confirm.setEnabled(False)
         self.setCellWidget(target, 6, confirm)
         self._rebind_buttons()
@@ -197,7 +190,7 @@ class WorkflowStepTable(QTableWidget):
             condition_data = (
                 condition.condition() if isinstance(condition, ConditionEditor) else {}
             )
-            confirm = self._combo_data(row, 6)
+            confirm = self._checkbox_value(row, 6)
             result.append(
                 StepRow(
                     step_id=step_id or self._next_step_id("step"),
@@ -240,6 +233,23 @@ class WorkflowStepTable(QTableWidget):
         combo.currentIndexChanged.connect(lambda _idx: self.rows_changed.emit())
         return combo
 
+    def _checkbox(self, checked: bool) -> QCheckBox:
+        """创建表格内复选框。
+
+        Args:
+            checked: 初始勾选状态。
+
+        Returns:
+            可编辑的确认复选框。
+        """
+
+        checkbox = TableCheckBox()
+        checkbox.setObjectName("TableCheck")
+        set_embedded_editor_height(checkbox)
+        checkbox.setChecked(checked)
+        checkbox.toggled.connect(lambda _checked: self.rows_changed.emit())
+        return checkbox
+
     def _row_buttons(self, row: int) -> QWidget:
         """创建行操作按钮。"""
 
@@ -255,7 +265,7 @@ class WorkflowStepTable(QTableWidget):
             button = QPushButton(label)
             button.setToolTip(tooltip)
             button.setObjectName("TableDanger" if danger else "TableAction")
-            button.setFixedSize(28, 28)
+            button.setFixedSize(22, 22)
             button.clicked.connect(callback)
             layout.addWidget(button)
         return widget
@@ -323,6 +333,12 @@ class WorkflowStepTable(QTableWidget):
 
         widget = self.cellWidget(row, column)
         return widget.currentData() if isinstance(widget, QComboBox) else None
+
+    def _checkbox_value(self, row: int, column: int) -> bool:
+        """读取复选框状态。"""
+
+        widget = self.cellWidget(row, column)
+        return widget.isChecked() if isinstance(widget, QCheckBox) else False
 
     def _line_text(self, row: int, column: int) -> str:
         """读取文本框内容。"""

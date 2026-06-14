@@ -143,7 +143,7 @@ class MainWindow(QMainWindow):
         self._nav_toggle.toggled.connect(self._nav.setVisible)
         layout.addWidget(self._nav_toggle)
 
-        self._right_toggle = QPushButton("上下文")
+        self._right_toggle = QPushButton("系统状态")
         self._right_toggle.setObjectName("Secondary")
         self._right_toggle.setCheckable(True)
         self._right_toggle.setChecked(True)
@@ -181,10 +181,10 @@ class MainWindow(QMainWindow):
         return self._nav
 
     def _build_right_panel(self) -> QWidget:
-        """构建右侧上下文栏。
+        """构建右侧系统状态栏。
 
         Returns:
-            上下文栏部件。
+            系统状态栏部件。
         """
 
         panel = QFrame()
@@ -193,7 +193,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
-        title = QLabel("上下文")
+        title = QLabel("系统状态")
         title.setObjectName("PageTitle")
         layout.addWidget(title)
         self._context = QLabel(self._context_text("设备接入与校准"))
@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
         self._logger.info("切换页面: %s", title)
 
     def _context_text(self, title: str) -> str:
-        """生成右侧上下文状态文本。
+        """生成右侧系统状态文本。
 
         Args:
             title: 当前页面标题。
