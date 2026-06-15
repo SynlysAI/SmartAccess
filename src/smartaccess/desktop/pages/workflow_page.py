@@ -13,10 +13,10 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QInputDialog,
-    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QSizePolicy,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +33,7 @@ def _selectable_msg(parent, icon, title, text):
     return box
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.widgets.cards import create_card
+from smartaccess.desktop.widgets import rich_text
 from smartaccess.desktop.widgets.table_style import NoWheelComboBox
 from smartaccess.desktop.widgets.workflow_step_table import StepRow, WorkflowStepTable
 from smartaccess.runtime.application.facade import RuntimeFacade
@@ -209,7 +210,7 @@ class WorkflowPage(QWidget):
         label.setObjectName("PageHint")
         layout.addWidget(label)
 
-        self._result = QPlainTextEdit()
+        self._result = QTextEdit()
         self._result.setObjectName("WorkflowResult")
         self._result.setReadOnly(True)
         self._result.setPlaceholderText("检查或 AI 生成结果会显示在这里。")
@@ -533,7 +534,7 @@ class WorkflowPage(QWidget):
         """
 
         text = message.strip()
-        self._result.setPlainText(text)
+        self._result.setHtml(rich_text.markdownish("检查结果", text))
         self._result.setToolTip(text)
 
     def _clear_result(self) -> None:
