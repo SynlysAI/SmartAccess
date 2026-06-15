@@ -1,1 +1,1 @@
-"""Shared SmartAccess modules used by desktop and runtime packages."""
+"""SmartAccess 共享基础设施。"""

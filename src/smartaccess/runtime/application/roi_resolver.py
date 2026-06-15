@@ -1,8 +1,12 @@
-"""Resolve calibrated ROI coordinates against the current window size."""
+"""按当前窗口尺寸解析校准 ROI 坐标。"""
 
 from __future__ import annotations
 
-from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion, WindowSignature
+from smartaccess.shared.contracts.anchors import (
+    AnchorDefinition,
+    PixelRegion,
+    WindowSignature,
+)
 
 
 def resolve_anchor_roi(
@@ -12,16 +16,20 @@ def resolve_anchor_roi(
     current_width: int | None = None,
     current_height: int | None = None,
 ) -> PixelRegion | None:
-    """Return the best absolute ROI for the current window dimensions."""
+    """返回当前窗口尺寸下最合适的绝对 ROI。
 
-    if (
-        anchor.action_region.normalized is not None
-        and current_width
-        and current_height
-        and current_width > 0
-        and current_height > 0
-    ):
-        normalized = anchor.action_region.normalized
+    Args:
+        anchor: 锚点定义。
+        signature: 锚点配置中的窗口签名。
+        current_width: 当前窗口宽度。
+        current_height: 当前窗口高度。
+
+    Returns:
+        像素坐标 ROI；无法解析时返回 None。
+    """
+
+    normalized = anchor.action_region.normalized
+    if current_width and current_height and current_width > 0 and current_height > 0:
         return PixelRegion(
             x=normalized.x * current_width,
             y=normalized.y * current_height,
@@ -30,13 +38,7 @@ def resolve_anchor_roi(
         )
     if anchor.action_region.pixel is not None:
         return anchor.action_region.pixel
-    if (
-        anchor.action_region.normalized is not None
-        and signature is not None
-        and signature.capture_width
-        and signature.capture_height
-    ):
-        normalized = anchor.action_region.normalized
+    if signature and signature.capture_width and signature.capture_height:
         return PixelRegion(
             x=normalized.x * signature.capture_width,
             y=normalized.y * signature.capture_height,
@@ -46,10 +48,29 @@ def resolve_anchor_roi(
     return None
 
 
-def aspect_ratio_drift(signature: WindowSignature | None, *, current_width: int, current_height: int) -> float:
-    """Return relative aspect-ratio drift from calibration capture size."""
+def aspect_ratio_drift(
+    signature: WindowSignature | None,
+    *,
+    current_width: int,
+    current_height: int,
+) -> float:
+    """计算当前窗口相对校准截图的宽高比漂移。
 
-    if not signature or not signature.capture_width or not signature.capture_height or current_height <= 0:
+    Args:
+        signature: 锚点配置中的窗口签名。
+        current_width: 当前窗口宽度。
+        current_height: 当前窗口高度。
+
+    Returns:
+        相对漂移比例。
+    """
+
+    if (
+        not signature
+        or not signature.capture_width
+        or not signature.capture_height
+        or current_height <= 0
+    ):
         return 0.0
     base = signature.capture_width / signature.capture_height
     current = current_width / current_height

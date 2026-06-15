@@ -1,9 +1,4 @@
-"""Adapter-facing ports for the application layer.
-
-Application services and the orchestration loop depend on these Protocols,
-never on concrete providers. Concrete implementations (stub or real) live under
-:mod:`smartaccess.runtime.adapters`.
-"""
+"""应用层与外部适配器之间的端口协议。"""
 
 from __future__ import annotations
 
@@ -14,19 +9,16 @@ from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
 from smartaccess.shared.contracts.workflow import WorkflowContract
 
 
-# --------------------------------------------------------------------------- #
-# DTOs exchanged across the port boundary
-# --------------------------------------------------------------------------- #
 @dataclass(slots=True)
 class GenerationResult:
-    """Outcome of turning an experiment plan into local instructions."""
+    """实验计划生成结果。"""
 
     instructions: list[str]
 
 
 @dataclass(slots=True)
 class ProcessExecutionState:
-    """Normalized execution state read from the downstream process host."""
+    """下游过程主机的执行状态。"""
 
     status: str
     detail: str
@@ -35,7 +27,7 @@ class ProcessExecutionState:
 
 @dataclass(slots=True)
 class WindowInfo:
-    """A discovered instrument window."""
+    """发现到的目标软件窗口。"""
 
     title: str
     width: int = 0
@@ -46,7 +38,7 @@ class WindowInfo:
 
 @dataclass(slots=True)
 class OcrReading:
-    """A single OCR/vision reading with provenance for the run trace."""
+    """一次 OCR 或视觉读取结果。"""
 
     roi: str
     text: str
@@ -57,7 +49,7 @@ class OcrReading:
 
 @dataclass(slots=True)
 class ActionOutcome:
-    """Result of running one action primitive through the automation provider."""
+    """自动化动作执行结果。"""
 
     ok: bool
     detail: str = ""
@@ -66,57 +58,72 @@ class ActionOutcome:
 
 @dataclass(slots=True)
 class Screenshot:
-    """PNG screenshot bytes plus source dimensions."""
+    """PNG 截图字节及尺寸。"""
 
     data: bytes
     width: int = 0
     height: int = 0
 
 
-# --------------------------------------------------------------------------- #
-# Edge / experiment ports (used by the device-side Edge API)
-# --------------------------------------------------------------------------- #
 class InstructionGenerator(Protocol):
-    """Turns an experiment plan into local execution instructions."""
+    """把实验计划转换成本地执行指令。"""
 
-    def generate(self, experiment_plan: str) -> GenerationResult: ...
+    def generate(self, experiment_plan: str) -> GenerationResult:
+        """生成执行指令。
+
+        Args:
+            experiment_plan: 实验计划文本。
+
+        Returns:
+            指令生成结果。
+        """
 
 
 class ProcessExecutorClient(Protocol):
-    """Drives the downstream process host (e.g. an instrument via UDP)."""
+    """驱动下游过程主机的客户端协议。"""
 
-    def execute_process(self) -> Any: ...
+    def execute_process(self) -> Any:
+        """执行下游过程。"""
 
-    def read_execution_state(self) -> ProcessExecutionState: ...
+    def read_execution_state(self) -> ProcessExecutionState:
+        """读取下游过程状态。"""
 
 
-# --------------------------------------------------------------------------- #
-# Runtime execution ports (used by the orchestration loop)
-# --------------------------------------------------------------------------- #
 class AutomationProvider(Protocol):
-    """UI-level automation against an instrument upper-computer."""
+    """目标软件 UI 自动化提供者协议。"""
 
-    def window_present(self, title_contains: str | None) -> bool: ...
+    def window_present(self, title_contains: str | None) -> bool:
+        """判断目标窗口是否存在。"""
 
-    def discover_windows(self) -> list[WindowInfo]: ...
+    def discover_windows(self) -> list[WindowInfo]:
+        """扫描可接入窗口。"""
 
-    def locate_anchor(self, anchor_id: str) -> bool: ...
+    def locate_anchor(self, anchor_id: str) -> bool:
+        """判断锚点是否可定位。"""
 
-    def configure_profile(self, profile: Any | None) -> None: ...
+    def configure_profile(self, profile: Any | None) -> None:
+        """配置当前锚点配置。"""
 
     def run_action(
-        self, action: str, target: str | None, value: Any | None
-    ) -> ActionOutcome: ...
+        self,
+        action: str,
+        target: str | None,
+        value: Any | None,
+    ) -> ActionOutcome:
+        """执行一个 UI 动作。"""
 
-    def screenshot(self, label: str) -> bytes: ...
+    def screenshot(self, label: str) -> bytes:
+        """截取当前窗口或桌面图像。"""
 
-    def capture_window(self, hwnd: int) -> bytes | None: ...
+    def capture_window(self, hwnd: int) -> bytes | None:
+        """按窗口句柄截图。"""
 
 
 class VisionProvider(Protocol):
-    """Screenshot-based recognition: OCR, presence detection, template match."""
+    """截图视觉识别提供者协议。"""
 
-    def read_text(self, roi: str) -> OcrReading: ...
+    def read_text(self, roi: str) -> OcrReading:
+        """读取指定 ROI 文本。"""
 
     def read_roi_text(
         self,
@@ -124,92 +131,124 @@ class VisionProvider(Protocol):
         screenshot: bytes | None,
         anchor: AnchorDefinition,
         roi: PixelRegion | None = None,
-    ) -> OcrReading: ... 
+    ) -> OcrReading:
+        """读取指定锚点 ROI 文本。"""
 
-    def detect_presence(self, roi: str) -> bool: ...
+    def detect_presence(self, roi: str) -> bool:
+        """检测指定 ROI 是否存在目标。"""
 
-    def match_template(self, roi: str) -> OcrReading: ...
+    def match_template(self, roi: str) -> OcrReading:
+        """执行模板匹配。"""
 
-    def sample_color(self, roi: str) -> OcrReading: ...
+    def sample_color(self, roi: str) -> OcrReading:
+        """采样指定 ROI 颜色。"""
 
 
 class PlatformClient(Protocol):
-    """Isolates SpecLabOS interface differences (platform_adapter.yaml)."""
+    """SpecLabOS 平台客户端协议。"""
 
-    def health(self) -> bool: ...
+    def health(self) -> bool:
+        """检查平台是否可用。"""
 
-    def fetch_task(self) -> dict[str, Any] | None: ...
+    def fetch_task(self) -> dict[str, Any] | None:
+        """拉取待执行任务。"""
 
-    def fetch_template(self, template_id: str, template_version: str) -> dict[str, Any]: ...
+    def fetch_template(
+        self,
+        template_id: str,
+        template_version: str,
+    ) -> dict[str, Any]:
+        """拉取指定模板版本。"""
 
-    def list_templates(self) -> list[dict[str, Any]]: ...
+    def list_templates(self) -> list[dict[str, Any]]:
+        """列出云端模板。"""
 
-    def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+    def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """发布模板。"""
 
-    def delete_template(self, template_id: str, template_version: str) -> bool: ...
+    def delete_template(self, template_id: str, template_version: str) -> bool:
+        """删除模板版本。"""
 
-    def upload_status(self, payload: dict[str, Any]) -> bool: ...
+    def upload_status(self, payload: dict[str, Any]) -> bool:
+        """上传运行状态。"""
 
-    def upload_logs(self, payload: dict[str, Any]) -> bool: ...
+    def upload_logs(self, payload: dict[str, Any]) -> bool:
+        """上传运行日志。"""
 
-    def upload_results(self, payload: dict[str, Any]) -> bool: ...
+    def upload_results(self, payload: dict[str, Any]) -> bool:
+        """上传运行结果。"""
 
 
 class ArtifactStore(Protocol):
-    """Stores screenshots, logs, and JSONL produced during a run."""
+    """运行产物存储协议。"""
 
-    def save_screenshot(self, session_id: str, name: str, data: bytes) -> str: ...
+    def save_screenshot(self, session_id: str, name: str, data: bytes) -> str:
+        """保存截图。"""
 
-    def save_text(self, session_id: str, name: str, text: str) -> str: ...
+    def save_text(self, session_id: str, name: str, text: str) -> str:
+        """保存文本。"""
 
-    def append_jsonl(self, session_id: str, name: str, line: str) -> str: ...
+    def append_jsonl(self, session_id: str, name: str, line: str) -> str:
+        """追加 JSONL 行。"""
 
 
 class WorkflowDraftGenerator(Protocol):
-    """Turns a natural-language prompt + context into a workflow draft."""
+    """自然语言工作流草稿生成器协议。"""
 
-    def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> Any: ...
+    def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> Any:
+        """生成工作流草稿。"""
 
 
 class InstrumentProfileDraftGenerator(Protocol):
-    """Turns onboarding context into a reviewable instrument profile draft."""
+    """仪器锚点配置草稿生成器协议。"""
 
-    def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> Any: ...
+    def draft_from_prompt(self, prompt: str, context: dict[str, Any]) -> Any:
+        """生成仪器锚点配置草稿。"""
 
 
 class TemplateVersionMissing(Exception):
-    """Raised by a platform client when a requested template version is absent."""
+    """请求的模板版本不存在。"""
 
     def __init__(self, template_id: str, template_version: str) -> None:
+        """初始化异常。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+        """
+
         self.template_id = template_id
         self.template_version = template_version
         super().__init__(f"模板版本不存在: {template_id}@{template_version}")
 
 
 class PlatformOffline(Exception):
-    """Raised by a platform client when the platform is unreachable."""
+    """平台不可达异常。"""
 
     def __init__(self, detail: str = "platform offline") -> None:
+        """初始化异常。
+
+        Args:
+            detail: 异常详情。
+        """
+
         self.detail = detail
         super().__init__(detail)
 
 
-# --------------------------------------------------------------------------- #
-# Projection DTOs — UI-facing shapes derived from domain models
-# --------------------------------------------------------------------------- #
 @dataclass(slots=True)
 class WorkflowListEntry:
-    """Projection for the workflow list UI with source-kind differentiation."""
+    """工作流列表 UI 投影。"""
 
     workflow: WorkflowContract
-    source_kind: str  # "draft" | "local_template"
-    storage_ref: str  # filesystem path or template identity
+    source_kind: str
+    storage_ref: str
     display_label: str
 
 
 @dataclass(slots=True)
 class InstrumentReferenceInfo:
-    """Pre-check result before deleting an instrument profile."""
+    """删除仪器前的引用检查结果。"""
 
     device_id: str
     draft_count: int = 0

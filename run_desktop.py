@@ -1,34 +1,60 @@
-"""启动 SmartAccess 桌面应用的便捷脚本"""
+"""启动 SmartAccess 桌面应用的便捷脚本。"""
 
+from __future__ import annotations
+
+import os
 import sys
+from pathlib import Path
 
-print("=" * 60)
-print("启动 SmartAccess 桌面应用")
-print("=" * 60)
 
-# 显示当前配置
-from smartaccess.shared.config.settings import AppSettings
+def _load_dotenv(env_path: Path) -> None:
+    """从项目根目录的 .env 文件加载环境变量。
 
-settings = AppSettings.from_env()
-active_profile = settings.ai_active_profile_config
-ai_label = (
-    f"{active_profile.label} / {active_profile.model}"
-    if active_profile is not None
-    else "Template / local rules"
-)
-ai_key_status = "set" if active_profile is not None and active_profile.configured else "missing"
-print(f"\n当前配置:")
-print(f"  - 工作区目录: {settings.workspace_dir}")
-print(f"  - AI profile: {settings.ai_active_profile or 'none'}")
-print(f"  - AI model: {ai_label}")
-print(f"  - AI key: {ai_key_status}")
-print(f"  - 自动化提供者: {settings.automation_provider}")
+    Args:
+        env_path: .env 文件路径。
+    """
 
-print("\n" + "=" * 60)
-print("正在启动...")
-print("=" * 60 + "\n")
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key and key not in os.environ:
+            os.environ[key] = _clean_env_value(value)
 
-# 启动桌面应用
-from smartaccess.bootstrap import run_desktop
 
-sys.exit(run_desktop(settings))
+def _clean_env_value(value: str) -> str:
+    """清理 .env 中的引号包裹值。"""
+
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
+        return cleaned[1:-1]
+    return cleaned
+
+
+def main() -> int:
+    """加载配置并启动 SmartAccess 桌面应用。"""
+
+    project_root = Path(__file__).resolve().parent
+    _load_dotenv(project_root / ".env")
+
+    from smartaccess.bootstrap import run_desktop
+    from smartaccess.shared.config.settings import AppSettings
+    from smartaccess.shared.logging import configure_logging
+
+    settings = AppSettings.from_env()
+    logger = configure_logging(settings)
+    logger.info("启动 SmartAccess 桌面应用")
+    logger.info("工作区目录: %s", settings.workspace_dir)
+    logger.info("自动化提供者: %s", settings.automation_provider)
+    logger.info("视觉提供者: %s", settings.vision_provider)
+    logger.info("AI 提供者: %s", settings.ai_provider)
+
+    return run_desktop(settings)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

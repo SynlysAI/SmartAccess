@@ -1,4 +1,4 @@
-"""Base types shared by all SmartAccess contract models."""
+"""SmartAccess 契约基础类型。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ JsonMap = dict[str, Any]
 
 
 class ContractModel(BaseModel):
-    """Strict base model for top-level contracts."""
+    """顶层契约模型基类。"""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -21,7 +21,7 @@ class ContractModel(BaseModel):
 
 
 class FlexibleContractModel(BaseModel):
-    """Extensible base model for nested blocks that need forward compatibility."""
+    """允许向前兼容扩展字段的嵌套契约模型基类。"""
 
     model_config = ConfigDict(
         extra="allow",

@@ -1,4 +1,4 @@
-"""Pydantic models for the device-side FastAPI MVP interface."""
+"""设备侧 FastAPI 接口契约模型。"""
 
 from __future__ import annotations
 
@@ -10,20 +10,20 @@ from .base import ContractModel, NonEmptyStr
 
 
 class TriggerGenerateRequest(ContractModel):
-    """Request payload for `/api/v1/experiment/trigger`."""
+    """`/api/v1/experiment/trigger` 请求体。"""
 
     experiment_plan: NonEmptyStr
     request_id: str | None = None
 
 
 class ExecuteRequest(ContractModel):
-    """Request payload for `/api/v1/experiment/execute`."""
+    """`/api/v1/experiment/execute` 请求体。"""
 
     request_id: str | None = None
 
 
 class HealthResponse(ContractModel):
-    """Response payload for `/health`."""
+    """`/health` 响应体。"""
 
     ok: bool
     service: NonEmptyStr
@@ -32,7 +32,7 @@ class HealthResponse(ContractModel):
 
 
 class ApiResponse(ContractModel):
-    """Generic operation response for trigger and execute endpoints."""
+    """触发和执行接口的通用响应体。"""
 
     ok: bool
     message: NonEmptyStr
@@ -44,7 +44,7 @@ class ApiResponse(ContractModel):
 
 
 class StatusResponse(ContractModel):
-    """Polling response for `/api/v1/experiment/status`."""
+    """`/api/v1/experiment/status` 轮询响应体。"""
 
     ok: bool
     request_id: str | None = None

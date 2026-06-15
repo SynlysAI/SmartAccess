@@ -1,4 +1,6 @@
-"""SmartAccess package root."""
+"""SmartAccess 重构版应用包。"""
+
+from __future__ import annotations
 
 __all__ = ["__version__"]
 

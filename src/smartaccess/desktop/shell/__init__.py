@@ -1,1 +1,1 @@
-"""Desktop shell entry points and high-level navigation."""
+"""桌面外壳模块。"""

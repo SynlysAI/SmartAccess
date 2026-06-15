@@ -1,8 +1,4 @@
-"""Template version domain types (SPEC §4, §5.2).
-
-A published workflow becomes a stable template identified by
-``template_id + template_version`` in the SpecLabOS template center.
-"""
+"""模板版本领域类型。"""
 
 from __future__ import annotations
 
@@ -11,7 +7,7 @@ from enum import StrEnum
 
 
 class TemplateVersionStatus(StrEnum):
-    """Lifecycle of a template version in the central template store."""
+    """模板版本生命周期状态。"""
 
     DRAFT = "Draft"
     STANDARDIZED = "Standardized"
@@ -22,10 +18,12 @@ class TemplateVersionStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class TemplateIdentity:
-    """Stable identity of a published template (never a runtime request_id)."""
+    """模板版本稳定身份。"""
 
     template_id: str
     template_version: str
 
     def __str__(self) -> str:
+        """返回模板身份字符串。"""
+
         return f"{self.template_id}@{self.template_version}"

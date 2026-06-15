@@ -1,45 +1,58 @@
-"""View model base and the event relay that marshals bus events to the GUI thread.
-
-The runtime :class:`EventBus` publishes from whatever thread the orchestrator
-runs on (often a background worker). Qt widgets must only be touched on the GUI
-thread, so :class:`EventRelay` re-emits each event as a Qt signal; Qt delivers
-it on the receiver's (GUI) thread via a queued connection.
-"""
+"""桌面视图模型基础类。"""
 
 from __future__ import annotations
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from smartaccess.runtime.application.facade import RuntimeFacade
-from smartaccess.shared.events import RuntimeEvent
+from smartaccess.shared.events.bus import RuntimeEvent
 
 
 class EventRelay(QObject):
-    """Bridges the thread-agnostic EventBus to thread-safe Qt signals."""
+    """把运行时事件转发为 Qt 信号。"""
 
-    event_received = pyqtSignal(object)  # RuntimeEvent
+    event_received = pyqtSignal(object)
 
     def __init__(self, facade: RuntimeFacade, parent: QObject | None = None) -> None:
+        """初始化事件转发器。
+
+        Args:
+            facade: 运行时门面。
+            parent: Qt 父对象。
+        """
+
         super().__init__(parent)
         self._unsubscribe = facade.subscribe(self._on_event)
 
-    def _on_event(self, event: RuntimeEvent) -> None:
-        # Emitting from any thread is safe; delivery happens on the GUI thread.
-        self.event_received.emit(event)
-
     def close(self) -> None:
+        """取消运行时事件订阅。"""
+
         self._unsubscribe()
+
+    def _on_event(self, event: RuntimeEvent) -> None:
+        """收到运行时事件后发出 Qt 信号。"""
+
+        self.event_received.emit(event)
 
 
 class ViewModel(QObject):
-    """Base for page view models. Holds the facade; exposes Qt signals."""
+    """页面视图模型基类。"""
 
     changed = pyqtSignal()
 
     def __init__(self, facade: RuntimeFacade, parent: QObject | None = None) -> None:
+        """初始化视图模型。
+
+        Args:
+            facade: 运行时门面。
+            parent: Qt 父对象。
+        """
+
         super().__init__(parent)
         self._facade = facade
 
     @property
     def facade(self) -> RuntimeFacade:
+        """返回运行时门面。"""
+
         return self._facade

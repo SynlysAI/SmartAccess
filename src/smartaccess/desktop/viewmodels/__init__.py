@@ -1,1 +1,1 @@
-"""Desktop view models backed by runtime projections."""
+"""SmartAccess 桌面视图模型。"""

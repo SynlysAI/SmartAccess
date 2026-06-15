@@ -1,18 +1,15 @@
-"""In-process event bus for runtime domain events.
-
-The bus is the backbone for live monitoring: the orchestration loop and
-application services publish :class:`RuntimeEvent` values, and subscribers
-(desktop view models, loggers, platform sync) react to them. It is deliberately
-tiny and dependency-free so every layer can share it.
-"""
+"""进程内运行时事件总线。"""
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+from smartaccess.shared.logging import get_logger
 
 from .runtime import RuntimeEventName
 
@@ -21,7 +18,7 @@ Subscriber = Callable[["RuntimeEvent"], None]
 
 @dataclass(slots=True)
 class RuntimeEvent:
-    """A single runtime event with its originating session and payload."""
+    """一条运行时事件。"""
 
     name: RuntimeEventName
     session_id: str | None = None
@@ -30,19 +27,35 @@ class RuntimeEvent:
 
 
 class EventBus:
-    """Thread-safe publish/subscribe hub for :class:`RuntimeEvent`."""
+    """线程安全的发布订阅事件中心。"""
 
-    def __init__(self) -> None:
+    def __init__(self, logger: logging.Logger | None = None) -> None:
+        """初始化事件总线。
+
+        Args:
+            logger: 可选日志器；为空时使用 SmartAccess 默认日志器。
+        """
+
         self._subscribers: list[Subscriber] = []
         self._lock = threading.Lock()
+        self._logger = logger or get_logger()
 
     def subscribe(self, callback: Subscriber) -> Callable[[], None]:
-        """Register ``callback``; returns an unsubscribe function."""
+        """注册事件订阅者。
+
+        Args:
+            callback: 事件回调函数。
+
+        Returns:
+            取消订阅函数。
+        """
 
         with self._lock:
             self._subscribers.append(callback)
 
         def _unsubscribe() -> None:
+            """取消当前订阅者。"""
+
             with self._lock:
                 if callback in self._subscribers:
                     self._subscribers.remove(callback)
@@ -50,10 +63,10 @@ class EventBus:
         return _unsubscribe
 
     def publish(self, event: RuntimeEvent) -> None:
-        """Deliver ``event`` to every subscriber.
+        """发布事件到所有订阅者。
 
-        Subscriber exceptions are swallowed so one bad listener cannot break the
-        run loop; delivery order matches subscription order.
+        Args:
+            event: 要发布的事件。
         """
 
         with self._lock:
@@ -61,8 +74,12 @@ class EventBus:
         for callback in subscribers:
             try:
                 callback(event)
-            except Exception:  # noqa: BLE001 - a listener must never break publishing
-                continue
+            except Exception:  # noqa: BLE001 - 订阅者异常不能中断运行时
+                self._logger.exception(
+                    "事件订阅者处理失败: name=%s session_id=%s",
+                    event.name,
+                    event.session_id,
+                )
 
     def emit(
         self,
@@ -71,7 +88,16 @@ class EventBus:
         session_id: str | None = None,
         **payload: Any,
     ) -> RuntimeEvent:
-        """Convenience helper to build and publish an event in one call."""
+        """构造并发布一条事件。
+
+        Args:
+            name: 事件名称。
+            session_id: 可选运行会话 ID。
+            **payload: 事件载荷字段。
+
+        Returns:
+            已发布的事件对象。
+        """
 
         event = RuntimeEvent(name=name, session_id=session_id, payload=dict(payload))
         self.publish(event)

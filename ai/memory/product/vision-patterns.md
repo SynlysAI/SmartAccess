@@ -1,6 +1,6 @@
 # Vision Patterns Memory
 
-- `scope`: SmartAccess v2 OCR 观测策略与锚点区域约束。
+- `scope`: SmartAccess OCR 观测策略与锚点区域约束。
 - `source_of_truth`: `docs/PRD.zh-CN.md`, `docs/architecture/system-overview.md`, `docs/contracts/interfaces.md`
 - `last_reviewed`: 2026-06-11
 - `related_contracts`: `anchors.yaml`, `run_trace.jsonl`
