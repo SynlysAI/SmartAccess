@@ -23,6 +23,7 @@ class AppSettings(BaseModel):
     log_level: str = Field(default="INFO")
     automation_provider: str = Field(default="stub")
     vision_provider: str = Field(default="stub")
+    vision_api_url: str = Field(default="http://100.84.59.58:8090")
     platform_provider: str = Field(default="stub")
     ai_provider: str = Field(default="template")
     ai_api_key: str | None = Field(default=None)
@@ -81,6 +82,10 @@ class AppSettings(BaseModel):
                 _get("SMARTACCESS_AUTOMATION_PROVIDER", "stub") or "stub"
             ),
             vision_provider=_get("SMARTACCESS_VISION_PROVIDER", "stub") or "stub",
+            vision_api_url=_get(
+                "SMARTACCESS_VISION_API_URL", "http://100.84.59.58:8090"
+            )
+            or "http://100.84.59.58:8090",
             platform_provider=_get("SMARTACCESS_PLATFORM_PROVIDER", "stub") or "stub",
             ai_provider=_get("SMARTACCESS_AI_PROVIDER", "template") or "template",
             ai_api_key=_get("SMARTACCESS_AI_API_KEY", _get("DEEPSEEK_API_KEY")),
