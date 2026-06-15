@@ -117,33 +117,33 @@ SmartAccess 采用“AI 认知 + 工程落地”的双层结构化架构，不�
 
 ### 1. 产品总览海报
 
-![SmartAccess 产品总览海报](docs/refer/smartaccess-product-overview.png)
+![SmartAccess 产品总览海报](resource/smartaccess-product-overview.png)
 
 ### 2. 双层架构图
 
-![SmartAccess 双层结构化架构](docs/refer/smartaccess-two-layer-architecture.png)
+![SmartAccess 双层结构化架构](resource/smartaccess-two-layer-architecture.png)
 
 
 ### 3. 非侵入式接入流程图
 
-![SmartAccess 非侵入式接入流程](docs/refer/smartaccess-noninvasive-workflow.png)
+![SmartAccess 非侵入式接入流程](resource/smartaccess-noninvasive-workflow.png)
 
 
 ### 4. 技术闭环图
 
-![SmartAccess 执行观测审计回传闭环](docs/refer/smartaccess-runtime-loop.png)
+![SmartAccess 执行观测审计回传闭环](resource/smartaccess-runtime-loop.png)
 
 ### 5. 桌面端功能分区图
 
-![SmartAccess 桌面端功能分区](docs/refer/smartaccess-desktop-workbench.png)
+![SmartAccess 桌面端功能分区](resource/smartaccess-desktop-workbench.png)
 
 ### 6. 平台集成场景图
 
-![SmartAccess 与 SpecLabOS 集成](docs/refer/smartaccess-speclabos-integration.png)
+![SmartAccess 与 SpecLabOS 集成](resource/smartaccess-speclabos-integration.png)
 
 ### 7. 设备记忆与复用图
 
-![SmartAccess 设备使用记忆驱动复用](docs/refer/smartaccess-device-memory-reuse.png)
+![SmartAccess 设备使用记忆驱动复用](resource/smartaccess-device-memory-reuse.png)
 
 
 ## AI 组件分层
