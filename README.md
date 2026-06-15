@@ -117,7 +117,7 @@ SmartAccess 采用“AI 认知 + 工程落地”的双层结构化架构，不�
 
 ### 1. 产品总览海报
 
-![SmartAccess 产品总览海报](docs/refer/smartaccess-product-overview.png)
+![SmartAccess 产品总览海报](resource/smartaccess-product-overview.png)
 
 ### 2. 双层架构图
 
