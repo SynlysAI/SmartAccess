@@ -2,7 +2,7 @@ name: smartaccess
 channels:
   - conda-forge
 dependencies:
-  - python>=3.11,<3.12
+  - python>=3.11,<3.13
   - pip>=24.0
   - pyyaml>=6.0
   - pydantic>=2.10

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from smartaccess.runtime.adapters import (
+    ApiVisionProvider,
     EchoInstructionGenerator,
     FileArtifactStore,
     LocalVisionProvider,
@@ -201,6 +202,14 @@ def _build_vision(settings: AppSettings):
             return LocalVisionProvider(workspace_dir=settings.workspace_dir)
         except Exception:  # noqa: BLE001 - 可选 OCR 依赖缺失时回退 stub
             get_logger().exception("本地视觉初始化失败，已回退 Stub")
+    if settings.vision_provider.lower() == "api":
+        try:
+            return ApiVisionProvider(
+                api_url=settings.vision_api_url,
+                workspace_dir=settings.workspace_dir,
+            )
+        except Exception:  # noqa: BLE001 - API 不可用时回退 stub
+            get_logger().exception("API 视觉初始化失败，已回退 Stub")
     return StubVisionProvider(low_confidence_first=False)
 
 
