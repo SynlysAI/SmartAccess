@@ -136,25 +136,29 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 0, 16, 0)
         layout.setSpacing(10)
 
-        self._nav_toggle = QPushButton("导航")
-        self._nav_toggle.setObjectName("Secondary")
+        self._nav_toggle = QPushButton("☰")
+        self._nav_toggle.setObjectName("Ghost")
         self._nav_toggle.setCheckable(True)
         self._nav_toggle.setChecked(True)
+        self._nav_toggle.setToolTip("显示或隐藏导航栏")
         self._nav_toggle.toggled.connect(self._nav.setVisible)
+        nav_font = self._nav_toggle.font()
+        nav_font.setBold(True)
+        self._nav_toggle.setFont(nav_font)
         layout.addWidget(self._nav_toggle)
 
-        self._right_toggle = QPushButton("系统状态")
-        self._right_toggle.setObjectName("Secondary")
+        self._right_toggle = QPushButton("ⓘ")
+        self._right_toggle.setObjectName("Ghost")
         self._right_toggle.setCheckable(True)
         self._right_toggle.setChecked(True)
+        self._right_toggle.setToolTip("显示或隐藏系统状态面板")
         self._right_toggle.toggled.connect(self._right_panel.setVisible)
-        layout.addWidget(self._right_toggle)
+        info_font = self._right_toggle.font()
+        info_font.setBold(True)
+        self._right_toggle.setFont(info_font)
 
         layout.addStretch(1)
-
-        workspace = QLabel(f"workspace: {self._settings.workspace_dir}")
-        workspace.setObjectName("PageHint")
-        layout.addWidget(workspace)
+        layout.addWidget(self._right_toggle)
         return bar
 
     def _build_nav(self) -> QListWidget:

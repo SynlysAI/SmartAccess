@@ -42,7 +42,20 @@ QMainWindow, QMainWindow > QWidget {{
 }}
 QFrame#TopBar {{
     background-color: {SURFACE};
-    border-bottom: 1px solid {BORDER};
+    border-bottom: 1px solid {BORDER_STRONG};
+}}QPushButton#Ghost {{
+    background: transparent;
+    color: {TEXT_SUBTLE};
+    border: none;
+    font-size: 17px;
+    padding: 4px 10px;
+}}
+QPushButton#Ghost:hover {{
+    background: {SURFACE_MUTED};
+    color: {TEXT};
+}}
+QPushButton#Ghost:checked {{
+    color: {PRIMARY};
 }}
 QFrame#Card, QFrame#RightPanel {{
     background-color: {SURFACE};
