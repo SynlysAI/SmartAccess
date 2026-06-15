@@ -288,6 +288,7 @@ class Orchestrator:
             return False
         if step.match_mode != "none" and matched is not True:
             detail = "OCR 结果未满足期望"
+            reading = observation.readings[0] if observation.readings else None
             self._record_trace(
                 session=session,
                 workflow=workflow,
@@ -307,6 +308,15 @@ class Orchestrator:
                 RuntimeEventName.RUN_FAILED,
                 step_id=step.id,
                 detail=detail,
+                anchor_id=step.anchor_id,
+                expected_text=step.expected_text,
+                actual_text=reading.text if reading else None,
+                match_mode=step.match_mode,
+                matched=matched,
+                attempts=attempts,
+                elapsed_seconds=elapsed,
+                wait_strategy=wait_strategy.model_dump(mode="json", exclude_none=True),
+                screenshot_path=screenshot_path,
             )
             return False
         self._emit_observation_event(
