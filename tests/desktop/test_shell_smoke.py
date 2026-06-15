@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QPointF  # noqa: E402
+from PyQt6.QtGui import QColor, QImage  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from smartaccess.bootstrap import build_runtime_facade  # noqa: E402
@@ -63,6 +64,28 @@ def _ai_profile_facade(tmp_path: Path):
             },
         )
     )
+
+
+def _png_bytes(width: int = 8, height: int = 6) -> bytes:
+    """生成测试用 PNG 截图字节。
+
+    Args:
+        width: 图片宽度。
+        height: 图片高度。
+
+    Returns:
+        PNG 格式字节。
+    """
+
+    from PyQt6.QtCore import QByteArray, QBuffer, QIODevice
+
+    image = QImage(width, height, QImage.Format.Format_RGB32)
+    image.fill(QColor("#FFFFFF"))
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    return bytes(data)
 
 
 def _facade(tmp_path: Path):
@@ -322,6 +345,35 @@ def test_calibration_page_explains_codex_503_error() -> None:
 
     assert "Codex 服务临时不可用" in message
     assert "HTTP 503" in message
+
+
+def test_ai_assist_keeps_current_capture_on_canvas(tmp_path: Path, monkeypatch) -> None:
+    _app()
+    from smartaccess.desktop.pages.calibration_page import CalibrationPage
+    from smartaccess.shared.contracts.anchors import AnchorsContract
+
+    facade = _ai_profile_facade(tmp_path)
+    page = CalibrationPage(facade)
+    capture = _png_bytes()
+    page._latest_capture = capture
+    page._canvas.load_image(capture)
+    monkeypatch.setattr(
+        "smartaccess.desktop.pages.calibration_page.QMessageBox.information",
+        lambda *args, **kwargs: None,
+    )
+
+    profile = AnchorsContract(
+        profile_id="ai_profile",
+        window_signature={
+            "title_contains": "Demo",
+            "screenshot_size": {"width": 8, "height": 6},
+        },
+        anchors=[],
+    )
+    page._on_ai_assist_done(profile)
+
+    assert page._latest_capture == capture
+    assert page._canvas.source_size() == (8, 6)
 
 
 def test_right_context_panel_persists_ai_profile_preferences(tmp_path: Path) -> None:

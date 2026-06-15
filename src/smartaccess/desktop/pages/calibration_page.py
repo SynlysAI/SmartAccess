@@ -401,7 +401,7 @@ class CalibrationPage(QWidget):
 
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI辅助接入")
-        self._load_profile(result)
+        self._load_profile(result, capture_data=self._latest_capture)
         reasoning = self._vm.ai_reasoning()
         QMessageBox.information(
             self,
@@ -476,14 +476,26 @@ class CalibrationPage(QWidget):
             return
         self._load_profile(profile)
 
-    def _load_profile(self, profile: AnchorsContract) -> None:
-        """把设备配置加载到当前页面。"""
+    def _load_profile(
+        self,
+        profile: AnchorsContract,
+        *,
+        capture_data: bytes | None = None,
+    ) -> None:
+        """把设备配置加载到当前页面。
+
+        Args:
+            profile: 待加载的设备锚点配置。
+            capture_data: 可选的当前截图；AI 草稿尚未保存时用于保留画布背景。
+        """
 
         self._canvas.clear_all()
         self._table.setRowCount(0)
         self._device_id.setText(profile.device_id)
         self._title_contains.setText(profile.window_signature.title_contains or "")
-        self._latest_capture = self._vm.load_instrument_capture(profile.profile_id)
+        self._latest_capture = capture_data or self._vm.load_instrument_capture(
+            profile.profile_id
+        )
         if self._latest_capture:
             self._canvas.load_image(self._latest_capture)
         for anchor in profile.anchors:
