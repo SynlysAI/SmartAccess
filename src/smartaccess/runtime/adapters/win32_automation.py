@@ -161,11 +161,12 @@ class Win32AutomationProvider:
     def _find_hwnd(self, title_contains: str | None) -> int | None:
         """查找目标窗口句柄。"""
 
-        windows = (
-            self._scanner.scan_contains(title_contains)
-            if title_contains
-            else self._scanner.scan()
-        )
+        if not title_contains:
+            windows = self._scanner.scan()
+        elif self._profile is not None and self._profile.window_signature.match_mode == "equals":
+            windows = self._scanner.scan_equals(title_contains)
+        else:
+            windows = self._scanner.scan_contains(title_contains)
         return windows[0].hwnd if windows else None
 
     def _restore_window(self, hwnd: int) -> None:
