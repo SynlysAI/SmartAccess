@@ -45,6 +45,7 @@ class WindowSignature(FlexibleContractModel):
     title_contains: str | None = None
     process_name: str | None = None
     screenshot_size: ScreenshotSize | None = None
+    match_mode: Literal["equals", "contains"] = "equals"
 
     @property
     def capture_width(self) -> int | None:

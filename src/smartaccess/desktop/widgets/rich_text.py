@@ -32,7 +32,7 @@ def panel(title: str, body: str, *, status: str | None = None) -> str:
     color = _status_color(status)
     return document(
         f"""
-<div style="font-size:14px;font-weight:700;color:{theme.TEXT};margin-bottom:6px;">
+<div style="font-size:14px;font-weight:700;color:{theme.TEXT};margin-bottom:3px;">
   {text(title)}
 </div>
 <div style="border-left:3px solid {color};padding-left:10px;">
@@ -79,9 +79,10 @@ def info_card(title: str, items: list[tuple[str, object | None]]) -> str:
 
     return (
         f"<div style=\"border:1px solid {theme.BORDER};border-radius:6px;"
-        f"background:{theme.SURFACE_ALT};padding:7px 8px;\">"
-        f"<div style=\"font-size:12px;font-weight:700;color:{theme.TEXT};"
-        f"margin-bottom:4px;\">{text(title)}</div>"
+        f"background:{theme.SURFACE_ALT};padding:5px 8px;\">"
+        f"<div style=\"font-size:13px;font-weight:700;color:{theme.PRIMARY};"
+        f"margin-bottom:5px;padding-bottom:4px;"
+        f"border-bottom:1px solid {theme.BORDER};\">{text(title)}</div>"
         f"{field_list(items)}</div>"
     )
 
