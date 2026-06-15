@@ -20,10 +20,10 @@ This note captures the implementation changes that landed after the original v2 
 ## Multi-Model AI Integration
 
 - Workflow draft generation and calibration-page anchor suggestion now share one OpenAI-compatible chat adapter.
-- The desktop calibration page exposes temporary overrides for:
-  - `AI provider`
-  - `AI base URL`
-  - `AI model`
+- The desktop right toolbar centralizes `AI profile` selection for workflow drafting and device onboarding.
+- The selected purpose-specific profiles are saved in `workspace/config/app_settings.json`.
+- Each profile owns its provider, base URL, model, timeout, User-Agent, and API key reference.
+- Workflow and calibration pages no longer expose model switching controls.
 - API keys are still expected from environment configuration and are not written into workspace files.
 - Legacy DeepSeek generators remain available, but now delegate to the shared OpenAI-compatible implementation.
 
@@ -36,13 +36,11 @@ This note captures the implementation changes that landed after the original v2 
 ## Environment Configuration
 
 - Added generic AI settings:
-  - `SMARTACCESS_AI_PROVIDER`
-  - `SMARTACCESS_AI_BASE_URL`
-  - `SMARTACCESS_AI_MODEL`
-  - `SMARTACCESS_AI_API_KEY`
-  - `SMARTACCESS_AI_TIMEOUT_SECONDS`
+  - `SMARTACCESS_AI_PROFILES`
+  - `SMARTACCESS_AI_ACTIVE_PROFILE`
   - `SMARTACCESS_AI_USER_AGENT`
-- `DEEPSEEK_*` settings remain backward-compatible.
+- Preferred profile-specific settings use the form `SMARTACCESS_AI_PROFILE_{PROFILE_ID}_PROVIDER`, `SMARTACCESS_AI_PROFILE_{PROFILE_ID}_BASE_URL`, `SMARTACCESS_AI_PROFILE_{PROFILE_ID}_MODEL`, and `SMARTACCESS_AI_PROFILE_{PROFILE_ID}_API_KEY`.
+- Profile-specific settings are the only supported AI configuration path.
 - The runtime now auto-loads the project-root `.env` file. Real process environment variables still take precedence over `.env`.
 
 ## Gateway Compatibility
