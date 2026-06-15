@@ -371,10 +371,11 @@ class Orchestrator:
             screenshot = self._executor.screenshot(step.id)
             if screenshot:
                 self._observer.configure_screenshot(screenshot)
+                snapshot = self._observer.anchor_snapshot(profile, step.anchor_id)
                 last_screenshot_path = self._run_sessions.save_screenshot(
                     session.session_id,
                     f"{step.id}_observe.png",
-                    screenshot,
+                    snapshot or screenshot,
                 )
             observation = self._observer.observe_anchor(profile, step.anchor_id)
             last_observation = observation

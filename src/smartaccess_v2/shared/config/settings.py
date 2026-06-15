@@ -60,7 +60,7 @@ class AppSettings(BaseModel):
                 value = env_file_values.get(name)
             return value if value not in (None, "") else default
 
-        workspace_dir = _get("SMARTACCESS_V2_WORKSPACE_DIR", "workspace_v2")
+        workspace_dir = _get("SMARTACCESS_WORKSPACE_DIR", "workspace")
         ai_base_url = _get(
             "SMARTACCESS_AI_BASE_URL",
             _get("DEEPSEEK_BASE_URL", "https://fufei.mossx.ai/v1"),

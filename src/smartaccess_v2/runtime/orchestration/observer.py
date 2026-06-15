@@ -6,10 +6,7 @@ import re
 from dataclasses import dataclass, field
 
 from smartaccess_v2.runtime.application.ports import OcrReading, VisionProvider
-from smartaccess_v2.shared.contracts.anchors import (
-    AnchorDefinition,
-    AnchorsContract,
-)
+from smartaccess_v2.shared.contracts.anchors import AnchorDefinition, AnchorsContract
 
 
 @dataclass(slots=True)
@@ -79,6 +76,31 @@ class Observer:
         reading = self._read_anchor(anchor)
         return Observation(readings=[reading], min_confidence=reading.confidence)
 
+    def anchor_snapshot(
+        self,
+        profile: AnchorsContract | None,
+        anchor_id: str | None,
+    ) -> bytes | None:
+        """返回锚点观察区域截图。
+
+        Args:
+            profile: 当前锚点配置。
+            anchor_id: 锚点 ID。
+
+        Returns:
+            PNG 截图字节；无法裁剪时返回 None。
+        """
+
+        if profile is None or not anchor_id:
+            return None
+        anchor = profile.anchor_map().get(anchor_id)
+        if anchor is None:
+            return None
+        capture = getattr(self._vision, "capture_anchor_image", None)
+        if not callable(capture):
+            return None
+        return capture(screenshot=self._screenshot, anchor=anchor)
+
     def matches(
         self,
         reading: OcrReading | None,
@@ -127,5 +149,5 @@ class Observer:
         return self._vision.read_roi_text(
             screenshot=self._screenshot,
             anchor=anchor,
-            roi=anchor.observe_region.pixel,
+            roi=None,
         )
