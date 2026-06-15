@@ -1,6 +1,6 @@
 # Workflow Primitives Memory
 
-- `scope`: SmartAccess v2 运行时允许使用的基础工作流动作和等待语义。
+- `scope`: SmartAccess 运行时允许使用的基础工作流动作和等待语义。
 - `source_of_truth`: `docs/PRD.zh-CN.md`, `docs/contracts/interfaces.md`
 - `last_reviewed`: 2026-06-11
 - `related_contracts`: `workflow.yaml`, `anchors.yaml`, `run_trace.jsonl`

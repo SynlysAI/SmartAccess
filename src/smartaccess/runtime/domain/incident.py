@@ -1,9 +1,4 @@
-"""Incident and recovery domain rules (SPEC §9).
-
-Encodes the incident taxonomy, the recovery action vocabulary, and the default
-recovery decision per incident type. The runtime ``RecoveryEngine`` consumes
-``default_recovery_for`` and escalates high-risk recoveries to manual confirm.
-"""
+"""异常和恢复策略领域模型。"""
 
 from __future__ import annotations
 
@@ -13,7 +8,7 @@ from enum import StrEnum
 
 
 class IncidentType(StrEnum):
-    """Incident taxonomy from SPEC §9."""
+    """运行异常类型。"""
 
     WINDOW_MISSING = "WindowMissing"
     ANCHOR_MISSING = "AnchorMissing"
@@ -25,7 +20,7 @@ class IncidentType(StrEnum):
 
 
 class RecoveryAction(StrEnum):
-    """The four recovery actions SmartAccess may take (PRD §8.8)."""
+    """恢复动作。"""
 
     RETRY = "retry"
     ROLLBACK = "rollback"
@@ -33,8 +28,7 @@ class RecoveryAction(StrEnum):
     ABORT = "abort"
 
 
-# Default recovery per incident type (SPEC §9 "默认处理" column).
-_DEFAULT_RECOVERY: dict[IncidentType, RecoveryAction] = {
+DEFAULT_RECOVERY: dict[IncidentType, RecoveryAction] = {
     IncidentType.WINDOW_MISSING: RecoveryAction.RETRY,
     IncidentType.ANCHOR_MISSING: RecoveryAction.RETRY,
     IncidentType.OCR_LOW_CONFIDENCE: RecoveryAction.RETRY,
@@ -43,9 +37,7 @@ _DEFAULT_RECOVERY: dict[IncidentType, RecoveryAction] = {
     IncidentType.TEMPLATE_VERSION_MISSING: RecoveryAction.ABORT,
     IncidentType.EXECUTOR_FAILED: RecoveryAction.RETRY,
 }
-
-# Incident types whose recovery must wait for a human before continuing.
-_REQUIRES_MANUAL_CONFIRM: frozenset[IncidentType] = frozenset(
+MANUAL_CONFIRM_INCIDENTS = frozenset(
     {
         IncidentType.SAFETY_LIMIT_VIOLATION,
         IncidentType.TEMPLATE_VERSION_MISSING,
@@ -54,20 +46,20 @@ _REQUIRES_MANUAL_CONFIRM: frozenset[IncidentType] = frozenset(
 
 
 def default_recovery_for(incident_type: IncidentType) -> RecoveryAction:
-    """Return the default recovery action for ``incident_type``."""
+    """返回异常类型默认恢复动作。"""
 
-    return _DEFAULT_RECOVERY.get(incident_type, RecoveryAction.MANUAL_CONFIRM)
+    return DEFAULT_RECOVERY.get(incident_type, RecoveryAction.MANUAL_CONFIRM)
 
 
 def requires_manual_confirm(incident_type: IncidentType) -> bool:
-    """Whether this incident class must escalate to a manual confirmation."""
+    """返回异常类型是否需要人工确认。"""
 
-    return incident_type in _REQUIRES_MANUAL_CONFIRM
+    return incident_type in MANUAL_CONFIRM_INCIDENTS
 
 
 @dataclass(slots=True)
 class Incident:
-    """A single incident raised during a run, with its recovery decision."""
+    """运行时打开的一条异常记录。"""
 
     incident_id: str
     session_id: str
@@ -89,7 +81,7 @@ class Incident:
         incident_type: IncidentType,
         detail: str,
     ) -> "Incident":
-        """Open an incident, deriving the default recovery + escalation flag."""
+        """创建异常并推导恢复动作。"""
 
         return cls(
             incident_id=incident_id,

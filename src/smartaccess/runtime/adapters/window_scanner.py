@@ -1,41 +1,23 @@
-"""Real Windows window scanner via Win32 API (user32.dll).
-
-Zero-dependency window enumeration — usable on any Windows machine without
-installing pywinauto. The :class:`WindowScanner` is callable from anywhere;
-:class:`RealWindowDiscovery` wraps it as a drop-in replacement for the
-stub's ``discover_windows`` return.
-"""
+"""基于 Win32 API 的窗口扫描和截图工具。"""
 
 from __future__ import annotations
 
 import ctypes
+import platform
+import struct
+import zlib
 from ctypes import wintypes
 from dataclasses import dataclass
+from typing import Any
 
-# --------------------------------------------------------------------------- #
-# Win32 API bindings
-# --------------------------------------------------------------------------- #
-user32 = ctypes.windll.user32
-
-WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-
-user32.EnumWindows.argtypes = (WNDENUMPROC, wintypes.LPARAM)
-user32.EnumWindows.restype = wintypes.BOOL
-user32.IsWindowVisible.argtypes = (wintypes.HWND,)
-user32.IsWindowVisible.restype = wintypes.BOOL
-user32.IsWindowEnabled.argtypes = (wintypes.HWND,)
-user32.IsWindowEnabled.restype = wintypes.BOOL
-user32.GetWindowTextLengthW.argtypes = (wintypes.HWND,)
-user32.GetWindowTextLengthW.restype = ctypes.c_int
-user32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
-user32.GetWindowTextW.restype = ctypes.c_int
-user32.GetClientRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
-user32.GetClientRect.restype = wintypes.BOOL
+_IS_WINDOWS = platform.system().lower() == "windows"
+_USER32: Any | None = ctypes.windll.user32 if _IS_WINDOWS else None
+_GDI32: Any | None = ctypes.windll.gdi32 if _IS_WINDOWS else None
 
 
 @dataclass(slots=True)
 class WindowInfo:
-    """A top-level visible window discovered on the desktop."""
+    """桌面顶层窗口信息。"""
 
     title: str
     hwnd: int
@@ -44,18 +26,53 @@ class WindowInfo:
 
     @property
     def matched(self) -> bool:
+        """返回窗口是否匹配扫描条件。"""
+
         return True
 
 
+class CaptureErrorReason:
+    """窗口截图失败原因。"""
+
+    MINIMIZED = "该窗口已最小化，请先恢复窗口再捕获"
+    NO_ACCESS = "无法获取窗口画面：权限不足或被系统保护"
+    EMPTY_RECT = "窗口区域无效（尺寸为 0）"
+    GDI_FAILED = "GDI 截图失败，窗口可能使用了硬件加速渲染"
+    NOT_WINDOWS = "当前系统不支持 Win32 窗口截图"
+    UNKNOWN = "截图失败：未知错误"
+
+    @classmethod
+    def from_hwnd(cls, hwnd: int) -> str | None:
+        """检查截图前置条件。
+
+        Args:
+            hwnd: 窗口句柄。
+
+        Returns:
+            错误原因；可继续截图时返回 None。
+        """
+
+        if _USER32 is None:
+            return cls.NOT_WINDOWS
+        if _USER32.IsIconic(hwnd):
+            return cls.MINIMIZED
+        rect = wintypes.RECT()
+        if not _USER32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return cls.NO_ACCESS
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return cls.EMPTY_RECT
+        return None
+
+
 class WindowScanner:
-    """Enumerate visible, enabled top-level windows via ``EnumWindows``.
+    """枚举可见、可用的顶层窗口。"""
 
-    Usage::
+    def __init__(self) -> None:
+        """初始化窗口扫描器。"""
 
-        scanner = WindowScanner()
-        windows = scanner.scan()                # all visible windows
-        matches = scanner.scan_contains("微信")  # filter by title substring
-    """
+        _configure_win32_api()
 
     def scan(
         self,
@@ -64,16 +81,26 @@ class WindowScanner:
         min_title_len: int = 1,
         skip_empty_title: bool = True,
     ) -> list[WindowInfo]:
-        """Return visible, enabled top-level windows ordered by title."""
+        """扫描窗口列表。
 
+        Args:
+            title_contains: 可选标题过滤文本。
+            min_title_len: 最小标题长度。
+            skip_empty_title: 是否跳过空标题窗口。
+
+        Returns:
+            窗口信息列表。
+        """
+
+        if _USER32 is None:
+            return []
         results: list[WindowInfo] = []
 
         def _callback(hwnd: int, _lparam: int) -> bool:
-            if not user32.IsWindowVisible(hwnd):
+            if not _USER32.IsWindowVisible(hwnd):
                 return True
-            if not user32.IsWindowEnabled(hwnd):
+            if not _USER32.IsWindowEnabled(hwnd):
                 return True
-
             title = _get_window_title(hwnd)
             if skip_empty_title and not title.strip():
                 return True
@@ -81,268 +108,246 @@ class WindowScanner:
                 return True
             if title_contains and title_contains.lower() not in title.lower():
                 return True
-
             rect = wintypes.RECT()
-            if user32.GetClientRect(hwnd, ctypes.byref(rect)):
-                w = rect.right - rect.left
-                h = rect.bottom - rect.top
+            if _USER32.GetClientRect(hwnd, ctypes.byref(rect)):
+                width = rect.right - rect.left
+                height = rect.bottom - rect.top
             else:
-                w, h = 0, 0
-
-            results.append(WindowInfo(title=title, hwnd=hwnd, width=w, height=h))
+                width, height = 0, 0
+            results.append(WindowInfo(title=title, hwnd=hwnd, width=width, height=height))
             return True
 
-        user32.EnumWindows(WNDENUMPROC(_callback), 0)
-        results.sort(key=lambda wi: wi.title.lower())
+        enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        _USER32.EnumWindows(enum_proc(_callback), 0)
+        results.sort(key=lambda item: item.title.lower())
         return results
 
     def scan_contains(self, substring: str) -> list[WindowInfo]:
-        """Shortcut: only windows whose title contains ``substring``."""
+        """扫描标题包含指定文本的窗口。
+
+        Args:
+            substring: 标题包含文本。
+
+        Returns:
+            匹配窗口列表。
+        """
 
         return self.scan(title_contains=substring)
 
 
-def _get_window_title(hwnd: int) -> str:
-    length = user32.GetWindowTextLengthW(hwnd)
-    if length == 0:
-        return ""
-    buf = ctypes.create_unicode_buffer(length + 1)
-    user32.GetWindowTextW(hwnd, buf, length + 1)
-    return buf.value or ""
-
-
-# --------------------------------------------------------------------------- #
-# Window screenshot via GDI (zero extra dependencies)
-# --------------------------------------------------------------------------- #
-gdi32 = ctypes.windll.gdi32
-gdi32.CreateCompatibleDC.argtypes = (wintypes.HDC,)
-gdi32.CreateCompatibleDC.restype = wintypes.HDC
-gdi32.CreateCompatibleBitmap.argtypes = (wintypes.HDC, ctypes.c_int, ctypes.c_int)
-gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
-gdi32.SelectObject.argtypes = (wintypes.HDC, wintypes.HGDIOBJ)
-gdi32.SelectObject.restype = wintypes.HGDIOBJ
-gdi32.BitBlt.argtypes = (
-    wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-    wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
-)
-gdi32.BitBlt.restype = wintypes.BOOL
-gdi32.DeleteDC.argtypes = (wintypes.HDC,)
-gdi32.DeleteDC.restype = wintypes.BOOL
-gdi32.DeleteObject.argtypes = (wintypes.HGDIOBJ,)
-gdi32.DeleteObject.restype = wintypes.BOOL
-
-user32.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
-user32.GetWindowRect.restype = wintypes.BOOL
-user32.GetWindowDC.argtypes = (wintypes.HWND,)
-user32.GetWindowDC.restype = wintypes.HDC
-user32.ReleaseDC.argtypes = (wintypes.HWND, wintypes.HDC)
-user32.ReleaseDC.restype = ctypes.c_int
-user32.IsIconic.argtypes = (wintypes.HWND,)
-user32.IsIconic.restype = wintypes.BOOL
-user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
-user32.SetForegroundWindow.restype = wintypes.BOOL
-user32.SetWindowPos.argtypes = (
-    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-    ctypes.c_int, ctypes.c_int, wintypes.UINT,
-)
-user32.SetWindowPos.restype = wintypes.BOOL
-user32.PrintWindow.argtypes = (wintypes.HWND, wintypes.HDC, wintypes.UINT)
-user32.PrintWindow.restype = wintypes.BOOL
-
-PW_RENDERFULLCONTENT = 2
-SRCCOPY = 0x00CC0020
-SWP_NOACTIVATE = 0x0010
-SWP_NOMOVE = 0x0002
-SWP_NOSIZE = 0x0001
-HWND_TOPMOST = wintypes.HWND(-1)
-HWND_NOTOPMOST = wintypes.HWND(-2)
-
-
-class CaptureErrorReason:
-    """Human-readable reasons for capture failure (used by UI for user feedback)."""
-
-    MINIMIZED = "该窗口已最小化，请先恢复窗口再捕获"
-    NO_ACCESS = "无法获取窗口画面：权限不足或被系统保护"
-    EMPTY_RECT = "窗口区域无效（尺寸为 0）"
-    GDI_FAILED = "GDI 截图失败，窗口可能使用了硬件加速渲染"
-    UNKNOWN = "截图失败：未知错误"
-
-    @classmethod
-    def from_hwnd(cls, hwnd: int) -> str | None:
-        """Check preconditions; return an error reason or None if capture may proceed."""
-
-        if user32.IsIconic(hwnd):
-            return cls.MINIMIZED
-        rect = wintypes.RECT()
-        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-            return cls.NO_ACCESS
-        w = rect.right - rect.left
-        h = rect.bottom - rect.top
-        if w <= 0 or h <= 0:
-            return cls.EMPTY_RECT
-        return None
+_LAST_CAPTURE_ERROR = ""
 
 
 def capture_window(hwnd: int) -> bytes | None:
-    """Capture a window as PNG bytes using GDI (PrintWindow + BitBlt fallback).
+    """按窗口句柄截取 PNG 图像。
 
-    Returns ``None`` when the window can't be captured, along with a reason
-    accessible via :func:`capture_error_reason`. The caller should show
-    a user-facing error message.
+    Args:
+        hwnd: 窗口句柄。
+
+    Returns:
+        PNG 字节；失败时返回 None。
     """
 
-    global _last_capture_error  # noqa: PLW0603
+    global _LAST_CAPTURE_ERROR  # noqa: PLW0603
+    if _USER32 is None or _GDI32 is None:
+        _LAST_CAPTURE_ERROR = CaptureErrorReason.NOT_WINDOWS
+        return None
+    _configure_win32_api()
     reason = CaptureErrorReason.from_hwnd(hwnd)
     if reason is not None:
-        _last_capture_error = reason
+        _LAST_CAPTURE_ERROR = reason
         return None
-
     rect = wintypes.RECT()
-    user32.GetWindowRect(hwnd, ctypes.byref(rect))
-    w = rect.right - rect.left
-    h = rect.bottom - rect.top
+    _USER32.GetWindowRect(hwnd, ctypes.byref(rect))
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
 
-    # Try PrintWindow first (works for most modern Windows apps).
-    data = _print_window(hwnd, w, h)
+    data = _print_window(hwnd, width, height)
     if data is None:
-        # Fallback: BitBlt from screen DC (works for older / GDI-rendered windows).
-        data = _bitblt_window(hwnd, rect.left, rect.top, w, h)
+        data = _bitblt_window(rect.left, rect.top, width, height)
     if data is None:
-        _last_capture_error = CaptureErrorReason.GDI_FAILED
+        _LAST_CAPTURE_ERROR = CaptureErrorReason.GDI_FAILED
         return None
-
-    return _raw_to_png(data, w, h)
-
-
-_last_capture_error: str = ""
+    return _raw_to_png(data, width, height)
 
 
 def capture_error_reason() -> str:
-    """Return the last capture failure reason (for UI display)."""
+    """返回最近一次截图失败原因。"""
 
-    return _last_capture_error or CaptureErrorReason.UNKNOWN
+    return _LAST_CAPTURE_ERROR or CaptureErrorReason.UNKNOWN
 
 
-# --------------------------------------------------------------------------- #
-# Internal capture helpers
-# --------------------------------------------------------------------------- #
-def _print_window(hwnd: int, w: int, h: int) -> bytes | None:
-    """Use ``PrintWindow`` (works for most apps including Chromium-based ones)."""
+def _configure_win32_api() -> None:
+    """配置 Win32 API 参数类型。"""
 
-    hdc_screen = user32.GetWindowDC(hwnd)
+    if _USER32 is None or _GDI32 is None:
+        return
+    _USER32.EnumWindows.argtypes = (
+        ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM),
+        wintypes.LPARAM,
+    )
+    _USER32.EnumWindows.restype = wintypes.BOOL
+    _USER32.IsWindowVisible.argtypes = (wintypes.HWND,)
+    _USER32.IsWindowEnabled.argtypes = (wintypes.HWND,)
+    _USER32.GetWindowTextLengthW.argtypes = (wintypes.HWND,)
+    _USER32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    _USER32.GetClientRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
+    _USER32.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
+    _USER32.GetWindowDC.argtypes = (wintypes.HWND,)
+    _USER32.ReleaseDC.argtypes = (wintypes.HWND, wintypes.HDC)
+    _USER32.IsIconic.argtypes = (wintypes.HWND,)
+    _USER32.PrintWindow.argtypes = (wintypes.HWND, wintypes.HDC, wintypes.UINT)
+    _GDI32.CreateCompatibleDC.argtypes = (wintypes.HDC,)
+    _GDI32.CreateCompatibleBitmap.argtypes = (wintypes.HDC, ctypes.c_int, ctypes.c_int)
+    _GDI32.SelectObject.argtypes = (wintypes.HDC, wintypes.HGDIOBJ)
+    _GDI32.DeleteDC.argtypes = (wintypes.HDC,)
+    _GDI32.DeleteObject.argtypes = (wintypes.HGDIOBJ,)
+    _GDI32.BitBlt.argtypes = (
+        wintypes.HDC,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.HDC,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.DWORD,
+    )
+
+
+def _get_window_title(hwnd: int) -> str:
+    """读取窗口标题。"""
+
+    length = _USER32.GetWindowTextLengthW(hwnd)
+    if length == 0:
+        return ""
+    buffer = ctypes.create_unicode_buffer(length + 1)
+    _USER32.GetWindowTextW(hwnd, buffer, length + 1)
+    return buffer.value or ""
+
+
+def _print_window(hwnd: int, width: int, height: int) -> bytes | None:
+    """使用 PrintWindow 截图。"""
+
+    hdc_screen = _USER32.GetWindowDC(hwnd)
     if not hdc_screen:
         return None
     try:
-        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        hdc_mem = _GDI32.CreateCompatibleDC(hdc_screen)
         if not hdc_mem:
             return None
-        bitmap = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+        bitmap = _GDI32.CreateCompatibleBitmap(hdc_screen, width, height)
         if not bitmap:
-            gdi32.DeleteDC(hdc_mem)
+            _GDI32.DeleteDC(hdc_mem)
             return None
-        old_bmp = gdi32.SelectObject(hdc_mem, bitmap)
-        ok = user32.PrintWindow(hwnd, hdc_mem, PW_RENDERFULLCONTENT)
-        if not ok:
-            gdi32.SelectObject(hdc_mem, old_bmp)
-            gdi32.DeleteObject(bitmap)
-            gdi32.DeleteDC(hdc_mem)
-            return None
-        data = _dib_from_bitmap(hdc_mem, bitmap, w, h)
-        gdi32.SelectObject(hdc_mem, old_bmp)
-        gdi32.DeleteObject(bitmap)
-        gdi32.DeleteDC(hdc_mem)
-        return data
+        old_bmp = _GDI32.SelectObject(hdc_mem, bitmap)
+        try:
+            if not _USER32.PrintWindow(hwnd, hdc_mem, 2):
+                return None
+            return _dib_from_bitmap(hdc_mem, bitmap, width, height)
+        finally:
+            _GDI32.SelectObject(hdc_mem, old_bmp)
+            _GDI32.DeleteObject(bitmap)
+            _GDI32.DeleteDC(hdc_mem)
     finally:
-        user32.ReleaseDC(hwnd, hdc_screen)
+        _USER32.ReleaseDC(hwnd, hdc_screen)
 
 
-def _bitblt_window(hwnd: int, x: int, y: int, w: int, h: int) -> bytes | None:
-    """Fallback: screen-level BitBlt at the window's rect."""
+def _bitblt_window(x: int, y: int, width: int, height: int) -> bytes | None:
+    """使用屏幕 BitBlt 兜底截图。"""
 
-    hdc_screen = user32.GetDC(0)  # entire screen
+    hdc_screen = _USER32.GetDC(0)
     if not hdc_screen:
         return None
     try:
-        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        hdc_mem = _GDI32.CreateCompatibleDC(hdc_screen)
         if not hdc_mem:
             return None
-        bitmap = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+        bitmap = _GDI32.CreateCompatibleBitmap(hdc_screen, width, height)
         if not bitmap:
-            gdi32.DeleteDC(hdc_mem)
+            _GDI32.DeleteDC(hdc_mem)
             return None
-        old_bmp = gdi32.SelectObject(hdc_mem, bitmap)
-        ok = gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY)
-        if not ok:
-            gdi32.SelectObject(hdc_mem, old_bmp)
-            gdi32.DeleteObject(bitmap)
-            gdi32.DeleteDC(hdc_mem)
-            return None
-        data = _dib_from_bitmap(hdc_mem, bitmap, w, h)
-        gdi32.SelectObject(hdc_mem, old_bmp)
-        gdi32.DeleteObject(bitmap)
-        gdi32.DeleteDC(hdc_mem)
-        return data
+        old_bmp = _GDI32.SelectObject(hdc_mem, bitmap)
+        try:
+            if not _GDI32.BitBlt(hdc_mem, 0, 0, width, height, hdc_screen, x, y, 0x00CC0020):
+                return None
+            return _dib_from_bitmap(hdc_mem, bitmap, width, height)
+        finally:
+            _GDI32.SelectObject(hdc_mem, old_bmp)
+            _GDI32.DeleteObject(bitmap)
+            _GDI32.DeleteDC(hdc_mem)
     finally:
-        user32.ReleaseDC(0, hdc_screen)
+        _USER32.ReleaseDC(0, hdc_screen)
 
 
-def _dib_from_bitmap(hdc_mem: int, bitmap: int, w: int, h: int) -> bytes:
-    """Extract raw BGRA pixel data from a GDI bitmap via GetDIBits."""
+def _dib_from_bitmap(hdc_mem: int, bitmap: int, width: int, height: int) -> bytes:
+    """从 GDI 位图中提取 BGRA 原始像素。"""
 
-    import struct as _struct
-    class _BITMAPINFOHEADER(ctypes.Structure):  # noqa: N801
+    class _BitmapInfoHeader(ctypes.Structure):
         _fields_ = [
-            ("biSize", wintypes.DWORD), ("biWidth", ctypes.c_long),
-            ("biHeight", ctypes.c_long), ("biPlanes", wintypes.WORD),
-            ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
-            ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", ctypes.c_long),
-            ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", wintypes.DWORD),
+            ("biSize", wintypes.DWORD),
+            ("biWidth", ctypes.c_long),
+            ("biHeight", ctypes.c_long),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD),
+            ("biXPelsPerMeter", ctypes.c_long),
+            ("biYPelsPerMeter", ctypes.c_long),
+            ("biClrUsed", wintypes.DWORD),
             ("biClrImportant", wintypes.DWORD),
         ]
-    bmp_info = _BITMAPINFOHEADER()
-    bmp_info.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
-    bmp_info.biWidth = w
-    bmp_info.biHeight = -h  # negative = top-down
+
+    bmp_info = _BitmapInfoHeader()
+    bmp_info.biSize = ctypes.sizeof(_BitmapInfoHeader)
+    bmp_info.biWidth = width
+    bmp_info.biHeight = -height
     bmp_info.biPlanes = 1
     bmp_info.biBitCount = 32
-    bmp_info.biCompression = 0  # BI_RGB
-    buf_size = w * h * 4
-    buf = (ctypes.c_byte * buf_size)()
-    gdi32.GetDIBits.argtypes = (
-        wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
-        ctypes.c_void_p, ctypes.POINTER(_BITMAPINFOHEADER), wintypes.UINT,
+    bmp_info.biCompression = 0
+    buffer_size = width * height * 4
+    buffer = (ctypes.c_byte * buffer_size)()
+    _GDI32.GetDIBits.argtypes = (
+        wintypes.HDC,
+        wintypes.HBITMAP,
+        wintypes.UINT,
+        wintypes.UINT,
+        ctypes.c_void_p,
+        ctypes.POINTER(_BitmapInfoHeader),
+        wintypes.UINT,
     )
-    gdi32.GetDIBits.restype = ctypes.c_int
-    gdi32.GetDIBits(hdc_mem, bitmap, 0, h, buf, ctypes.byref(bmp_info), 0)
-    return bytes(buf)
+    _GDI32.GetDIBits(hdc_mem, bitmap, 0, height, buffer, ctypes.byref(bmp_info), 0)
+    return bytes(buffer)
 
 
-def _raw_to_png(raw_bgra: bytes, w: int, h: int) -> bytes:
-    """Encode raw BGRA pixels as PNG bytes (pure Python, zero deps)."""
-
-    import struct as _struct
-    import zlib
+def _raw_to_png(raw_bgra: bytes, width: int, height: int) -> bytes:
+    """把 BGRA 原始像素编码成 PNG。"""
 
     def _chunk(chunk_type: bytes, data: bytes) -> bytes:
         chunk = chunk_type + data
         return (
-            _struct.pack(">I", len(data))
+            struct.pack(">I", len(data))
             + chunk
-            + _struct.pack(">I", zlib.crc32(chunk) & 0xFFFFFFFF)
+            + struct.pack(">I", zlib.crc32(chunk) & 0xFFFFFFFF)
         )
 
-    sig = b"\x89PNG\r\n\x1a\n"
-    ihdr = _struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)  # 8-bit RGBA
     raw_lines: list[bytes] = []
-    for row_idx in range(h):
-        raw_lines.append(b"\x00")  # filter None
-        offset = row_idx * w * 4
-        for col in range(w):
+    for row_idx in range(height):
+        row = bytearray(b"\x00")
+        offset = row_idx * width * 4
+        for col in range(width):
             base = offset + col * 4
-            b_val = raw_bgra[base]
-            g_val = raw_bgra[base + 1]
-            r_val = raw_bgra[base + 2]
-            a_val = raw_bgra[base + 3]
-            raw_lines[-1] += _struct.pack("BBBB", r_val, g_val, b_val, a_val)
-    idat = zlib.compress(b"".join(raw_lines))
-    return sig + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+            row.extend(
+                struct.pack(
+                    "BBBB",
+                    raw_bgra[base + 2],
+                    raw_bgra[base + 1],
+                    raw_bgra[base],
+                    raw_bgra[base + 3],
+                )
+            )
+        raw_lines.append(bytes(row))
+    signature = b"\x89PNG\r\n\x1a\n"
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    image_data = zlib.compress(b"".join(raw_lines))
+    return signature + _chunk(b"IHDR", header) + _chunk(b"IDAT", image_data) + _chunk(b"IEND", b"")

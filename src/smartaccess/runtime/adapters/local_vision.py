@@ -1,4 +1,4 @@
-"""Real vision provider using PaddleOCR and OpenCV.
+﻿"""Real vision provider using PaddleOCR and OpenCV.
 
 Implements the :class:`VisionProvider` protocol with local libraries:
 - **OCR**: PaddleOCR for text recognition from ROI regions.
@@ -144,6 +144,37 @@ class LocalVisionProvider:
         if cropped is not None:
             img = cropped
         return self._ocr_image(img, anchor.id)
+
+    def capture_anchor_image(
+        self,
+        *,
+        screenshot: bytes | None,
+        anchor: AnchorDefinition,
+        roi: PixelRegion | None = None,
+    ) -> bytes | None:
+        """裁剪并编码锚点观察区域截图。
+
+        Args:
+            screenshot: 当前窗口截图 PNG 字节。
+            anchor: 锚点定义。
+            roi: 可选覆盖 ROI。
+
+        Returns:
+            观察区域 PNG 字节；无法裁剪或编码失败时返回 None。
+        """
+
+        _require_cv2()
+        img = self._image_from_screenshot(screenshot)
+        if img is None:
+            return None
+        target_roi = roi or self._resolved_roi(anchor, img)
+        cropped = self._crop_roi(img, target_roi)
+        if cropped is None:
+            return None
+        ok, data = _cv2.imencode(".png", cropped)
+        if not ok:
+            return None
+        return data.tobytes()
 
     def detect_presence(self, roi: str) -> bool:
         """Check whether a UI element is present via non-background pixel ratio."""
@@ -435,8 +466,26 @@ class LocalVisionProvider:
             return None
         return anchor.vision_config
 
+    def _image_from_screenshot(self, screenshot: bytes | None) -> np.ndarray | None:
+        """从截图字节或缓存中获取 OpenCV 图像。"""
+
+        if screenshot is None:
+            return self._screenshot
+        arr = np.frombuffer(screenshot, np.uint8)
+        return _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+
     def _resolved_roi(self, anchor: AnchorDefinition, img: np.ndarray) -> PixelRegion | None:
         height, width = img.shape[:2]
+        if anchor.observe_region is not None:
+            normalized = anchor.observe_region.normalized
+            if width > 0 and height > 0:
+                return PixelRegion(
+                    x=normalized.x * width,
+                    y=normalized.y * height,
+                    width=normalized.width * width,
+                    height=normalized.height * height,
+                )
+            return anchor.observe_region.pixel
         return resolve_anchor_roi(
             anchor,
             self._window_signature,
@@ -460,3 +509,4 @@ def _bgr_to_hsv(bgr: np.ndarray) -> np.ndarray:
     pixel = bgr.reshape(1, 1, 3).astype(np.uint8)
     hsv = _cv2.cvtColor(pixel, _cv2.COLOR_BGR2HSV)
     return hsv[0, 0].astype(np.float32)
+

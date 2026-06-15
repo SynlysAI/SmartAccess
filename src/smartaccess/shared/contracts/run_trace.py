@@ -1,4 +1,4 @@
-"""Pydantic models for `run_trace.jsonl`."""
+"""run_trace.jsonl 的契约模型。"""
 
 from __future__ import annotations
 
@@ -11,23 +11,23 @@ from .base import ContractModel, FlexibleContractModel, NonEmptyStr
 
 
 class ActionPayload(FlexibleContractModel):
-    """Action command written into the run trace."""
+    """写入运行轨迹的动作命令。"""
 
     type: NonEmptyStr
     value: Any | None = None
 
 
 class WaitStrategyPayload(FlexibleContractModel):
-    """How the runner waited after an action."""
+    """步骤执行后的等待策略。"""
 
-    type: Literal["ocr_poll", "fixed_wait"]
+    type: Literal["ocr_poll", "fixed_wait", "none"]
     wait_seconds: float | None = Field(default=None, ge=0)
     timeout_seconds: float | None = Field(default=None, ge=0)
     poll_interval_seconds: float | None = Field(default=None, ge=0)
 
 
 class ErrorPayload(FlexibleContractModel):
-    """Optional step error details."""
+    """步骤错误详情。"""
 
     type: str | None = None
     message: str | None = None
@@ -35,13 +35,13 @@ class ErrorPayload(FlexibleContractModel):
 
 
 class RunTraceRecord(ContractModel):
-    """A single step-level JSONL fact inside `run_trace.jsonl`."""
+    """run_trace.jsonl 中的一条步骤级事实记录。"""
 
     timestamp: datetime
     session_id: NonEmptyStr
     workflow_id: NonEmptyStr
     step_id: NonEmptyStr
-    anchor_id: NonEmptyStr
+    anchor_id: str | None = None
     action: ActionPayload
     wait_strategy: WaitStrategyPayload
     expected_text: str | None = None

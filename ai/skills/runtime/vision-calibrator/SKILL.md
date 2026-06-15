@@ -1,6 +1,6 @@
 ---
 name: vision-calibrator
-description: Calibrate SmartAccess v2 anchor action regions and optional OCR observation regions for instrument software. Use whenever the task involves screenshot regions, anchor marking, OCR observation binding, or validating whether the observer can reliably read text.
+description: Calibrate SmartAccess anchor action regions and optional OCR observation regions for instrument software. Use whenever the task involves screenshot regions, anchor marking, OCR observation binding, or validating whether the observer can reliably read text.
 ---
 
 # Vision Calibrator
@@ -35,7 +35,7 @@ description: Calibrate SmartAccess v2 anchor action regions and optional OCR obs
 ## 提示词与界面文案规则
 
 - 面向用户的接入建议必须描述可验证的结果，例如“建议锚点”“动作区域”“观测区域”“需要人工确认”，避免开发者调试说明。
-- 生成锚点集时，输出必须严格匹配 SmartAccess v2 `AnchorProfileContract`；不能自动保存或覆盖用户当前配置。
+- 生成锚点集时，输出必须严格匹配 SmartAccess `AnchorProfileContract`；不能自动保存或覆盖用户当前配置。
 - ROI 建议必须同时说明 pixel 与 normalized 坐标；缺少截图坐标时，明确要求用户标注，不要编造精确坐标。
 - Provider 名称只在配置、状态或错误定位场景出现；普通流程说明使用“AI 辅助接入”或“锚点建议”。
 - 高风险动作和 OCR 低置信度场景必须提示人工复核。

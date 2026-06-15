@@ -1,138 +1,129 @@
-"""Operations overview: device status, recent runs, and incidents."""
+"""运行概览页面。"""
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QGridLayout,
-    QHBoxLayout,
-    QListWidget,
-    QListWidgetItem,
+    QLabel,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from smartaccess.desktop.shell import theme as t
+from smartaccess.desktop.widgets.cards import create_card
+from smartaccess.desktop.widgets.table_style import configure_data_table
 from smartaccess.desktop.viewmodels.dashboard_vm import DashboardViewModel
-from smartaccess.desktop.widgets.cards import (
-    Card,
-    StatCard,
-    hint_label,
-    page_header,
-    section_title,
-)
+from smartaccess.runtime.application.facade import RuntimeFacade
 
 
 class DashboardPage(QWidget):
-    def __init__(self, facade, parent: QWidget | None = None) -> None:
+    """设备、模板、运行和异常的概览页面。"""
+
+    def __init__(self, facade: RuntimeFacade, parent: QWidget | None = None) -> None:
+        """初始化概览页面。"""
+
         super().__init__(parent)
         self._vm = DashboardViewModel(facade, self)
+        self._vm.changed.connect(self._refresh)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 24, 24, 24)
-        root.setSpacing(16)
-        root.addWidget(page_header("运行概览", "设备状态、模板版本、最近运行与待处理异常"))
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(12)
+        title = QLabel("运行概览")
+        title.setObjectName("PageTitle")
+        root.addWidget(title)
 
-        stats = QHBoxLayout()
-        stats.setSpacing(16)
-        self._stat_devices = StatCard("真实接入设备")
-        self._stat_devices.set_caption("已建模板 ∩ 已仿真控制")
-        self._stat_local_templates = StatCard("本地模板")
-        self._stat_cloud_templates = StatCard("云端模板")
-        self._stat_runs = StatCard("最近运行")
-        self._stat_incidents = StatCard("待处理异常")
-        self._stat_outbox = StatCard("待补传")
-        for card in (
-            self._stat_devices,
-            self._stat_local_templates,
-            self._stat_cloud_templates,
-            self._stat_runs,
-            self._stat_incidents,
-            self._stat_outbox,
-        ):
-            stats.addWidget(card)
-        root.addLayout(stats)
+        stats_card, stats_layout = create_card(margins=(14, 14, 14, 14), spacing=10)
+        self._stats = QGridLayout()
+        stats_layout.addLayout(self._stats)
+        root.addWidget(stats_card)
 
-        lists = QGridLayout()
-        lists.setSpacing(16)
-        runs_card = Card()
-        runs_card.add(section_title("最近运行记录"))
-        self._runs_list = QListWidget()
-        runs_card.add(self._runs_list)
+        refresh_btn = QPushButton("刷新")
+        refresh_btn.setObjectName("Secondary")
+        refresh_btn.clicked.connect(self._refresh)
+        root.addWidget(refresh_btn)
 
-        incidents_card = Card()
-        incidents_card.add(section_title("异常与待补传告警"))
-        self._incidents_list = QListWidget()
-        incidents_card.add(self._incidents_list)
+        runs_card, runs_layout = create_card(margins=(0, 0, 0, 0), spacing=0)
+        self._runs = QTableWidget(0, 3)
+        self._runs.setHorizontalHeaderLabels(("会话", "工作流", "状态"))
+        configure_data_table(self._runs, row_height=38, stretch_last=True)
+        runs_layout.addWidget(self._runs)
+        root.addWidget(runs_card, 1)
 
-        devices_card = Card()
-        devices_card.add(section_title("真实接入设备明细"))
-        devices_card.add(
-            hint_label("「真实接入」= 已为该设备建立模板，且已经过仪器仿真控制运行的设备（两者的交集）。")
-        )
-        self._devices_list = QListWidget()
-        devices_card.add(self._devices_list)
+        incidents_card, incidents_layout = create_card(margins=(0, 0, 0, 0), spacing=0)
+        self._incidents = QTableWidget(0, 4)
+        self._incidents.setHorizontalHeaderLabels(("异常", "会话", "类型", "详情"))
+        configure_data_table(self._incidents, row_height=38, stretch_last=True)
+        incidents_layout.addWidget(self._incidents)
+        root.addWidget(incidents_card, 1)
+        self._refresh()
 
-        lists.addWidget(runs_card, 0, 0)
-        lists.addWidget(incidents_card, 0, 1)
-        lists.addWidget(devices_card, 1, 0, 1, 2)
-        root.addLayout(lists, 1)
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """页面关闭时释放订阅。"""
 
-        refresh = QPushButton("刷新")
-        refresh.setObjectName("Ghost")
-        refresh.clicked.connect(self.refresh)
-        row = QHBoxLayout()
-        row.addStretch(1)
-        row.addWidget(refresh)
-        root.addLayout(row)
-
-        self.refresh()
+        self._vm.close()
+        super().closeEvent(event)
 
     def on_show(self) -> None:
-        self.refresh()
+        """页面显示时刷新概览。"""
 
-    def refresh(self) -> None:
-        proj = self._vm.projection()
-        connected = getattr(proj, "connected_devices", [])
-        self._stat_devices.set_value(str(len(connected)))
-        self._stat_devices.set_caption(
-            f"模板 {getattr(proj, 'templated_device_count', 0)} ∩ "
-            f"仿真 {getattr(proj, 'simulated_device_count', 0)}"
+        self._refresh()
+
+    def _refresh(self) -> None:
+        """刷新概览数据。"""
+
+        projection = self._vm.dashboard()
+        stats = {
+            "设备": len(projection.devices),
+            "工作流": projection.workflow_count,
+            "模板": projection.template_count,
+            "本地模板": projection.local_template_count,
+            "云端模板": projection.cloud_template_count,
+            "模板错误": projection.template_sync_failed,
+            "补传待处理": projection.outbox_pending,
+            "补传失败": projection.outbox_failed,
+        }
+        self._refresh_stats(stats)
+        self._fill_table(
+            self._runs,
+            projection.recent_runs,
+            ("session_id", "workflow_id", "status"),
         )
-        self._stat_devices.set_accent(t.SUCCESS if connected else t.INK)
-        self._stat_local_templates.set_value(str(proj.local_template_count))
-        cloud_value = str(proj.cloud_template_count) if proj.cloud_templates_available else "离线"
-        self._stat_cloud_templates.set_value(cloud_value)
-        self._stat_runs.set_value(str(len(proj.recent_runs)))
-        self._stat_incidents.set_value(str(len(proj.incidents)))
-        self._stat_incidents.set_accent(t.DANGER if proj.incidents else t.INK)
-        self._stat_outbox.set_value(str(proj.outbox_pending))
+        self._fill_table(
+            self._incidents,
+            projection.incidents,
+            ("incident_id", "session_id", "type", "detail"),
+        )
 
-        self._runs_list.clear()
-        for run in proj.recent_runs:
-            self._runs_list.addItem(f"{run.session_id}  ·  {run.workflow_id}  ·  {run.status}")
-        if not proj.recent_runs:
-            self._runs_list.addItem("暂无运行记录")
+    def _refresh_stats(self, stats: dict[str, int]) -> None:
+        """刷新统计标签。"""
 
-        self._incidents_list.clear()
-        for inc in proj.incidents:
-            item = QListWidgetItem(f"⚠  {inc.type}  ·  {inc.detail}")
-            item.setForeground(QColor(t.DANGER))
-            self._incidents_list.addItem(item)
-        if proj.template_sync_failed:
-            self._incidents_list.addItem(f"⚠  模板发布/同步失败 {proj.template_sync_failed} 条")
-        if proj.outbox_failed:
-            self._incidents_list.addItem(f"⚠  平台补传失败 {proj.outbox_failed} 条")
-        if self._incidents_list.count() == 0:
-            ok = QListWidgetItem("✓  无待处理异常")
-            ok.setForeground(QColor(t.SUCCESS))
-            self._incidents_list.addItem(ok)
+        while self._stats.count():
+            item = self._stats.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        for index, (label, value) in enumerate(stats.items()):
+            name = QLabel(label)
+            name.setObjectName("PageHint")
+            count = QLabel(str(value))
+            count.setObjectName("PageTitle")
+            row = index // 4
+            column = (index % 4) * 2
+            self._stats.addWidget(name, row, column)
+            self._stats.addWidget(count, row, column + 1)
 
-        self._devices_list.clear()
-        for dev in connected:
-            item = QListWidgetItem(f"●  {dev}  —  已建模板 + 已仿真控制")
-            item.setForeground(QColor(t.SUCCESS))
-            self._devices_list.addItem(item)
-        if not connected:
-            self._devices_list.addItem("尚无真实接入设备：需同时完成「建立模板」与「仿真控制运行」。")
+    @staticmethod
+    def _fill_table(
+        table: QTableWidget,
+        rows: list[dict[str, str]],
+        fields: tuple[str, ...],
+    ) -> None:
+        """用字典列表填充表格。"""
+
+        table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            for column, field in enumerate(fields):
+                table.setItem(row_index, column, QTableWidgetItem(row.get(field, "")))

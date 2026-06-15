@@ -1,1 +1,1 @@
-"""Desktop package for the SmartAccess PyQt shell."""
+"""SmartAccess 桌面客户端。"""

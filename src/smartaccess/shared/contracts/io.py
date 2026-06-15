@@ -1,8 +1,7 @@
-"""YAML and JSONL helpers for SmartAccess contracts."""
+"""SmartAccess 契约 YAML 和 JSONL 读写工具。"""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Iterable, TypeVar
 
@@ -13,7 +12,15 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 def load_yaml_contract(path: str | Path, model_type: type[ModelT]) -> ModelT:
-    """Load a YAML contract file into a concrete Pydantic model."""
+    """读取 YAML 契约文件。
+
+    Args:
+        path: YAML 文件路径。
+        model_type: 目标 Pydantic 模型类型。
+
+    Returns:
+        已校验的契约模型。
+    """
 
     resolved_path = Path(path)
     raw_data = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
@@ -21,7 +28,15 @@ def load_yaml_contract(path: str | Path, model_type: type[ModelT]) -> ModelT:
 
 
 def dump_yaml_contract(model: BaseModel, path: str | Path) -> Path:
-    """Persist a Pydantic model to UTF-8 YAML using JSON-compatible values."""
+    """把契约模型写入 UTF-8 YAML 文件。
+
+    Args:
+        model: 要写入的 Pydantic 模型。
+        path: 输出文件路径。
+
+    Returns:
+        实际写入路径。
+    """
 
     resolved_path = Path(path)
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,7 +49,15 @@ def dump_yaml_contract(model: BaseModel, path: str | Path) -> Path:
 
 
 def load_jsonl_contracts(path: str | Path, model_type: type[ModelT]) -> list[ModelT]:
-    """Load a JSONL stream into a list of Pydantic models."""
+    """读取 JSONL 契约流。
+
+    Args:
+        path: JSONL 文件路径。
+        model_type: 目标 Pydantic 模型类型。
+
+    Returns:
+        已校验的模型列表。
+    """
 
     resolved_path = Path(path)
     records: list[ModelT] = []
@@ -48,7 +71,15 @@ def load_jsonl_contracts(path: str | Path, model_type: type[ModelT]) -> list[Mod
 
 
 def dump_jsonl_contracts(records: Iterable[BaseModel], path: str | Path) -> Path:
-    """Persist a list of models to JSONL."""
+    """把模型序列写入 JSONL 文件。
+
+    Args:
+        records: 要写入的模型序列。
+        path: 输出文件路径。
+
+    Returns:
+        实际写入路径。
+    """
 
     resolved_path = Path(path)
     resolved_path.parent.mkdir(parents=True, exist_ok=True)

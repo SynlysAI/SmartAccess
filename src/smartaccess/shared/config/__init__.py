@@ -1,5 +1,5 @@
-"""Shared configuration models."""
+"""配置读取模块。"""
 
-from .settings import AppSettings
+from smartaccess.shared.config.settings import AppSettings
 
 __all__ = ["AppSettings"]

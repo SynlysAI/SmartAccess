@@ -1,11 +1,10 @@
-"""Workflow design view model: AI draft generation and standardization."""
+"""工作流设计视图模型。"""
 
 from __future__ import annotations
 
 from PyQt6.QtCore import pyqtSignal
 
 from smartaccess.runtime.application.workflow_service import StandardizationResult
-from smartaccess.runtime.application.workflow_service import WorkflowDraftRecord
 from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 
@@ -13,82 +12,68 @@ from .base import ViewModel
 
 
 class WorkflowViewModel(ViewModel):
-    generated = pyqtSignal(object)  # WorkflowContract
+    """工作流页和运行时门面之间的适配层。"""
+
+    changed = pyqtSignal()
 
     def list_workflows(self) -> list[WorkflowContract]:
+        """列出全部工作流。"""
+
         return self._facade.list_workflows()
 
-    def reasoning(self) -> str:
-        return self._facade.workflow_reasoning()
+    def list_anchor_profiles(self) -> list[AnchorsContract]:
+        """列出全部锚点配置。"""
 
-    def generator_label(self) -> str:
-        return self._facade.workflow_generator_label()
+        return self._facade.list_instruments()
 
-    def ai_model_options(self) -> dict:
-        options = getattr(self._facade, "ai_model_options", None)
-        return options() if callable(options) else {}
+    def get_anchor_profile(self, profile_id: str | None) -> AnchorsContract | None:
+        """读取指定锚点配置。"""
 
-    def ai_profile_for_purpose(self, purpose: str) -> str:
-        selector = getattr(self._facade, "ai_profile_for_purpose", None)
-        return selector(purpose) if callable(selector) else ""
+        return self._facade.get_instrument(profile_id) if profile_id else None
 
-    def list_anchor_profiles(self) -> list[str]:
-        return [p.profile_id for p in self._facade.list_instruments()]
+    def save_workflow(self, workflow: WorkflowContract) -> WorkflowContract:
+        """保存工作流。"""
 
-    def get_anchor_profile(self, anchor_profile: str | None) -> AnchorsContract | None:
-        return self._facade.get_instrument(anchor_profile) if anchor_profile else None
+        saved = self._facade.save_workflow(workflow)
+        self.changed.emit()
+        return saved
 
-    def list_anchor_ids(self, anchor_profile: str | None) -> list[str]:
-        profile = self.get_anchor_profile(anchor_profile)
-        return [anchor.id for anchor in profile.anchors] if profile else []
-
-    def draft_record(self, workflow_id: str) -> WorkflowDraftRecord | None:
-        return self._facade.workflow_draft_record(workflow_id)
-
-    def generate(
+    def draft_workflow(
         self,
         prompt: str,
-        *,
-        anchor_profile: str | None,
-        workflow_id: str,
-        prompt_references: list[dict[str, str]] | None = None,
-        ai_profile_id: str | None = None,
+        context: dict,
     ) -> WorkflowContract:
-        profile = self._facade.get_instrument(anchor_profile) if anchor_profile else None
-        context = {
-            "workflow_id": workflow_id,
-            "anchor_profile": anchor_profile or "unknown_device",
-            "prompt_references": list(prompt_references or []),
-        }
-        if ai_profile_id:
-            context["ai_profile_id"] = ai_profile_id
-        if profile is not None:
-            context["anchors"] = [a.model_dump(mode="json", exclude_none=True) for a in profile.anchors]
-            context["actions"] = list(profile.actions)
-            context["safety_limits"] = profile.safety_limits.model_dump(mode="json", exclude_none=True)
-        workflow = self._facade.generate_workflow(prompt, context)
-        self.generated.emit(workflow)
+        """调用 AI 生成工作流草稿。
+
+        Args:
+            prompt: 用户描述。
+            context: 生成上下文。
+
+        Returns:
+            工作流草稿。
+        """
+
+        workflow = self._facade.draft_workflow_from_prompt(prompt, context)
         self.changed.emit()
         return workflow
 
-    def standardize(self, workflow: WorkflowContract) -> StandardizationResult:
-        return self._facade.standardize(workflow)
+    def ai_label(self) -> str:
+        """返回当前 AI 生成器标签。"""
 
-    def list_workflows_projected(self):
-        return self._facade.list_workflows_projected()
+        return self._facade.ai_label()
+
+    def ai_reasoning(self) -> str:
+        """返回最近一次 AI 生成摘要。"""
+
+        return self._facade.ai_reasoning()
 
     def delete_workflow(self, workflow_id: str) -> None:
+        """删除工作流。"""
+
         self._facade.delete_workflow(workflow_id)
         self.changed.emit()
 
-    def delete_template_cloud_first(self, template_id: str, template_version: str, *, force: bool = False):
-        result = self._facade.delete_template_version_cloud_first(
-            template_id, template_version, force=force
-        )
-        self.changed.emit()
-        return result
+    def standardize(self, workflow: WorkflowContract) -> StandardizationResult:
+        """执行标准化检查。"""
 
-    def save_workflow(self, workflow: WorkflowContract) -> WorkflowContract:
-        saved = self._facade.update_workflow(workflow)
-        self.changed.emit()
-        return saved
+        return self._facade.standardize(workflow)

@@ -1,6 +1,6 @@
 ---
 name: workflow-designer
-description: Generate or refine SmartAccess v2 experiment workflows from user intent, selected anchor profile, and platform requirements. Use whenever the task involves turning experiment steps into simplified `workflow.yaml`, reviewing workflow structure, or checking anchor/action/OCR wait rules.
+description: Generate or refine SmartAccess experiment workflows from user intent, selected anchor profile, and platform requirements. Use whenever the task involves turning experiment steps into simplified `workflow.yaml`, reviewing workflow structure, or checking anchor/action/OCR wait rules.
 ---
 
 # Workflow Designer
@@ -37,7 +37,7 @@ description: Generate or refine SmartAccess v2 experiment workflows from user in
 ## 提示词与界面文案规则
 
 - 面向用户的提示、按钮和说明必须使用产品化表达，避免出现开发者口吻、调试口吻或内部实现细节。
-- 生成工作流时，输出必须严格匹配 SmartAccess v2 `WorkflowContract`；步骤使用 `anchor_id` 和 `action`，不要使用 `target` 或未定义字段替代。
+- 生成工作流时，输出必须严格匹配 SmartAccess `WorkflowContract`；步骤使用 `anchor_id` 和 `action`，不要使用 `target` 或未定义字段替代。
 - 禁止输出复杂绑定、手工结果声明、复杂判断对象或多模式识别字段。
 - Provider 名称只在配置、状态或错误定位场景出现；普通流程说明使用“AI 助手”“生成工作流草稿”等稳定表达。
 - 示例应贴近真实 SmartAccess 操作：选择锚点集、引用锚点、编排动作、配置 OCR 预期、保存工作流。

@@ -1,4 +1,4 @@
-"""UDP adapter that drives the downstream process host.
+﻿"""UDP adapter that drives the downstream process host.
 
 Ports the request/ACK UDP protocol from the reference FastAPI service behind
 the :class:`ProcessExecutorClient` port. Failures are normalized to
@@ -95,3 +95,4 @@ def _parse_execution_state(response: Any) -> ProcessExecutionState:
         detail="当前没有流程在执行（executing=False）",
         current_command="",
     )
+

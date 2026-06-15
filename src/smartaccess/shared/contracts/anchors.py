@@ -1,4 +1,4 @@
-"""Pydantic models for `anchors.yaml`."""
+"""anchors.yaml 的契约模型。"""
 
 from __future__ import annotations
 
@@ -6,10 +6,14 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from .base import ContractModel, FlexibleContractModel, NonEmptyStr
-from .instrument_profile import SafetyLimits, VisionConfig
+from .base import ContractModel, FlexibleContractModel, JsonMap, NonEmptyStr
 
-SIMPLIFIED_ACTIONS: tuple[str, ...] = ("click", "type", "hotkey", "press_enter")
+SIMPLIFIED_ACTIONS: tuple[str, ...] = (
+    "click",
+    "type",
+    "hotkey",
+    "press_enter",
+)
 ACTION_SUPPORT_SETS: dict[str, list[str]] = {
     "click": ["click"],
     "type": ["click", "type", "hotkey", "press_enter"],
@@ -29,14 +33,14 @@ LEGACY_ANCHOR_TYPES = {
 
 
 class ScreenshotSize(FlexibleContractModel):
-    """Reference screenshot size used when the anchor profile was captured."""
+    """锚点截图的参考尺寸。"""
 
     width: int | None = Field(default=None, ge=0)
     height: int | None = Field(default=None, ge=0)
 
 
 class WindowSignature(FlexibleContractModel):
-    """Window hints used to find the target application."""
+    """用于定位目标软件窗口的线索。"""
 
     title_contains: str | None = None
     process_name: str | None = None
@@ -44,15 +48,19 @@ class WindowSignature(FlexibleContractModel):
 
     @property
     def capture_width(self) -> int | None:
+        """返回截图宽度。"""
+
         return self.screenshot_size.width if self.screenshot_size else None
 
     @property
     def capture_height(self) -> int | None:
+        """返回截图高度。"""
+
         return self.screenshot_size.height if self.screenshot_size else None
 
 
 class PixelRegion(FlexibleContractModel):
-    """Region in screenshot pixel coordinates."""
+    """截图像素坐标区域。"""
 
     x: float = Field(default=0, ge=0)
     y: float = Field(default=0, ge=0)
@@ -61,7 +69,7 @@ class PixelRegion(FlexibleContractModel):
 
 
 class NormalizedRegion(FlexibleContractModel):
-    """Region normalized to the screenshot dimensions."""
+    """相对截图尺寸归一化后的区域。"""
 
     x: float = Field(default=0, ge=0, le=1)
     y: float = Field(default=0, ge=0, le=1)
@@ -70,21 +78,58 @@ class NormalizedRegion(FlexibleContractModel):
 
 
 class AnchorRegion(FlexibleContractModel):
-    """A region stored in both pixel and normalized coordinates."""
+    """同时保存像素和归一化坐标的锚点区域。"""
 
     pixel: PixelRegion
     normalized: NormalizedRegion
 
 
+class VisionConfig(FlexibleContractModel):
+    """视觉识别配置。"""
+
+    template_asset_path: str | None = None
+    template_threshold: float = Field(default=0.8, ge=0, le=1)
+    color_reference_hex: str | None = None
+    color_tolerance: float = Field(default=0.1, ge=0, le=1)
+    presence_threshold: float = Field(default=0.05, ge=0, le=1)
+
+
+class SafetyField(FlexibleContractModel):
+    """绑定到字段或步骤的安全确认规则。"""
+
+    field_id: NonEmptyStr
+    label: NonEmptyStr
+    value_type: Literal["string", "number", "bool", "choice"] = "string"
+    unit: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    allowed_values: list[str] = Field(default_factory=list)
+    requires_confirmation: bool = False
+    risk_level: Literal["low", "medium", "high"] = "medium"
+    applies_to_steps: list[str] = Field(default_factory=list)
+
+
+class SafetyLimits(FlexibleContractModel):
+    """运行时安全限制。"""
+
+    max_voltage: float | None = None
+    min_voltage: float | None = None
+    requires_manual_confirm_for: list[str] = Field(default_factory=list)
+    fields: list[SafetyField] = Field(default_factory=list)
+
+
 class AnchorActionBinding(FlexibleContractModel):
-    """A simplified action binding stored in `anchors.yaml`."""
+    """锚点支持的动作绑定。"""
 
     action: NonEmptyStr
     requires_confirmation: bool = False
+    default_value: str | None = None
+    hotkey: str | None = None
+    metadata: JsonMap = Field(default_factory=dict)
 
 
 class AnchorDefinition(FlexibleContractModel):
-    """A UI anchor with an action area and optional OCR observation area."""
+    """目标软件界面上的一个动作或观察锚点。"""
 
     id: NonEmptyStr
     label: str | None = Field(default=None, exclude=True)
@@ -105,25 +150,30 @@ class AnchorDefinition(FlexibleContractModel):
     @model_validator(mode="before")
     @classmethod
     def _coerce_legacy_shape(cls, raw: Any) -> Any:
+        """兼容旧版 roi/normalized_roi 结构。"""
+
         if not isinstance(raw, dict):
             return raw
         data = dict(raw)
         if "action_region" not in data:
-            roi = data.get("roi") or {}
-            normalized = data.get("normalized_roi") or {}
             data["action_region"] = {
-                "pixel": roi,
-                "normalized": normalized,
+                "pixel": data.get("roi") or {},
+                "normalized": data.get("normalized_roi") or {},
             }
         if "observe_region" not in data:
             vision_mode = data.get("vision_mode") or "none"
             legacy_type = data.get("type")
-            if vision_mode == "ocr" or legacy_type in {"observation", "readout", "status", "region", "roi"}:
-                observe_roi = data.get("observe_roi") or data.get("roi") or {}
-                observe_normalized = data.get("observe_normalized_roi") or data.get("normalized_roi") or {}
+            if (
+                vision_mode == "ocr"
+                or legacy_type in {"observation", "readout", "status", "region", "roi"}
+            ):
                 data["observe_region"] = {
-                    "pixel": observe_roi,
-                    "normalized": observe_normalized,
+                    "pixel": data.get("observe_roi") or data.get("roi") or {},
+                    "normalized": (
+                        data.get("observe_normalized_roi")
+                        or data.get("normalized_roi")
+                        or {}
+                    ),
                 }
         if "label" not in data and data.get("id"):
             data["label"] = data["id"]
@@ -131,6 +181,8 @@ class AnchorDefinition(FlexibleContractModel):
 
     @model_validator(mode="after")
     def _normalize_compat_fields(self) -> "AnchorDefinition":
+        """标准化兼容字段和动作绑定。"""
+
         if self.label is None:
             self.label = self.id
         if self.roi is None:
@@ -152,7 +204,9 @@ class AnchorDefinition(FlexibleContractModel):
                 if binding.action in SIMPLIFIED_ACTIONS
             ]
         self.supported_actions = [
-            action for action in dict.fromkeys(self.supported_actions) if action in SIMPLIFIED_ACTIONS
+            action
+            for action in dict.fromkeys(self.supported_actions)
+            if action in SIMPLIFIED_ACTIONS
         ]
         self.action_bindings = [
             binding
@@ -181,7 +235,7 @@ class AnchorDefinition(FlexibleContractModel):
 
 
 class AnchorsContract(ContractModel):
-    """Top-level contract for SmartAccess anchor profiles."""
+    """锚点配置顶层契约。"""
 
     profile_id: NonEmptyStr
     window_signature: WindowSignature
@@ -191,21 +245,35 @@ class AnchorsContract(ContractModel):
 
     @model_validator(mode="after")
     def _unique_anchor_ids(self) -> "AnchorsContract":
+        """检查锚点 ID 不重复。"""
+
         anchor_ids = [anchor.id for anchor in self.anchors]
-        duplicates = sorted({anchor_id for anchor_id in anchor_ids if anchor_ids.count(anchor_id) > 1})
+        duplicates = sorted(
+            {anchor_id for anchor_id in anchor_ids if anchor_ids.count(anchor_id) > 1}
+        )
         if duplicates:
             raise ValueError(f"duplicate anchor ids: {', '.join(duplicates)}")
         return self
 
     def anchor_map(self) -> dict[str, AnchorDefinition]:
+        """返回按锚点 ID 索引的锚点字典。
+
+        Returns:
+            锚点 ID 到锚点定义的映射。
+        """
+
         return {anchor.id: anchor for anchor in self.anchors}
 
     @property
     def device_id(self) -> str:
+        """返回兼容旧界面的设备 ID。"""
+
         return self.profile_id
 
     @property
     def actions(self) -> list[str]:
+        """返回当前锚点配置支持的动作列表。"""
+
         values: list[str] = []
         for anchor in self.anchors:
             for action in anchor.supported_actions:

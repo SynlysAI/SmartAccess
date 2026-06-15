@@ -1,1 +1,1 @@
-"""Runtime package containing API, orchestration, domain, and adapters."""
+"""SmartAccess 运行时包。"""

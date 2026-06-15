@@ -1,4 +1,4 @@
-"""In-memory adapter stubs for local development and tests.
+﻿"""In-memory adapter stubs for local development and tests.
 
 These let the Edge API run without a live UDP process host or the production
 local instruction parser. Swap them for concrete providers
@@ -40,3 +40,4 @@ class StubProcessExecutorClient:
             detail="stub executor: 当前没有流程在执行",
             current_command="",
         )
+

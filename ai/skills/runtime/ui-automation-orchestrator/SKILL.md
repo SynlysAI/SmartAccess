@@ -1,6 +1,6 @@
 ---
 name: ui-automation-orchestrator
-description: Translate SmartAccess v2 workflows into UI-level execution plans. Use whenever steps must be mapped to anchor actions, OCR polling, default waits, safety checks, or run-time execution ordering for instrument software.
+description: Translate SmartAccess workflows into UI-level execution plans. Use whenever steps must be mapped to anchor actions, OCR polling, default waits, safety checks, or run-time execution ordering for instrument software.
 ---
 
 # UI Automation Orchestrator

@@ -1,59 +1,55 @@
-"""A scalable screenshot canvas with draggable, resizable ROI rectangles.
-
-Displays a captured window as the background image, with named ROI rectangles
-overlaid. Each ROI can be moved and resized via corner handles. The canvas
-exports image-space ROI coordinates so calibration persists real anchors.
-
-Colors are tuned for a dark workbench: saturated, high-opacity borders and a
-readable text chip on every mask so labels stay legible over any screenshot.
-"""
+"""可缩放、可拖拽的 ROI 截图画布。"""
 
 from __future__ import annotations
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import (
-    QBrush,
-    QColor,
-    QFont,
-    QPen,
-)
+from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
+    QGraphicsTextItem,
     QGraphicsView,
     QWidget,
 )
-from PyQt6.QtGui import QPixmap
 
-_PLACEHOLDER_W = 640
-_PLACEHOLDER_H = 420
-# (border, fill) — bright borders, translucent-but-visible fills.
-_ROI_COLORS = [
-    ("#3b82f6", "#3b82f6"),
-    ("#f87171", "#ef4444"),
-    ("#34d399", "#10b981"),
-    ("#a855f7", "#9333ea"),
-    ("#fbbf24", "#f59e0b"),
-    ("#22d3ee", "#06b6d4"),
+PLACEHOLDER_WIDTH = 640
+PLACEHOLDER_HEIGHT = 420
+PLACEHOLDER_TEXT_WIDTH = 260
+HANDLE_SIZE = 9.0
+ROI_COLORS = [
+    ("#1f6fd6", "#1f6fd6"),
+    ("#c53030", "#e05252"),
+    ("#0f9f6e", "#10b981"),
+    ("#7c3aed", "#8b5cf6"),
+    ("#c77900", "#f59e0b"),
+    ("#0284c7", "#38bdf8"),
 ]
-_HANDLE = 9.0  # size of resize handles in scene units
 
 
 class _RoiItem(QGraphicsRectItem):
-    """A movable + resizable ROI rectangle with a labeled chip and handles."""
+    """画布中的一个可移动、可缩放 ROI。"""
 
-    def __init__(self, name: str, border: str, fill: str, w: float, h: float) -> None:
-        super().__init__(QRectF(0, 0, w, h))
-        self._name = name
+    def __init__(self, name: str, border: str, fill: str, width: float, height: float) -> None:
+        """初始化 ROI 图元。
+
+        Args:
+            name: ROI 名称。
+            border: 边框颜色。
+            fill: 填充颜色。
+            width: 初始宽度。
+            height: 初始高度。
+        """
+
+        super().__init__(QRectF(0, 0, width, height))
+        self.name = name
         self._border = QColor(border)
-        self._fill = QColor(fill)
-        self.setPen(QPen(self._border, 2.2))
-        brush = QColor(self._fill)
-        brush.setAlpha(70)
-        self.setBrush(QBrush(brush))
+        fill_color = QColor(fill)
+        fill_color.setAlpha(45)
+        self.setPen(QPen(self._border, 2.0))
+        self.setBrush(QBrush(fill_color))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
@@ -61,13 +57,12 @@ class _RoiItem(QGraphicsRectItem):
         self.setZValue(1)
         self.setToolTip(f"{name} · 拖动移动 · 拖角缩放 · 右键删除")
 
-        # Label chip: dark rounded background + bright text, always readable.
         self._chip = QGraphicsRectItem(self)
-        self._chip.setBrush(QBrush(QColor(10, 12, 17, 220)))
-        self._chip.setPen(QPen(self._border, 1.2))
+        self._chip.setBrush(QBrush(QColor(255, 255, 255, 235)))
+        self._chip.setPen(QPen(self._border, 1.0))
         self._chip.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._label = QGraphicsSimpleTextItem(name, self._chip)
-        self._label.setBrush(QBrush(QColor("#f3f6fc")))
+        self._label.setBrush(QBrush(QColor("#172033")))
         self._label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         self._label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._position_chip()
@@ -75,34 +70,28 @@ class _RoiItem(QGraphicsRectItem):
         self._resizing = False
         self._active_handle: str | None = None
 
-    # --- geometry helpers --------------------------------------------- #
-    def _position_chip(self) -> None:
-        text_rect = self._label.boundingRect()
-        pad = 4.0
-        self._chip.setRect(0, 0, text_rect.width() + pad * 2, text_rect.height() + pad)
-        self._label.setPos(pad, pad / 2)
-        self._chip.setPos(2, 2)
+    def itemChange(self, change, value):  # noqa: N802
+        """ROI 位置改变时通知画布。"""
 
-    def _handle_rects(self) -> dict[str, QRectF]:
-        r = self.rect()
-        s = _HANDLE
-        return {
-            "tl": QRectF(r.left() - s / 2, r.top() - s / 2, s, s),
-            "tr": QRectF(r.right() - s / 2, r.top() - s / 2, s, s),
-            "bl": QRectF(r.left() - s / 2, r.bottom() - s / 2, s, s),
-            "br": QRectF(r.right() - s / 2, r.bottom() - s / 2, s, s),
-        }
+        result = super().itemChange(change, value)
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            scene = self.scene()
+            parent = scene.parent() if scene is not None else None
+            if isinstance(parent, RoiCanvas):
+                parent.notify_roi_changed(self.name)
+        return result
 
     def paint(self, painter, option, widget=None) -> None:  # noqa: D102
         super().paint(painter, option, widget)
         if self.isSelected():
             painter.setBrush(QBrush(self._border))
-            painter.setPen(QPen(QColor("#0a0c11"), 1))
+            painter.setPen(QPen(QColor("#ffffff"), 1))
             for rect in self._handle_rects().values():
                 painter.drawRect(rect)
 
-    # --- mouse: resize when a handle is grabbed ----------------------- #
     def hoverMoveEvent(self, event):  # noqa: N802
+        """根据鼠标所在位置切换光标。"""
+
         handle = self._handle_at(event.pos())
         cursors = {
             "tl": Qt.CursorShape.SizeFDiagCursor,
@@ -114,6 +103,8 @@ class _RoiItem(QGraphicsRectItem):
         super().hoverMoveEvent(event)
 
     def mousePressEvent(self, event):  # noqa: N802
+        """按下拖拽角点时进入缩放模式。"""
+
         self._active_handle = self._handle_at(event.pos())
         if self._active_handle:
             self._resizing = True
@@ -123,27 +114,64 @@ class _RoiItem(QGraphicsRectItem):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):  # noqa: N802
+        """拖拽时移动或缩放 ROI。"""
+
         if self._resizing and self._active_handle:
             self._resize_to(event.pos())
+            scene = self.scene()
+            parent = scene.parent() if scene is not None else None
+            if isinstance(parent, RoiCanvas):
+                parent.notify_roi_changed(self.name)
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):  # noqa: N802
+        """释放鼠标时退出缩放模式。"""
+
         self._resizing = False
         self._active_handle = None
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        scene = self.scene()
+        parent = scene.parent() if scene is not None else None
+        if isinstance(parent, RoiCanvas):
+            parent.notify_roi_changed(self.name)
         super().mouseReleaseEvent(event)
 
+    def _position_chip(self) -> None:
+        """调整标签位置。"""
+
+        text_rect = self._label.boundingRect()
+        pad = 4.0
+        self._chip.setRect(0, 0, text_rect.width() + pad * 2, text_rect.height() + pad)
+        self._label.setPos(pad, pad / 2)
+        self._chip.setPos(2, 2)
+
+    def _handle_rects(self) -> dict[str, QRectF]:
+        """返回四个缩放手柄区域。"""
+
+        rect = self.rect()
+        size = HANDLE_SIZE
+        return {
+            "tl": QRectF(rect.left() - size / 2, rect.top() - size / 2, size, size),
+            "tr": QRectF(rect.right() - size / 2, rect.top() - size / 2, size, size),
+            "bl": QRectF(rect.left() - size / 2, rect.bottom() - size / 2, size, size),
+            "br": QRectF(rect.right() - size / 2, rect.bottom() - size / 2, size, size),
+        }
+
     def _handle_at(self, pos: QPointF) -> str | None:
+        """返回鼠标命中的手柄名。"""
+
         for name, rect in self._handle_rects().items():
             if rect.contains(pos):
                 return name
         return None
 
     def _resize_to(self, pos: QPointF) -> None:
-        r = self.rect()
-        left, top, right, bottom = r.left(), r.top(), r.right(), r.bottom()
+        """根据鼠标位置缩放 ROI。"""
+
+        rect = self.rect()
+        left, top, right, bottom = rect.left(), rect.top(), rect.right(), rect.bottom()
         if "l" in self._active_handle:
             left = min(pos.x(), right - 12)
         if "r" in self._active_handle:
@@ -158,83 +186,131 @@ class _RoiItem(QGraphicsRectItem):
 
 
 class RoiCanvas(QGraphicsView):
-    """Displays a window screenshot as background with editable ROI rectangles."""
+    """显示截图并编辑 ROI 的画布。"""
 
-    roi_deleted = pyqtSignal(str)
     roi_added = pyqtSignal(str)
+    roi_removed = pyqtSignal(str)
+    roi_changed = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        """初始化 ROI 画布。"""
+
         self._scene = QGraphicsScene()
         super().__init__(self._scene, parent)
-        self.setRenderHints(self.renderHints())
-        self.setBackgroundBrush(QBrush(QColor("#0a0c11")))
+        self.setObjectName("RoiCanvas")
+        self._scene.setParent(self)
+        self.setBackgroundBrush(QBrush(QColor("#F0F3F8")))
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._image_item: QGraphicsPixmapItem | None = None
         self._placeholder: QGraphicsRectItem | None = None
-        self._error_label: QGraphicsSimpleTextItem | None = None
+        self._placeholder_text: QGraphicsTextItem | None = None
         self._rois: dict[str, _RoiItem] = {}
-        self._color_idx = 0
-        self._source_size = (_PLACEHOLDER_W, _PLACEHOLDER_H)
-        self._show_placeholder("点击「扫描窗口」→ 选择窗口 → 点击「捕获窗口画面」")
+        self._color_index = 0
+        self._source_size = (PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
+        self._show_placeholder("截图后在此编辑 ROI")
 
     def load_image(self, data: bytes) -> None:
-        """Replace the background with a window screenshot from PNG bytes."""
+        """加载截图背景。
+
+        Args:
+            data: PNG 截图字节。
+        """
 
         self._clear_background()
         pixmap = QPixmap()
         if not pixmap.loadFromData(data):
-            self._show_placeholder("无法解码截图数据，请重试")
+            self._show_placeholder("无法解码截图数据")
             return
         self._image_item = self._scene.addPixmap(pixmap)
         self._image_item.setZValue(-2)
-        w = pixmap.width()
-        h = pixmap.height()
-        self._source_size = (w, h)
-        self._scene.setSceneRect(QRectF(0, 0, w, h))
-        self.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatio)
-        for rect in self._rois.values():
-            rect.setZValue(1)
+        self._source_size = (pixmap.width(), pixmap.height())
+        rect = QRectF(0, 0, pixmap.width(), pixmap.height())
+        self._scene.setSceneRect(rect)
+        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     def load_placeholder(self, message: str) -> None:
-        """Show a frame with ``message`` when no image is available."""
+        """显示占位提示。"""
 
         self._clear_background()
         self._show_placeholder(message)
 
     def source_size(self) -> tuple[int, int]:
+        """返回当前截图尺寸。"""
+
         return self._source_size
 
-    def add_roi(self, name: str, x: float = 48, y: float = 64, w: float = 180, h: float = 80) -> str:
-        """Create a named draggable + resizable ROI rectangle and return the name."""
+    def add_roi(
+        self,
+        name: str,
+        x: float = 48,
+        y: float = 64,
+        width: float = 180,
+        height: float = 80,
+    ) -> str:
+        """新增 ROI。
+
+        Args:
+            name: ROI 名称。
+            x: 左上角 X。
+            y: 左上角 Y。
+            width: 宽度。
+            height: 高度。
+
+        Returns:
+            ROI 名称。
+        """
 
         if name in self._rois:
             return name
-        border, fill = _ROI_COLORS[self._color_idx % len(_ROI_COLORS)]
-        self._color_idx += 1
-        rect = _RoiItem(name, border, fill, w, h)
-        rect.setPos(x, y)
-        self._scene.addItem(rect)
-        self._rois[name] = rect
+        border, fill = ROI_COLORS[self._color_index % len(ROI_COLORS)]
+        self._color_index += 1
+        item = _RoiItem(name, border, fill, width, height)
+        item.setPos(x, y)
+        self._scene.addItem(item)
+        self._rois[name] = item
         self.roi_added.emit(name)
+        self.roi_changed.emit(name)
         return name
 
-    def remove_roi(self, name: str, *, emit_signal: bool = False) -> None:
-        rect = self._rois.pop(name, None)
-        if rect is not None:
-            self._scene.removeItem(rect)
-            if emit_signal:
-                self.roi_deleted.emit(name)
+    def remove_roi(self, name: str, *, emit_signal: bool = True) -> None:
+        """删除 ROI。"""
+
+        item = self._rois.pop(name, None)
+        if item is None:
+            return
+        self._scene.removeItem(item)
+        if emit_signal:
+            self.roi_removed.emit(name)
+
+    def clear_rois(self) -> None:
+        """清除全部 ROI。"""
+
+        for item in self._rois.values():
+            self._scene.removeItem(item)
+        self._rois.clear()
+        self._color_index = 0
+
+    def clear_all(self) -> None:
+        """清除截图和 ROI。"""
+
+        self._clear_background()
+        self.clear_rois()
+        self._show_placeholder("截图后在此编辑 ROI")
 
     def roi_names(self) -> list[str]:
+        """返回所有 ROI 名称。"""
+
         return list(self._rois.keys())
 
     def roi_rect(self, name: str) -> dict[str, float] | None:
-        rect = self._rois.get(name)
-        if rect is None:
+        """返回 ROI 像素坐标。"""
+
+        item = self._rois.get(name)
+        if item is None:
             return None
-        bounds = rect.rect()
-        pos = rect.pos()
+        bounds = item.rect()
+        pos = item.pos()
         return {
             "x": max(0.0, float(pos.x() + bounds.x())),
             "y": max(0.0, float(pos.y() + bounds.y())),
@@ -243,57 +319,49 @@ class RoiCanvas(QGraphicsView):
         }
 
     def normalized_roi_rect(self, name: str) -> dict[str, float] | None:
+        """返回 ROI 归一化坐标。"""
+
         rect = self.roi_rect(name)
         if rect is None:
             return None
-        source_w, source_h = self._source_size
-        if source_w <= 0 or source_h <= 0:
+        source_width, source_height = self._source_size
+        if source_width <= 0 or source_height <= 0:
             return None
         return {
-            "x": min(1.0, rect["x"] / source_w),
-            "y": min(1.0, rect["y"] / source_h),
-            "width": min(1.0, rect["width"] / source_w),
-            "height": min(1.0, rect["height"] / source_h),
+            "x": min(1.0, rect["x"] / source_width),
+            "y": min(1.0, rect["y"] / source_height),
+            "width": min(1.0, rect["width"] / source_width),
+            "height": min(1.0, rect["height"] / source_height),
         }
 
-    def roi_rects(self) -> dict[str, dict[str, float]]:
-        return {name: rect for name in self._rois if (rect := self.roi_rect(name)) is not None}
+    def notify_roi_changed(self, name: str) -> None:
+        """由 ROI 图元通知坐标变化。"""
 
-    def clear_rois(self) -> None:
-        for rect in self._rois.values():
-            self._scene.removeItem(rect)
-        self._rois.clear()
-        self._color_idx = 0
-
-    def clear_all(self) -> None:
-        """Remove background image and all ROIs, show placeholder."""
-
-        self._clear_background()
-        self.clear_rois()
-        self._show_placeholder("点击「扫描窗口」→ 选择窗口 → 点击「捕获窗口画面」")
+        if name in self._rois:
+            self.roi_changed.emit(name)
 
     def contextMenuEvent(self, event):  # noqa: N802
-        """Right-click on an ROI to delete it."""
+        """右键删除 ROI。"""
 
         item = self.itemAt(event.pos())
-        rect_item = self._find_roi_item(item)
-        if rect_item is None:
+        roi_item = self._find_roi_item(item)
+        if roi_item is None:
             return
-        for name, rect in list(self._rois.items()):
-            if rect is rect_item:
-                self.remove_roi(name, emit_signal=True)
-                return
+        self.remove_roi(roi_item.name, emit_signal=True)
 
     def wheelEvent(self, event):  # noqa: N802
-        """Ctrl+scroll to zoom."""
+        """Ctrl + 滚轮缩放画布。"""
 
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
             self.scale(factor, factor)
-        else:
-            super().wheelEvent(event)
+            return
+        super().wheelEvent(event)
 
-    def _find_roi_item(self, item):
+    @staticmethod
+    def _find_roi_item(item) -> _RoiItem | None:
+        """从图元树中查找 ROI 图元。"""
+
         while item is not None:
             if isinstance(item, _RoiItem):
                 return item
@@ -301,28 +369,31 @@ class RoiCanvas(QGraphicsView):
         return None
 
     def _clear_background(self) -> None:
-        if self._image_item is not None:
-            self._scene.removeItem(self._image_item)
-            self._image_item = None
-        if self._placeholder is not None:
-            self._scene.removeItem(self._placeholder)
-            self._placeholder = None
-        if self._error_label is not None:
-            self._scene.removeItem(self._error_label)
-            self._error_label = None
+        """清除背景截图或占位符。"""
+
+        for item_name in ("_image_item", "_placeholder", "_placeholder_text"):
+            item = getattr(self, item_name)
+            if item is not None:
+                self._scene.removeItem(item)
+                setattr(self, item_name, None)
 
     def _show_placeholder(self, message: str) -> None:
-        self._source_size = (_PLACEHOLDER_W, _PLACEHOLDER_H)
+        """显示占位提示。"""
+
+        self._source_size = (PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
         frame = self._scene.addRect(
-            QRectF(0, 0, _PLACEHOLDER_W, _PLACEHOLDER_H),
-            QPen(QColor("#39414f")),
-            QBrush(QColor("#13161d")),
+            QRectF(0, 0, PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT),
+            QPen(QColor("#c8d2e2")),
+            QBrush(QColor("#f8fafc")),
         )
         frame.setZValue(-1)
         self._placeholder = frame
-        text = self._scene.addSimpleText(message)
-        text.setBrush(QBrush(QColor("#8b94a6")))
-        text.setFont(QFont("Segoe UI", 11))
-        text.setPos(20, _PLACEHOLDER_H / 2 - 12)
-        self._error_label = text
-        self._scene.setSceneRect(QRectF(0, 0, _PLACEHOLDER_W, _PLACEHOLDER_H))
+        text = QGraphicsTextItem(message)
+        text.setDefaultTextColor(QColor("#526179"))
+        text.setFont(QFont("Microsoft YaHei", 11))
+        text.setTextWidth(PLACEHOLDER_TEXT_WIDTH)
+        text_rect = text.boundingRect()
+        text.setPos(24, PLACEHOLDER_HEIGHT / 2 - text_rect.height() / 2)
+        self._scene.addItem(text)
+        self._placeholder_text = text
+        self._scene.setSceneRect(QRectF(0, 0, PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT))

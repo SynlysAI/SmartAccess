@@ -1,4 +1,4 @@
-"""Runtime orchestration components such as the orchestrator and recovery flows."""
+"""运行编排模块。"""
 
 from .executor import (
     AnchorMissingError,
@@ -8,12 +8,11 @@ from .executor import (
     WindowMissingError,
 )
 from .observer import Observation, Observer
-from .orchestrator import ConfirmHandler, ConfirmRequest, Orchestrator
+from .orchestrator import ConfirmRequest, Orchestrator
 from .recovery import RecoveryEngine
 
 __all__ = [
     "AnchorMissingError",
-    "ConfirmHandler",
     "ConfirmRequest",
     "Executor",
     "ExecutorError",

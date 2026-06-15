@@ -1,23 +1,32 @@
-"""A streaming, read-only log view."""
+"""运行日志控件。"""
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QPlainTextEdit, QWidget
+from PyQt6.QtWidgets import QTextEdit
+
+from smartaccess.desktop.viewmodels.monitoring_vm import MonitorLogEntry
 
 
-class LogView(QPlainTextEdit):
-    """Append-only log panel with a bounded backlog."""
+class LogView(QTextEdit):
+    """展示运行事件日志。"""
 
-    def __init__(self, parent: QWidget | None = None, max_lines: int = 500) -> None:
+    def __init__(self, parent=None) -> None:
+        """初始化日志视图。"""
+
         super().__init__(parent)
-        self.setObjectName("LogView")
         self.setReadOnly(True)
-        self.setMaximumBlockCount(max_lines)
+        self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
 
-    def append_line(self, text: str) -> None:
-        self.appendPlainText(text)
-        scrollbar = self.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+    def set_entries(self, entries: list[MonitorLogEntry]) -> None:
+        """刷新日志内容。
 
-    def clear_log(self) -> None:
-        self.clear()
+        Args:
+            entries: 日志行列表。
+        """
+
+        lines = [
+            f"{entry.timestamp} [{entry.level}] {entry.message}"
+            for entry in entries[-300:]
+        ]
+        self.setPlainText("\n".join(lines))
+        self.moveCursor(self.textCursor().MoveOperation.End)

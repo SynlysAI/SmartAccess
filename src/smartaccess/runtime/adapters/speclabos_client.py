@@ -1,4 +1,4 @@
-"""SpecLabOS HTTP platform client.
+﻿"""SpecLabOS HTTP platform client.
 
 The client intentionally uses urllib from the standard library so SmartAccess can
 call a FastAPI-compatible SpecLabOS service without adding a hard dependency.
@@ -125,3 +125,4 @@ class SpecLabOSPlatformClient:
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
             return {"raw": raw.decode("utf-8", errors="replace")}
+

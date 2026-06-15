@@ -1,252 +1,347 @@
-"""Main window: dockable workbench shell.
-
-Layout is a :class:`QMainWindow` so the left navigation and the right context
-inspector are real :class:`QDockWidget` panels — each can be floated, dragged,
-hidden, or pinned back. The center holds the page stack. Hiding the right dock
-lets a page (e.g. the calibration ROI canvas) reclaim the full width.
-"""
+"""SmartAccess 主窗口。"""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction
+import json
+from pathlib import Path
+
+from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtWidgets import (
-    QDockWidget,
     QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMessageBox,
+    QPushButton,
     QStackedWidget,
-    QToolButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
 from smartaccess.desktop.pages.calibration_page import CalibrationPage
 from smartaccess.desktop.pages.dashboard_page import DashboardPage
-from smartaccess.desktop.pages.journey_page import JourneyPage
 from smartaccess.desktop.pages.monitoring_page import MonitoringPage
 from smartaccess.desktop.pages.template_page import TemplatePage
 from smartaccess.desktop.pages.workflow_page import WorkflowPage
-from smartaccess.desktop.viewmodels.base import EventRelay
-from smartaccess.desktop.widgets.right_context import RightContextPanel
+from smartaccess.shared.config.settings import AppSettings
+from smartaccess.runtime.application.facade import RuntimeFacade
+from smartaccess.shared.logging import get_logger
 
-_NAV = [
-    ("⌘", "流程引导", "主路径 workflow 引导"),
-    ("⊞", "设备接入与校准", "窗口识别与 ROI 标注"),
-    ("✦", "工作流设计", "AI 生成与标准化"),
-    ("❏", "模板库", "版本与发布治理"),
-    ("◎", "运行监控", "执行、观测与恢复"),
-    ("⌂", "运行概览", "设备状态、运行与异常"),
+_NAV_ITEMS = [
+    ("设备接入与校准", "窗口扫描、截图、ROI 和锚点配置"),
+    ("工作流设计", "生成、编辑、检查和保存工作流"),
+    ("运行监控", "执行工作流并查看日志和审计"),
+    ("模板/平台", "模板发布、回滚和平台同步"),
+    ("运行概览", "设备、模板、运行和异常概览"),
 ]
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, facade, *, provider_modes: dict[str, str] | None = None, parent: QWidget | None = None) -> None:
+    """SmartAccess 桌面主窗口。"""
+
+    def __init__(
+        self,
+        settings: AppSettings,
+        facade: RuntimeFacade | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        """初始化主窗口。
+
+        Args:
+            settings: 应用配置。
+            facade: 可选运行时门面。
+            parent: 可选父级窗口。
+        """
+
         super().__init__(parent)
-        self.setWindowTitle("SmartAccess 工作台")
-        self.resize(1480, 920)
-        self.setDockOptions(
-            QMainWindow.DockOption.AnimatedDocks
-            | QMainWindow.DockOption.AllowNestedDocks
-        )
+        self._settings = settings
         self._facade = facade
-        self._provider_modes = provider_modes or {}
-        self._relay = EventRelay(facade, self)
+        self._logger = get_logger()
+        self._state_path = (
+            Path(settings.workspace_dir) / "app_state" / "window_state.json"
+        )
 
-        # --- center: top bar + page stack -------------------------------- #
-        center = QWidget()
-        center_layout = QVBoxLayout(center)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(0)
-        center_layout.addWidget(self._build_top_bar())
-
-        self._stack = QStackedWidget()
-        self._journey_page = JourneyPage(facade)
-        self._journey_page.navigate_requested.connect(self._navigate_to_row)
-        self._workflow_page = WorkflowPage(facade)
-        self._pages = [
-            self._journey_page,
-            CalibrationPage(facade),
-            self._workflow_page,
-            TemplatePage(facade),
-            MonitoringPage(facade, self._relay),
-            DashboardPage(facade),
-        ]
-        for page in self._pages:
-            self._stack.addWidget(page)
-        center_layout.addWidget(self._stack, 1)
-        self.setCentralWidget(center)
-
-        # --- left nav dock ----------------------------------------------- #
+        self.setWindowTitle("SmartAccess")
+        self.setMinimumSize(800, 500)
         self._nav = QListWidget()
         self._nav.setObjectName("NavList")
-        for icon, title, subtitle in _NAV:
-            item = QListWidgetItem(f"  {icon}   {title}")
-            item.setToolTip(subtitle)
-            self._nav.addItem(item)
+        self._stack = QStackedWidget()
+        self._right_panel = self._build_right_panel()
+
+        self._build_ui()
+        self._restore_window_state()
+        self._nav.setCurrentRow(0)
+        self._logger.info("主窗口初始化完成")
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """关闭窗口前保存 UI 状态。"""
+
+        self._save_window_state()
+        super().closeEvent(event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        """窗口状态变化时保存稳定的布局状态。"""
+
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and not self.isMinimized():
+            self._save_window_state()
+
+    def _build_ui(self) -> None:
+        """构建主窗口布局。"""
+
+        center = QWidget()
+        root = QVBoxLayout(center)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_top_bar())
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._build_nav(), 0)
+        body.addWidget(self._stack, 1)
+        body.addWidget(self._right_panel, 0)
+        root.addLayout(body, 1)
+        self.setCentralWidget(center)
+
+        for index, (title, hint) in enumerate(_NAV_ITEMS):
+            if index == 0 and self._facade is not None:
+                self._stack.addWidget(CalibrationPage(self._facade))
+            elif index == 1 and self._facade is not None:
+                self._stack.addWidget(WorkflowPage(self._facade))
+            elif index == 2 and self._facade is not None:
+                self._stack.addWidget(MonitoringPage(self._facade))
+            elif index == 3 and self._facade is not None:
+                self._stack.addWidget(TemplatePage(self._facade))
+            elif index == 4 and self._facade is not None:
+                self._stack.addWidget(DashboardPage(self._facade))
+            else:
+                self._stack.addWidget(self._placeholder_page(title, hint))
         self._nav.currentRowChanged.connect(self._on_nav_changed)
 
-        self._nav_dock = self._make_dock("导航", self._nav, width=232)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._nav_dock)
-
-        # --- right toolbar dock ------------------------------------------ #
-        self._right = RightContextPanel(facade)
-        self._right_dock = self._make_dock("工具栏", self._right, width=336)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._right_dock)
-
-        self._wire_view_toggles()
-        self._nav.setCurrentRow(0)
-        self._refresh_context(0)
-
-        # --- status bar: provider mode indicators ------------------------- #
-        self._status_bar = self.statusBar()
-        self._status_bar.setStyleSheet(
-            "QStatusBar{background:#0f1219;color:#8b95a8;border-top:1px solid #272c36;padding:2px 12px;}"
-        )
-        self._build_mode_labels()
-
-    # ------------------------------------------------------------------ #
-    def _make_dock(self, title: str, widget: QWidget, *, width: int) -> QDockWidget:
-        dock = QDockWidget(title, self)
-        dock.setObjectName(f"Dock_{title}")
-        dock.setWidget(widget)
-        dock.setAllowedAreas(
-            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
-        )
-        dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-            | QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-        widget.setMinimumWidth(width)
-        return dock
-
     def _build_top_bar(self) -> QWidget:
+        """构建顶部工具栏。
+
+        Returns:
+            顶部工具栏部件。
+        """
+
         bar = QFrame()
         bar.setObjectName("TopBar")
-        bar.setFixedHeight(60)
+        bar.setFixedHeight(44)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(18, 0, 18, 0)
+        layout.setContentsMargins(16, 0, 16, 0)
         layout.setSpacing(10)
 
-        # Panel-pin toggles let the user collapse/restore the side docks so the
-        # center (e.g. the ROI canvas) can take the full width.
-        self._btn_left = self._panel_button("◧", "显示/隐藏 左侧导航栏")
-        self._btn_right = self._panel_button("◨", "显示/隐藏 右侧工具栏")
-        layout.addWidget(self._btn_left)
-        layout.addWidget(self._btn_right)
+        self._nav_toggle = QPushButton("☰")
+        self._nav_toggle.setObjectName("Ghost")
+        self._nav_toggle.setCheckable(True)
+        self._nav_toggle.setChecked(True)
+        self._nav_toggle.setToolTip("显示或隐藏导航栏")
+        self._nav_toggle.toggled.connect(self._nav.setVisible)
+        nav_font = self._nav_toggle.font()
+        nav_font.setBold(True)
+        self._nav_toggle.setFont(nav_font)
+        layout.addWidget(self._nav_toggle)
 
-        sep = QFrame()
-        sep.setFixedWidth(1)
-        sep.setStyleSheet("background:#272c36;")
-        layout.addWidget(sep)
+        self._right_toggle = QPushButton("ⓘ")
+        self._right_toggle.setObjectName("Ghost")
+        self._right_toggle.setCheckable(True)
+        self._right_toggle.setChecked(True)
+        self._right_toggle.setToolTip("显示或隐藏系统状态面板")
+        self._right_toggle.toggled.connect(self._right_panel.setVisible)
+        info_font = self._right_toggle.font()
+        info_font.setBold(True)
+        self._right_toggle.setFont(info_font)
 
-        self._title = QLabel("流程引导")
-        self._title.setObjectName("TopBarTitle")
-        layout.addWidget(self._title)
         layout.addStretch(1)
-        workspace = QLabel("workspace · 本地内网")
-        workspace.setObjectName("TopBarMeta")
-        layout.addWidget(workspace)
-        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self._right_toggle)
         return bar
 
-    def _panel_button(self, glyph: str, tip: str) -> QToolButton:
-        btn = QToolButton()
-        btn.setText(glyph)
-        btn.setToolTip(tip)
-        btn.setCheckable(True)
-        btn.setChecked(True)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setStyleSheet(
-            "QToolButton{background:#1a1e27;color:#c2cad8;border:1px solid #39414f;"
-            "border-radius:7px;padding:5px 9px;font-size:14px;}"
-            "QToolButton:checked{background:#16315c;color:#f3f6fc;border-color:#3b82f6;}"
-            "QToolButton:hover{border-color:#3b82f6;}"
-        )
-        return btn
+    def _build_nav(self) -> QListWidget:
+        """构建左侧导航。
 
-    def _wire_view_toggles(self) -> None:
-        self._btn_left.toggled.connect(self._nav_dock.setVisible)
-        self._btn_right.toggled.connect(self._right_dock.setVisible)
-        self._nav_dock.visibilityChanged.connect(
-            lambda v: self._btn_left.setChecked(v)
-        )
-        self._right_dock.visibilityChanged.connect(
-            lambda v: self._btn_right.setChecked(v)
-        )
+        Returns:
+            导航列表部件。
+        """
+
+        self._nav.setFixedWidth(200)
+        self._nav.setIconSize(QSize(18, 18))
+        icons = [
+            QStyle.StandardPixmap.SP_ComputerIcon,
+            QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            QStyle.StandardPixmap.SP_MediaPlay,
+            QStyle.StandardPixmap.SP_DirIcon,
+            QStyle.StandardPixmap.SP_FileDialogInfoView,
+        ]
+        for index, (title, hint) in enumerate(_NAV_ITEMS):
+            item = QListWidgetItem(title)
+            item.setIcon(self.style().standardIcon(icons[index]))
+            item.setToolTip(hint)
+            self._nav.addItem(item)
+        return self._nav
+
+    def _build_right_panel(self) -> QWidget:
+        """构建右侧系统状态栏。
+
+        Returns:
+            系统状态栏部件。
+        """
+
+        panel = QFrame()
+        panel.setObjectName("RightPanel")
+        panel.setFixedWidth(260)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        title = QLabel("系统状态")
+        title.setObjectName("PageTitle")
+        layout.addWidget(title)
+        self._context = QLabel(self._context_text("设备接入与校准"))
+        self._context.setObjectName("PageHint")
+        self._context.setWordWrap(True)
+        layout.addWidget(self._context)
+        import_btn = QPushButton("导入旧工作区")
+        import_btn.setObjectName("Secondary")
+        import_btn.clicked.connect(self._import_legacy_workspace)
+        layout.addWidget(import_btn)
+        layout.addStretch(1)
+        return panel
+
+    @staticmethod
+    def _placeholder_page(title: str, hint: str) -> QWidget:
+        """构建占位页面。
+
+        Args:
+            title: 页面标题。
+            hint: 页面说明。
+
+        Returns:
+            占位页面部件。
+        """
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(8)
+        title_label = QLabel(title)
+        title_label.setObjectName("PageTitle")
+        hint_label = QLabel(f"{hint}\n\n该页面将在后续批次接入具体功能。")
+        hint_label.setObjectName("PageHint")
+        hint_label.setWordWrap(True)
+        layout.addWidget(title_label)
+        layout.addWidget(hint_label)
+        layout.addStretch(1)
+        return page
 
     def _on_nav_changed(self, row: int) -> None:
+        """切换当前页面。
+
+        Args:
+            row: 导航行号。
+        """
+
         if row < 0:
             return
         self._stack.setCurrentIndex(row)
-        self._title.setText(_NAV[row][1])
-        page = self._pages[row]
-        # Pages may refresh themselves when shown so newly persisted config
-        # (e.g. a generated workflow YAML) is always visible.
-        reload_fn = getattr(page, "on_show", None)
-        if callable(reload_fn):
-            reload_fn()
-        self._refresh_context(row)
+        page = self._stack.currentWidget()
+        on_show = getattr(page, "on_show", None)
+        if callable(on_show):
+            on_show()
+        title = _NAV_ITEMS[row][0]
+        self._context.setText(self._context_text(title))
+        self._logger.info("切换页面: %s", title)
 
-    def _refresh_context(self, row: int) -> None:
-        projection = self._facade.dashboard()
-        devices = self._facade.list_instruments()
-        workflows = self._facade.list_workflows()
-        templates = self._facade.list_templates()
-        details = [f"当前页面: {_NAV[row][1]}"]
-        if devices:
-            details.append(f"设备: {devices[-1].device_id}（锚点 {len(devices[-1].anchors)}）")
-        if workflows:
-            details.append(f"工作流: {workflows[-1].metadata.workflow_id}")
-        if templates:
-            details.append(f"模板: {templates[-1].identity}")
-        risk_items = []
-        if projection.incidents:
-            risk_items.extend(f"! {i.type}: {i.detail}" for i in projection.incidents[:3])
-        if projection.outbox_failed:
-            risk_items.append(f"! 平台补传失败 {projection.outbox_failed} 条")
-        if not devices and row in {0, 1, 4, 5}:
-            risk_items.append("! 尚未保存可执行仪器画像")
-        if not risk_items:
-            risk_items.append("+ 当前工具栏无阻塞风险")
-        audit = [
-            f"本地模板: {projection.local_template_count} 个",
-            (f"云端模板: {projection.cloud_template_count} 个"
-             if projection.cloud_templates_available else "云端模板: 未连接"),
-            f"运行记录: {len(projection.recent_runs)} 条",
-            f"待处理异常: {len(projection.incidents)} 条",
-        ]
-        self._right.show_context(
-            details=details,
-            assistant=[],
-            risk=risk_items,
-            audit=audit,
+    def _context_text(self, title: str) -> str:
+        """生成右侧系统状态文本。
+
+        Args:
+            title: 当前页面标题。
+
+        Returns:
+            上下文状态文本。
+        """
+
+        if self._facade is None:
+            return (
+                f"当前页面: {title}\n"
+                f"工作区: {self._settings.workspace_dir}\n"
+                "状态: 已启动\n"
+                "日志: 已启用"
+            )
+        status = self._facade.status()
+        return (
+            f"当前页面: {title}\n"
+            f"工作区: {status.workspace_dir}\n"
+            f"自动化: {status.automation_provider}\n"
+            f"视觉: {status.vision_provider}\n"
+            f"平台: {status.platform_provider}\n"
+            f"AI: {status.ai_provider}\n"
+            "日志: 已启用"
         )
 
-    def _build_mode_labels(self) -> None:
-        modes = self._provider_modes
-        automation = modes.get("automation", "stub")
-        vision = modes.get("vision", "stub")
-        llm = modes.get("llm", "未配置")
+    def _restore_window_state(self) -> None:
+        """恢复窗口尺寸和面板显示状态。"""
 
-        automation_label = "Win32 真实输入" if automation == "real" else "Stub 模拟输入"
-        vision_label = {
-            "local": "PaddleOCR+OpenCV",
-            "stub": "Stub 模拟识别",
-        }.get(vision, vision)
-        llm_label = llm
-
-        self._mode_status = QLabel(
-            f"Automation: {automation_label}  |  "
-            f"Vision: {vision_label}  |  "
-            f"LLM: {llm_label}"
+        default_width = 1440
+        default_height = 900
+        if not self._state_path.exists():
+            self.resize(default_width, default_height)
+            return
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            self.resize(default_width, default_height)
+            return
+        self.resize(
+            max(960, int(data.get("width", default_width))),
+            max(680, int(data.get("height", default_height))),
         )
-        self._mode_status.setStyleSheet("color:#8b95a8;font-size:12px;padding:0 4px;")
-        self._status_bar.addPermanentWidget(self._mode_status)
+        self._nav_toggle.setChecked(bool(data.get("nav_visible", True)))
+        self._right_toggle.setChecked(bool(data.get("right_visible", True)))
+        if data.get("maximized"):
+            self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
 
-    def _navigate_to_row(self, row: int) -> None:
-        self._nav.setCurrentRow(row)
+    def _save_window_state(self) -> None:
+        """保存窗口尺寸和面板显示状态。"""
+
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.isMinimized():
+            return
+        data = {
+            "width": self.width(),
+            "height": self.height(),
+            "maximized": bool(self.windowState() & Qt.WindowState.WindowMaximized),
+            "nav_visible": self._nav.isVisible(),
+            "right_visible": self._right_panel.isVisible(),
+        }
+        self._state_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _import_legacy_workspace(self) -> None:
+        """从旧 workspace 导入可兼容数据。"""
+
+        if self._facade is None:
+            return
+        try:
+            report = self._facade.import_legacy_workspace("workspace")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "导入失败", str(exc))
+            return
+        message = (
+            f"已导入锚点: {report.imported_anchors}\n"
+            f"已导入工作流: {report.imported_workflows}\n"
+            f"已导入模板: {report.imported_templates}\n"
+            f"跳过文件: {len(report.skipped)}"
+        )
+        self._logger.info("旧工作区导入完成: %s", message.replace("\n", "; "))
+        QMessageBox.information(self, "导入完成", message)
+        page = self._stack.currentWidget()
+        on_show = getattr(page, "on_show", None)
+        if callable(on_show):
+            on_show()

@@ -1,4 +1,4 @@
-"""ExperimentService: device-side experiment trigger/execute/status use case.
+﻿"""ExperimentService: device-side experiment trigger/execute/status use case.
 
 This is the use-case layer behind the Edge API. It owns the preparation state
 machine, delegates instruction generation and process control to injected
@@ -113,3 +113,4 @@ def _now_iso() -> str:
 
 def _new_request_id() -> str:
     return str(uuid.uuid4())
+

@@ -1,4 +1,4 @@
-"""Pydantic models for simplified `workflow.yaml`."""
+"""workflow.yaml 的契约模型。"""
 
 from __future__ import annotations
 
@@ -8,13 +8,35 @@ from pydantic import Field, model_validator
 
 from .base import ContractModel, FlexibleContractModel, NonEmptyStr
 
-SIMPLIFIED_WORKFLOW_ACTIONS: tuple[str, ...] = ("click", "type", "hotkey", "press_enter")
-LEGACY_WORKFLOW_ACTIONS: tuple[str, ...] = ("double_click", "wait", "wait_until", "screenshot_check")
-MATCH_MODES: tuple[str, ...] = ("contains", "equals", "regex", "not_empty", "none")
+SIMPLIFIED_WORKFLOW_ACTIONS: tuple[str, ...] = (
+    "click",
+    "type",
+    "hotkey",
+    "press_enter",
+    "wait",
+)
+EXECUTABLE_WORKFLOW_ACTIONS: tuple[str, ...] = (
+    "click",
+    "type",
+    "hotkey",
+    "press_enter",
+)
+LEGACY_WORKFLOW_ACTIONS: tuple[str, ...] = (
+    "double_click",
+    "wait_until",
+    "screenshot_check",
+)
+MATCH_MODES: tuple[str, ...] = (
+    "contains",
+    "equals",
+    "regex",
+    "not_empty",
+    "none",
+)
 
 
 class WorkflowMetadata(FlexibleContractModel):
-    """Stable metadata for workflow drafts and published templates."""
+    """工作流草稿和模板的稳定元数据。"""
 
     workflow_id: NonEmptyStr
     anchor_profile: NonEmptyStr | None = None
@@ -27,6 +49,8 @@ class WorkflowMetadata(FlexibleContractModel):
 
     @model_validator(mode="after")
     def _normalize_profile(self) -> "WorkflowMetadata":
+        """兼容旧字段 instrument_profile。"""
+
         if not self.anchor_profile and self.instrument_profile:
             self.anchor_profile = self.instrument_profile
         if not self.instrument_profile and self.anchor_profile:
@@ -37,12 +61,12 @@ class WorkflowMetadata(FlexibleContractModel):
 
 
 class WorkflowStep(FlexibleContractModel):
-    """A single linear workflow step bound to one anchor."""
+    """工作流中的一个动作步骤或等待步骤。"""
 
     id: NonEmptyStr
     anchor_id: NonEmptyStr | None = None
     target: str | None = Field(default=None, exclude=True)
-    action: Literal["click", "type", "hotkey", "press_enter"]
+    action: Literal["click", "type", "hotkey", "press_enter", "wait"]
     value: Any | None = None
     condition: dict[str, Any] | None = Field(default=None, exclude=True)
     expected_text: str | None = None
@@ -54,6 +78,8 @@ class WorkflowStep(FlexibleContractModel):
 
     @model_validator(mode="after")
     def _normalize_expectation(self) -> "WorkflowStep":
+        """标准化锚点、等待时间和 OCR 条件。"""
+
         if not self.anchor_id and self.target:
             self.anchor_id = self.target
         normalized = normalize_condition(self.condition)
@@ -62,18 +88,38 @@ class WorkflowStep(FlexibleContractModel):
                 self.match_mode = normalized["match_mode"]
             if self.expected_text is None and normalized.get("expected_text") is not None:
                 self.expected_text = str(normalized["expected_text"])
-            if self.timeout_seconds is None and normalized.get("timeout_seconds") is not None:
+            if (
+                self.timeout_seconds is None
+                and normalized.get("timeout_seconds") is not None
+            ):
                 self.timeout_seconds = float(normalized["timeout_seconds"])
+        if self.action == "wait":
+            self._normalize_wait_step()
+            return self
         if self.match_mode == "none":
             self.expected_text = None
             self.timeout_seconds = None
         if not self.anchor_id:
-            raise ValueError("anchor_id is required")
+            self.migration_error = "anchor_id is required for executable workflow steps"
         return self
+
+    def _normalize_wait_step(self) -> None:
+        """标准化等待步骤字段。"""
+
+        if self.wait_seconds is None and self.value is not None:
+            self.wait_seconds = _coerce_seconds(self.value)
+        if self.wait_seconds is None:
+            self.wait_seconds = 1.0
+        self.anchor_id = None
+        self.target = None
+        self.expected_text = None
+        self.timeout_seconds = None
+        self.match_mode = "none"
+        self.requires_confirmation = False
 
 
 class WorkflowMigrationError(FlexibleContractModel):
-    """A legacy step that could not be safely converted to the simplified model."""
+    """无法安全迁移的旧工作流步骤。"""
 
     id: NonEmptyStr
     action: str
@@ -84,20 +130,20 @@ class WorkflowMigrationError(FlexibleContractModel):
 
 
 class WorkflowOutput(FlexibleContractModel):
-    """Legacy compatibility shape kept for older desktop/tests."""
+    """旧版输出声明的兼容结构。"""
 
     key: NonEmptyStr
     source: NonEmptyStr
 
 
 class WorkflowRetryPolicy(FlexibleContractModel):
-    """Legacy compatibility shape kept for older desktop/tests."""
+    """工作流重试策略。"""
 
     max_attempts: int = Field(default=1, ge=0)
 
 
 class WorkflowContract(ContractModel):
-    """Top-level contract for SmartAccess v2 workflows."""
+    """工作流顶层契约。"""
 
     metadata: WorkflowMetadata
     steps: list[WorkflowStep] = Field(default_factory=list)
@@ -110,6 +156,8 @@ class WorkflowContract(ContractModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_steps(cls, raw: Any) -> Any:
+        """迁移旧工作流步骤结构。"""
+
         if not isinstance(raw, dict):
             return raw
         data = dict(raw)
@@ -121,15 +169,26 @@ class WorkflowContract(ContractModel):
 
     @model_validator(mode="after")
     def _unique_step_ids(self) -> "WorkflowContract":
+        """检查步骤 ID 不重复。"""
+
         step_ids = [step.id for step in self.steps]
-        duplicates = sorted({step_id for step_id in step_ids if step_ids.count(step_id) > 1})
+        duplicates = sorted(
+            {step_id for step_id in step_ids if step_ids.count(step_id) > 1}
+        )
         if duplicates:
             raise ValueError(f"duplicate step ids: {', '.join(duplicates)}")
         return self
 
 
 def normalize_condition(condition: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Convert legacy source/mode/operator conditions to OCR expectation fields."""
+    """把旧版 condition 转成 OCR 期望字段。
+
+    Args:
+        condition: 旧版条件对象。
+
+    Returns:
+        标准化后的条件对象；无条件时返回 None。
+    """
 
     if not condition:
         return None
@@ -153,7 +212,14 @@ def normalize_condition(condition: dict[str, Any] | None) -> dict[str, Any] | No
 def normalize_workflow_steps(
     raw_steps: list[Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return simplified steps plus standardized migration errors."""
+    """返回标准步骤和迁移错误列表。
+
+    Args:
+        raw_steps: 原始步骤列表。
+
+    Returns:
+        标准步骤列表和迁移错误列表。
+    """
 
     steps: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -165,7 +231,7 @@ def normalize_workflow_steps(
                 {
                     "id": f"legacy_step_{index + 1}",
                     "action": "unknown",
-                    "reason": "legacy step is not an object; rebind to an action anchor",
+                    "reason": "legacy step is not an object",
                     "original": {"value": raw},
                 }
             )
@@ -176,31 +242,21 @@ def normalize_workflow_steps(
         if "anchor_id" not in step and step.get("target"):
             step["anchor_id"] = step.get("target")
         if action == "double_click":
-            first = _action_step(step, action="click", step_id=f"{step_id}_click_1")
-            second = _action_step(step, action="click", step_id=f"{step_id}_click_2")
-            first.pop("expected_text", None)
-            first.pop("timeout_seconds", None)
-            first["match_mode"] = "none"
-            steps.extend([first, second])
+            _append_double_click_steps(steps, step, step_id)
             continue
         if action in {"wait_until", "screenshot_check"}:
-            condition = normalize_condition(step.get("condition"))
-            if condition is None:
-                condition = _condition_from_flat_step(step)
-            if steps and condition:
-                _merge_condition_into_step(steps[-1], condition)
-            else:
-                errors.append(_migration_error(step, "legacy OCR wait/check must follow an executable action step; rebind to an action anchor"))
+            _merge_legacy_condition(steps, errors, step)
             continue
         if action == "wait":
-            wait_seconds = step.get("wait_seconds", step.get("value"))
-            if steps and wait_seconds is not None:
-                steps[-1]["wait_seconds"] = _coerce_seconds(wait_seconds)
-            else:
-                errors.append(_migration_error(step, "legacy fixed wait must follow an executable action step"))
+            steps.append(_wait_step(step, step_id))
             continue
-        if action not in SIMPLIFIED_WORKFLOW_ACTIONS:
-            errors.append(_migration_error(step, f"legacy action '{action or 'unknown'}' must be rebound to an action anchor"))
+        if action not in EXECUTABLE_WORKFLOW_ACTIONS:
+            errors.append(
+                _migration_error(
+                    step,
+                    f"legacy action '{action or 'unknown'}' must be rebound",
+                )
+            )
             continue
         clean = _action_step(step, action=action, step_id=step_id)
         flat_condition = _condition_from_flat_step(step)
@@ -210,7 +266,45 @@ def normalize_workflow_steps(
     return steps, errors
 
 
+def _append_double_click_steps(
+    steps: list[dict[str, Any]],
+    step: dict[str, Any],
+    step_id: str,
+) -> None:
+    """把双击步骤拆成两次 click。"""
+
+    first = _action_step(step, action="click", step_id=f"{step_id}_click_1")
+    second = _action_step(step, action="click", step_id=f"{step_id}_click_2")
+    first.pop("expected_text", None)
+    first.pop("timeout_seconds", None)
+    first["match_mode"] = "none"
+    steps.extend([first, second])
+
+
+def _merge_legacy_condition(
+    steps: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    step: dict[str, Any],
+) -> None:
+    """把旧版 OCR 等待条件合并到前一个动作步骤。"""
+
+    condition = normalize_condition(step.get("condition"))
+    if condition is None:
+        condition = _condition_from_flat_step(step)
+    if steps and condition:
+        _merge_condition_into_step(steps[-1], condition)
+    else:
+        errors.append(
+            _migration_error(
+                step,
+                "legacy OCR wait/check must follow an executable action step",
+            )
+        )
+
+
 def _action_step(raw: dict[str, Any], *, action: str, step_id: str) -> dict[str, Any]:
+    """返回清理后的动作步骤。"""
+
     clean = dict(raw)
     clean["id"] = step_id
     clean["action"] = action
@@ -222,7 +316,28 @@ def _action_step(raw: dict[str, Any], *, action: str, step_id: str) -> dict[str,
     return clean
 
 
+def _wait_step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
+    """返回清理后的固定等待步骤。"""
+
+    clean = dict(raw)
+    clean["id"] = step_id
+    clean["action"] = "wait"
+    clean.pop("target", None)
+    clean.pop("anchor_id", None)
+    clean.pop("condition", None)
+    clean.pop("expected_text", None)
+    clean.pop("timeout_seconds", None)
+    clean["match_mode"] = "none"
+    if clean.get("wait_seconds") is None and clean.get("value") is not None:
+        clean["wait_seconds"] = _coerce_seconds(clean["value"])
+    if clean.get("wait_seconds") is None:
+        clean["wait_seconds"] = 1.0
+    return clean
+
+
 def _condition_from_flat_step(step: dict[str, Any]) -> dict[str, Any] | None:
+    """从扁平字段提取 OCR 条件。"""
+
     match_mode = step.get("match_mode")
     expected_text = step.get("expected_text")
     timeout = step.get("timeout_seconds")
@@ -236,7 +351,12 @@ def _condition_from_flat_step(step: dict[str, Any]) -> dict[str, Any] | None:
     return normalize_condition(step.get("condition"))
 
 
-def _merge_condition_into_step(step: dict[str, Any], condition: dict[str, Any]) -> None:
+def _merge_condition_into_step(
+    step: dict[str, Any],
+    condition: dict[str, Any],
+) -> None:
+    """把 OCR 条件写入动作步骤。"""
+
     match_mode = condition.get("match_mode")
     if match_mode:
         step["match_mode"] = match_mode
@@ -247,6 +367,8 @@ def _merge_condition_into_step(step: dict[str, Any], condition: dict[str, Any]) 
 
 
 def _migration_error(step: dict[str, Any], reason: str) -> dict[str, Any]:
+    """构造标准迁移错误对象。"""
+
     return {
         "id": str(step.get("id") or "legacy_step"),
         "action": str(step.get("action") or "unknown"),
@@ -258,6 +380,15 @@ def _migration_error(step: dict[str, Any], reason: str) -> dict[str, Any]:
 
 
 def _coerce_seconds(value: Any) -> float:
+    """把数字或字符串时长转成秒。
+
+    Args:
+        value: 数字、毫秒字符串或秒字符串。
+
+    Returns:
+        秒数。
+    """
+
     if isinstance(value, str):
         stripped = value.strip().lower()
         if stripped.endswith("ms"):
