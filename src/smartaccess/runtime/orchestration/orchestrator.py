@@ -288,6 +288,7 @@ class Orchestrator:
             return False
         if step.match_mode != "none" and matched is not True:
             detail = "OCR 结果未满足期望"
+            reading = observation.readings[0] if observation.readings else None
             self._record_trace(
                 session=session,
                 workflow=workflow,
@@ -307,6 +308,15 @@ class Orchestrator:
                 RuntimeEventName.RUN_FAILED,
                 step_id=step.id,
                 detail=detail,
+                anchor_id=step.anchor_id,
+                expected_text=step.expected_text,
+                actual_text=reading.text if reading else None,
+                match_mode=step.match_mode,
+                matched=matched,
+                attempts=attempts,
+                elapsed_seconds=elapsed,
+                wait_strategy=wait_strategy.model_dump(mode="json", exclude_none=True),
+                screenshot_path=screenshot_path,
             )
             return False
         self._emit_observation_event(
@@ -362,6 +372,31 @@ class Orchestrator:
                 None,
             )
         timeout_seconds = float(step.timeout_seconds or anchor.default_wait_seconds or 2.0)
+        pre_wait_seconds = float(step.wait_seconds or 0.0)
+        wait_start = time.monotonic()
+        while time.monotonic() - wait_start < pre_wait_seconds:
+            if self._is_stopped(session, step.id):
+                break
+            time.sleep(
+                min(
+                    0.1,
+                    max(0.0, pre_wait_seconds - (time.monotonic() - wait_start)),
+                )
+            )
+        wait_elapsed = time.monotonic() - wait_start
+        if self._is_stopped(session, step.id):
+            return (
+                Observation(),
+                WaitStrategyPayload(
+                    type="ocr_poll",
+                    wait_seconds=pre_wait_seconds,
+                    timeout_seconds=timeout_seconds,
+                    poll_interval_seconds=POLL_INTERVAL_SECONDS,
+                ),
+                0,
+                wait_elapsed,
+                None,
+            )
         start = time.monotonic()
         attempts = 0
         last_observation = Observation()
@@ -398,11 +433,12 @@ class Orchestrator:
                     last_observation,
                     WaitStrategyPayload(
                         type="ocr_poll",
+                        wait_seconds=pre_wait_seconds,
                         timeout_seconds=timeout_seconds,
                         poll_interval_seconds=POLL_INTERVAL_SECONDS,
                     ),
                     attempts,
-                    elapsed,
+                    wait_elapsed + elapsed,
                     last_screenshot_path,
                 )
             time.sleep(POLL_INTERVAL_SECONDS)

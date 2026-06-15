@@ -2,7 +2,7 @@
 
 - `scope`: SmartAccess OCR 观测策略与锚点区域约束。
 - `source_of_truth`: `docs/PRD.zh-CN.md`, `docs/architecture/system-overview.md`, `docs/contracts/interfaces.md`
-- `last_reviewed`: 2026-06-11
+- `last_reviewed`: 2026-06-15
 - `related_contracts`: `anchors.yaml`, `run_trace.jsonl`
 
 ## v2 观测模式
@@ -23,6 +23,8 @@
 - 视觉判断不确定时应升级为异常或人工确认。
 - v2 不使用非 OCR 识别模式；这些能力如需恢复，必须先更新主契约和评测。
 - OCR 结果、置信度、匹配结果、尝试次数和截图路径必须写入 `run_trace.jsonl`。
+- 运行监控日志展示 OCR 观测事件时，必须同时展示 pass 规则（`match_mode + expected_text` 或 `not_empty`）、实际 OCR 文本、匹配结果和尝试次数，便于不打开 trace 也能审计历史识别事实。
+- OCR mismatch 触发 `run.failed` 时，失败事件也必须携带同一组 OCR 调试字段，ERROR 日志要高亮 pass 规则和当前实际识别结果。
 
 ## 能力样例
 

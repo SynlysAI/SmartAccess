@@ -2,6 +2,28 @@
 
 本文件记录已落地或已明确进入实现基线的产品能力。详细产品范围以 `docs/PRD.zh-CN.md` 为准，技术语义以 `docs/SPEC.zh-CN.md` 与 `docs/contracts/interfaces.md` 为准。
 
+## 2026-06-15 运行监控设备摘要与 OCR 日志增强
+
+### 运行监控
+- 运行监控页在工作流下拉框下方展示当前工作流绑定的锚点集/设备摘要，包括工作流状态、模板版本、绑定锚点集、窗口签名、锚点数量、OCR 观测锚点数量和动作能力。
+- 当工作流引用的锚点集不存在时，监控页显示“未找到绑定设备配置”，不阻断用户查看或切换工作流。
+- 运行日志对 `run.step.observed` OCR 观测事件追加 `OCR规则`、`OCR实际`、`匹配` 和 `尝试` 信息，便于从历史日志直接审计预期 pass 规则和实际识别结果。
+- 运行监控页的工作流设备摘要、会话审计、最新 OCR 观测和运行日志改为富文本展示，区分标题、字段名、关键值和错误/警告状态。
+- OCR mismatch 导致 `run.failed` 时，事件 payload 附加 `match_mode`、`expected_text`、`actual_text`、`matched`、`attempts`、耗时、截图和等待策略；ERROR 日志同步高亮 OCR pass 规则和实际识别结果。
+- 工作流绑定设备摘要改为自适应三列信息评估布局，按“基础信息 / 设备评估 / 能力评估”分组展示，充分利用顶部横向空间，并允许长窗口标题、动作列表按宽度换行，避免信息被压缩裁剪。
+- 运行日志取消横向单行滚动，按当前控件宽度自动换行；OCR 调试字段拆分为可换行字段组，方便查看长失败信息。
+
+### 工作流设计
+- 工作流页底部“信息”区改为富文本展示，AI reasoning 与检查结果按标题和正文分层显示。
+
+### 验证
+- 新增 `tests/desktop/test_monitoring_page.py` 覆盖绑定设备摘要、缺失设备提示、OCR 日志展开和非 OCR 日志保持简洁。
+- 已执行 `pytest tests/desktop/test_monitoring_page.py -q`。
+- 新增 `tests/desktop/test_workflow_result_rich_text.py` 和 `tests/integration/test_ocr_failed_event_payload.py`，覆盖工作流信息富文本和 OCR 失败事件调试 payload。
+- 已执行 `pytest tests/desktop/test_workflow_result_rich_text.py -q`、`pytest tests/integration/test_ocr_failed_event_payload.py -q` 和 `python -m compileall -q src\\smartaccess ...`。
+- 已补充执行 `pytest tests/desktop/test_monitoring_page.py tests/desktop/test_workflow_result_rich_text.py tests/integration/test_ocr_failed_event_payload.py -q`，覆盖摘要换行、日志换行和 OCR 字段排布。
+- 当前更宽的集成/契约测试仍受既有导出问题阻塞：`smartaccess.shared.events` 未导出 `RuntimeEventName`，`smartaccess.shared.contracts` 未导出 `AnchorsContract`。
+
 ## 2026-06-11 VER5 能力示例与监控增强
 
 ### 运行监控
