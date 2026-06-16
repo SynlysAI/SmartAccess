@@ -31,20 +31,13 @@ _CV2_AVAILABLE = False
 _PADDLE_AVAILABLE = False
 _cv2: Any = None
 _PaddleOCR: Any = None
+_PADDLE_IMPORT_ERROR: BaseException | None = None
 
 try:
     import cv2 as _cv2_mod
 
     _cv2 = _cv2_mod
     _CV2_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from paddleocr import PaddleOCR as _PaddleOCRCls
-
-    _PaddleOCR = _PaddleOCRCls
-    _PADDLE_AVAILABLE = True
 except ImportError:
     pass
 
@@ -58,9 +51,28 @@ def _require_cv2() -> None:
 
 def _require_paddle() -> None:
     if not _PADDLE_AVAILABLE:
-        raise RuntimeError(
+        _load_paddleocr()
+    if not _PADDLE_AVAILABLE:
+        message = (
             "LocalVisionProvider 需要 PaddleOCR。请运行: pip install paddlepaddle paddleocr"
         )
+        if _PADDLE_IMPORT_ERROR is not None:
+            message = f"{message}。导入失败: {_PADDLE_IMPORT_ERROR}"
+        raise RuntimeError(message) from _PADDLE_IMPORT_ERROR
+
+
+def _load_paddleocr() -> None:
+    global _PADDLE_AVAILABLE, _PADDLE_IMPORT_ERROR, _PaddleOCR
+    if _PADDLE_AVAILABLE:
+        return
+    try:
+        from paddleocr import PaddleOCR as _PaddleOCRCls
+    except Exception as exc:  # noqa: BLE001 - optional dependency can fail during transitive imports
+        _PADDLE_IMPORT_ERROR = exc
+        return
+    _PaddleOCR = _PaddleOCRCls
+    _PADDLE_IMPORT_ERROR = None
+    _PADDLE_AVAILABLE = True
 
 
 # --------------------------------------------------------------------------- #
@@ -77,6 +89,7 @@ class LocalVisionProvider:
         workspace_dir: Path | None = None,
     ) -> None:
         _require_cv2()
+        _require_paddle()
         self._workspace_dir = workspace_dir
         self._screenshot: np.ndarray | None = None
         self._profile_anchors: dict[str, AnchorDefinition] = {}
