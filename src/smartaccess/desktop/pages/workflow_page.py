@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QInputDialog,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QSizePolicy,
@@ -382,17 +383,21 @@ class WorkflowPage(QWidget):
     def _ai_generate(self) -> None:
         """根据文本描述调用 AI 生成工作流。"""
 
-        prompt, ok = QInputDialog.getMultiLineText(
-            self,
-            "AI生成工作流",
-            (
-                "输入实验步骤或自动化目标。\n"
-                f"当前 AI：{self._vm.ai_label()}"
-            ),
-            self._last_ai_prompt,
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("AI生成工作流")
+        dialog.setLabelText(
+            "输入实验步骤或自动化目标。\n当前 AI：" + self._vm.ai_label()
         )
-        if not ok:
+        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput)
+        dialog.setTextValue(self._last_ai_prompt)
+        text_edit = dialog.findChild(QPlainTextEdit)
+        if text_edit is not None:
+            text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        dialog.resize(550, 350)
+        if dialog.exec() != QInputDialog.DialogCode.Accepted:
             return
+        prompt = dialog.textValue()
         prompt = prompt.strip()
         if not prompt:
             _selectable_msg(self, QMessageBox.Icon.Warning, "缺少描述", "请输入实验步骤或自动化目标。").exec()

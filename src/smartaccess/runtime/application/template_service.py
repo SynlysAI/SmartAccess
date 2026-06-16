@@ -76,6 +76,7 @@ class TemplateService:
         """加载本地模板工作流。"""
 
         self._records.clear()
+        loaded_count = 0
         for path in sorted((self._workspace_dir / "templates").glob("*/*/workflow.yaml")):
             try:
                 workflow = load_yaml_contract(path, WorkflowContract)
@@ -97,6 +98,9 @@ class TemplateService:
                 published_at="",
             )
             self._upsert(record)
+            loaded_count += 1
+        if loaded_count:
+            self._logger.info("已加载 %d 个本地模板", loaded_count)
 
     def refresh_cloud_index(self) -> TemplateStats:
         """刷新平台模板索引。"""
@@ -108,6 +112,7 @@ class TemplateService:
             return self.stats()
         self._cloud_available = True
         self._last_cloud_count = len(cloud_templates)
+        self._logger.info("云端模板索引已刷新: 共 %d 个模板", self._last_cloud_count)
         for item in cloud_templates:
             template_id = str(item.get("template_id") or "").strip()
             template_version = str(
@@ -161,6 +166,7 @@ class TemplateService:
         if not meta.template_id or not meta.template_version:
             raise ValueError("发布前必须填写 template_id 与 template_version")
         identity = TemplateIdentity(meta.template_id, meta.template_version)
+        self._logger.info("发布模板: %s@%s", identity.template_id, identity.template_version)
         dump_yaml_contract(workflow, self._template_path(identity))
         error = ""
         status = TemplateVersionStatus.PUBLISHED
@@ -195,7 +201,9 @@ class TemplateService:
             error=error,
         )
         if error:
+            self._logger.warning("模板发布到平台失败: %s", error)
             raise RuntimeError(f"模板已保存到本地，但发布到 SpecLabOS 失败: {error}")
+        self._logger.info("模板发布成功: %s@%s", identity.template_id, identity.template_version)
         return record
 
     def list_versions(self, template_id: str) -> list[TemplateRecord]:
@@ -264,6 +272,7 @@ class TemplateService:
             shutil.rmtree(path.parent)
         if not records:
             self._records.pop(template_id, None)
+        self._logger.info("模板版本已删除: %s@%s", template_id, template_version)
         return target
 
     def update_version_metadata(
@@ -342,6 +351,7 @@ class TemplateService:
             if record.status == TemplateVersionStatus.PUBLISHED:
                 record.status = TemplateVersionStatus.ROLLED_BACK
         target.status = TemplateVersionStatus.PUBLISHED
+        self._logger.info("模板已回滚: %s@%s", template_id, template_version)
         return target
 
     def fetch(self, template_id: str, template_version: str) -> WorkflowContract:

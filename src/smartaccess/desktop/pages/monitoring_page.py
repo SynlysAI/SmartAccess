@@ -99,8 +99,8 @@ class MonitoringPage(QWidget):
         self._workflow_info = QTextEdit()
         self._workflow_info.setObjectName("WorkflowRunSummary")
         self._workflow_info.setReadOnly(True)
-        self._workflow_info.setMinimumHeight(120)
-        self._workflow_info.setMaximumHeight(160)
+        self._workflow_info.setMinimumHeight(100)
+        self._workflow_info.setMaximumHeight(150)
         self._workflow_info.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         return self._workflow_info
 
@@ -145,9 +145,16 @@ class MonitoringPage(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+        header = QHBoxLayout()
         label = QLabel("运行日志")
         label.setObjectName("PageHint")
-        layout.addWidget(label)
+        header.addWidget(label)
+        header.addStretch(1)
+        clear_btn = QPushButton("清空日志")
+        clear_btn.setObjectName("Secondary")
+        clear_btn.clicked.connect(self._clear_logs)
+        header.addWidget(clear_btn)
+        layout.addLayout(header)
         self._log = LogView()
         layout.addWidget(self._log, 1)
         return panel
@@ -242,6 +249,11 @@ class MonitoringPage(QWidget):
         if not self._vm.stop_run():
             QMessageBox.information(self, "停止运行", "当前没有可停止的运行")
 
+    def _clear_logs(self) -> None:
+        """清空运行日志。"""
+
+        self._vm.clear_logs()
+
     def _on_event(self, event: RuntimeEvent) -> None:
         """更新最近观察摘要。"""
 
@@ -272,7 +284,8 @@ class MonitoringPage(QWidget):
         actions = ", ".join(summary.actions or []) or "-"
         window_bits = []
         if summary.title_contains:
-            window_bits.append(f"标题包含: {summary.title_contains}")
+            label = "标题匹配" if summary.match_mode == "equals" else "标题包含"
+            window_bits.append(f"{label}: {summary.title_contains}")
         if summary.process_name:
             window_bits.append(f"进程: {summary.process_name}")
         window_text = "\n".join(window_bits) if window_bits else "-"

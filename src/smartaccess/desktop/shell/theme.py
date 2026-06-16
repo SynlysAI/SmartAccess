@@ -203,6 +203,10 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QText
     selection-background-color: {PRIMARY_SOFT};
     selection-color: {TEXT};
 }}
+QTableWidget QLineEdit {{
+    padding-top: 2px;
+    padding-bottom: 2px;
+}}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QPlainTextEdit:focus, QTextEdit:focus {{
     border: 1px solid {PRIMARY};

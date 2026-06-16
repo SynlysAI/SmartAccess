@@ -44,6 +44,13 @@ class StubAutomationProvider:
 
         if not title_contains:
             return True
+        match_mode = (
+            self._profile.window_signature.match_mode
+            if self._profile and self._profile.window_signature.match_mode
+            else "contains"
+        )
+        if match_mode == "equals":
+            return title_contains.lower() == self._window_title.lower()
         return title_contains.lower() in self._window_title.lower()
 
     def discover_windows(self) -> list[WindowInfo]:

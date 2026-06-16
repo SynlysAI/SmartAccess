@@ -78,13 +78,15 @@ class WindowScanner:
         self,
         *,
         title_contains: str | None = None,
+        title_equals: str | None = None,
         min_title_len: int = 1,
         skip_empty_title: bool = True,
     ) -> list[WindowInfo]:
         """扫描窗口列表。
 
         Args:
-            title_contains: 可选标题过滤文本。
+            title_contains: 标题包含（子串）过滤文本。
+            title_equals: 标题精确匹配过滤文本（忽略大小写）。
             min_title_len: 最小标题长度。
             skip_empty_title: 是否跳过空标题窗口。
 
@@ -107,6 +109,8 @@ class WindowScanner:
             if len(title) < min_title_len:
                 return True
             if title_contains and title_contains.lower() not in title.lower():
+                return True
+            if title_equals and title_equals.lower() != title.lower():
                 return True
             rect = wintypes.RECT()
             if _USER32.GetClientRect(hwnd, ctypes.byref(rect)):
@@ -133,6 +137,18 @@ class WindowScanner:
         """
 
         return self.scan(title_contains=substring)
+
+    def scan_equals(self, title: str) -> list[WindowInfo]:
+        """扫描标题与指定文本精确相等的窗口（忽略大小写）。
+
+        Args:
+            title: 精确匹配的窗口标题。
+
+        Returns:
+            匹配窗口列表。
+        """
+
+        return self.scan(title_equals=title)
 
 
 _LAST_CAPTURE_ERROR = ""

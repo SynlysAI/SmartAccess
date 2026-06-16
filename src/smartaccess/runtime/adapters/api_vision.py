@@ -270,6 +270,7 @@ class ApiVisionProvider:
             "visualize": False,
             "useDocOrientationClassify": False,
             "useDocUnwarping": False,
+            "useLayoutDetection": False,
             "useChartRecognition": False,
             "useSealRecognition": False,
             "useOcrForImageBlock": False,

@@ -35,6 +35,7 @@ class WorkflowRunSummary:
     device_found: bool
     status_text: str
     title_contains: str | None = None
+    match_mode: str = "equals"
     process_name: str | None = None
     anchor_count: int = 0
     ocr_anchor_count: int = 0
@@ -162,11 +163,18 @@ class MonitoringViewModel(ViewModel):
             device_found=True,
             status_text="已绑定设备配置",
             title_contains=profile.window_signature.title_contains,
+            match_mode=profile.window_signature.match_mode or "equals",
             process_name=profile.window_signature.process_name,
             anchor_count=len(profile.anchors),
             ocr_anchor_count=ocr_count,
             actions=profile.actions,
         )
+
+    def clear_logs(self) -> None:
+        """清空运行日志。"""
+
+        self._logs.clear()
+        self.changed.emit()
 
     def _on_event(self, event: RuntimeEvent) -> None:
         """处理运行时事件。"""

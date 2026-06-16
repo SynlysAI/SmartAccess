@@ -41,11 +41,14 @@ class LogView(QTextEdit):
         }.get(entry.level, theme.TEXT)
         message = _message_html(entry.message)
         return (
-            f"<div style=\"line-height:1.25;margin:0;color:{color};\">"
+            f"<div style=\"margin:0;color:{color};\">"
+            f"<div style=\"line-height:1.15;margin:0;\">"
             f"<span style=\"color:{theme.TEXT_MUTED};\">{rich_text.text(entry.timestamp)}</span> "
             f"<span style=\"color:{color};font-weight:700;\">[{rich_text.text(entry.level)}]</span>"
-            f"<div style=\"margin:0 0 0 10px;overflow-wrap:anywhere;word-break:break-all;\">"
-            f"{message}</div>"
+            "</div>"
+            f"<div style=\"line-height:1.2;margin:0 0 0 10px;overflow-wrap:anywhere;word-break:break-all;\">"
+            f"{message}"
+            "</div>"
             "</div>"
         )
 

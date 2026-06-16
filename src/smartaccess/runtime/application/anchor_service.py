@@ -40,6 +40,7 @@ class AnchorService:
         """加载全部锚点配置。"""
 
         self._profiles.clear()
+        loaded_count = 0
         for path in sorted((self._workspace_dir / "anchors").glob("*/anchors.yaml")):
             try:
                 profile = load_yaml_contract(path, AnchorsContract)
@@ -47,6 +48,9 @@ class AnchorService:
                 self._logger.exception("锚点配置加载失败: %s", path)
                 continue
             self._profiles[profile.profile_id] = profile
+            loaded_count += 1
+        if loaded_count:
+            self._logger.info("已加载 %d 个锚点配置", loaded_count)
 
     def create_profile(
         self,
@@ -90,6 +94,8 @@ class AnchorService:
             supported_os=supported_os or ["windows"],
             safety_limits=safety_limits or {},
         )
+        self._logger.info("创建锚点配置: profile_id=%s, 窗口=%s, 锚点数=%d",
+                          profile_id, title_contains, len(profile.anchors))
         self.save_profile(profile)
         return profile
 
@@ -104,7 +110,10 @@ class AnchorService:
         """
 
         self._profiles[profile.profile_id] = profile
-        return dump_yaml_contract(profile, self._profile_path(profile.profile_id))
+        path = dump_yaml_contract(profile, self._profile_path(profile.profile_id))
+        self._logger.info("锚点配置已保存: profile_id=%s, 锚点数=%d",
+                          profile.profile_id, len(profile.anchors))
+        return path
 
     def get_profile(self, profile_id: str | None) -> AnchorsContract | None:
         """读取指定锚点配置。"""
@@ -125,6 +134,7 @@ class AnchorService:
         path = self._profile_path(profile_id)
         if path.parent.exists():
             shutil.rmtree(path.parent)
+        self._logger.info("锚点配置已删除: profile_id=%s", profile_id)
 
     def save_capture(self, profile_id: str, data: bytes) -> Path:
         """保存设备校准截图。
