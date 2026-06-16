@@ -27,7 +27,10 @@ from smartaccess.desktop.widgets.ai_dialogs import AiBusyOverlay, AiPromptDialog
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.widgets.cards import create_card
 from smartaccess.desktop.widgets.roi_canvas import RoiCanvas
-from smartaccess.runtime.adapters.window_scanner import capture_error_reason
+from smartaccess.runtime.adapters.window_scanner import (
+    capture_error_reason,
+    capture_metadata,
+)
 from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.shared.contracts.anchors import AnchorsContract
 
@@ -51,6 +54,7 @@ class CalibrationPage(QWidget):
         self._selected_hwnd: int | None = None
         self._selected_title = ""
         self._latest_capture: bytes | None = None
+        self._latest_capture_metadata: dict[str, int] = {}
         self._current_view_id = DEFAULT_VIEW_ID
         self._view_states: dict[str, dict] = {
             DEFAULT_VIEW_ID: {
@@ -247,17 +251,28 @@ class CalibrationPage(QWidget):
         try:
             data = self._vm.capture_window(self._selected_hwnd)
         except Exception as exc:  # noqa: BLE001
+            self._restore_page_focus()
             QMessageBox.critical(self, "截图失败", str(exc))
             return
+        self._restore_page_focus()
         if data is None:
             reason = capture_error_reason()
             self._canvas.load_placeholder(f"截图失败：{reason}")
             QMessageBox.warning(self, "截图失败", reason)
             return
         self._latest_capture = data
+        self._latest_capture_metadata = capture_metadata()
         self._canvas.load_image(data)
         self._store_current_view()
         self._refresh_all_roi_labels()
+
+    def _restore_page_focus(self) -> None:
+        """截图后把焦点切回 SmartAccess 页面。"""
+
+        window = self.window()
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
 
     def _add_anchor(self) -> None:
         """添加一个锚点和动作 ROI。"""
@@ -397,6 +412,8 @@ class CalibrationPage(QWidget):
                 views=views_payload,
                 capture_width=width,
                 capture_height=height,
+                capture_origin_x=self._latest_capture_metadata.get("offset_x"),
+                capture_origin_y=self._latest_capture_metadata.get("offset_y"),
                 capture_data=main_capture,
                 view_captures=view_captures,
             )
@@ -840,6 +857,7 @@ class CalibrationPage(QWidget):
         self._selected_hwnd = None
         self._selected_title = ""
         self._latest_capture = None
+        self._latest_capture_metadata = {}
         self._current_view_id = DEFAULT_VIEW_ID
         self._view_states = {
             DEFAULT_VIEW_ID: {
