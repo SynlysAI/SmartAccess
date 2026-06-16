@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QVBoxLayout,
@@ -358,16 +359,23 @@ class CalibrationPage(QWidget):
     def _ai_assist(self) -> None:
         """调用 AI 生成设备锚点草稿并加载到页面。"""
 
-        prompt, ok = QInputDialog.getMultiLineText(
-            self,
-            "AI辅助接入",
-            (
-                "描述这个软件界面里需要控制和识别的按钮、输入框、状态区域。\n"
-                f"当前 AI：{self._vm.ai_label()}"
-            ),
-            "",
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("AI辅助接入")
+        dialog.setLabelText(
+            "描述这个软件界面里需要控制和识别的按钮、输入框、状态区域。\n"
+            "当前 AI：" + self._vm.ai_label()
         )
-        if not ok or not prompt.strip():
+        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput)
+        dialog.setTextValue("")
+        text_edit = dialog.findChild(QPlainTextEdit)
+        if text_edit is not None:
+            text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        dialog.resize(550, 350)
+        if dialog.exec() != QInputDialog.DialogCode.Accepted:
+            return
+        prompt = dialog.textValue()
+        if not prompt.strip():
             return
         prompt = prompt.strip()
         device_id = self._device_id.text().strip() or "new_device"

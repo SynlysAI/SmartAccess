@@ -42,6 +42,7 @@ from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 from smartaccess.shared.events.bus import EventBus, Subscriber
+from smartaccess.shared.logging import get_logger
 
 
 @dataclass(slots=True)
@@ -115,6 +116,7 @@ class RuntimeFacade:
         self._orchestrator = orchestrator
         self._migration = migration
         self._ai_generator = ai_generator
+        self._logger = get_logger()
 
     def subscribe(self, callback: Subscriber):
         """订阅运行时事件。
@@ -267,7 +269,11 @@ class RuntimeFacade:
         method = getattr(self._ai_generator, "draft_instrument_profile", None)
         if not callable(method):
             raise RuntimeError("当前 AI 生成器不支持设备接入")
-        return method(prompt, context)
+        self._logger.info("AI 辅助接入: 生成锚点草稿中... prompt=%.100s", prompt)
+        result = method(prompt, context)
+        self._logger.info("AI 辅助接入: 锚点草稿生成完成 profile_id=%s, 锚点数=%d",
+                          result.profile_id, len(result.anchors))
+        return result
 
     def draft_workflow_from_prompt(
         self,
@@ -523,6 +529,8 @@ class RuntimeFacade:
 
         if self._orchestrator is None:
             raise RuntimeError("运行编排器未配置")
+        self._logger.info("启动工作流运行: workflow_id=%s, 步骤数=%d, 后台=%s",
+                          workflow.metadata.workflow_id, len(workflow.steps), background)
         profile = self.get_instrument(workflow.metadata.anchor_profile)
         session = self._run_sessions.create_session(
             workflow.metadata.workflow_id,
