@@ -112,7 +112,16 @@ class Orchestrator:
             self._executor.configure_profile(profile)
             title = profile.window_signature.title_contains if profile else None
             self._run_sessions.emit_event(session, RuntimeEventName.RUN_READY)
-            self._executor.ensure_window(title)
+            try:
+                self._executor.ensure_window(title)
+            except WindowMissingError as exc:
+                self._emit_window_missing(
+                    session,
+                    profile=profile,
+                    detail=str(exc),
+                    step_id=None,
+                )
+                raise
             self._run_sessions.emit_event(session, RuntimeEventName.RUN_STARTED)
             for step in workflow.steps:
                 if self._is_stopped(session, step.id):
@@ -129,6 +138,7 @@ class Orchestrator:
             return self._fail_run(
                 session,
                 detail=str(exc),
+                profile=profile,
                 step_id=current_step.step_id if current_step else None,
             )
         self._run_sessions.emit_event(session, RuntimeEventName.RUN_COMPLETED)
@@ -150,11 +160,14 @@ class Orchestrator:
             step_id=step.id,
             action=step.action,
             anchor_id=step.anchor_id,
+            view_id=step.view_id,
             value=step.value,
             wait_seconds=step.wait_seconds,
             timeout_seconds=step.timeout_seconds,
             expected_text=step.expected_text,
+            expected_candidates=step.expected_candidates,
             match_mode=step.match_mode,
+            min_confidence=step.min_confidence,
             requires_confirmation=(
                 False if step.action == "wait" else self._executor.requires_confirm(step)
             ),
@@ -170,7 +183,7 @@ class Orchestrator:
             if not allowed:
                 self._set_step_status(session, step, RunStepStatus.BLOCKED)
                 return False
-        outcome = self._run_with_recovery(session, step)
+        outcome = self._run_with_recovery(session, step, profile)
         if outcome is None:
             self._set_step_status(session, step, RunStepStatus.FAILED)
             self._run_sessions.emit_event(
@@ -178,6 +191,7 @@ class Orchestrator:
                 RuntimeEventName.RUN_FAILED,
                 step_id=step.id,
                 detail="步骤执行失败",
+                **self._profile_payload(profile),
             )
             return False
         return self._observe_after_action(session, workflow, profile, step)
@@ -261,8 +275,7 @@ class Orchestrator:
         reading = observation.readings[0] if observation.readings else None
         matched = self._observer.matches(
             reading,
-            expected_text=step.expected_text,
-            match_mode=step.match_mode,
+            **self._ocr_match_kwargs(step),
         )
         if self._is_stopped(session, step.id):
             self._record_trace(
@@ -310,8 +323,13 @@ class Orchestrator:
                 detail=detail,
                 anchor_id=step.anchor_id,
                 expected_text=step.expected_text,
+                expected_candidates=step.expected_candidates,
                 actual_text=reading.text if reading else None,
+                confidence=reading.confidence if reading else None,
                 match_mode=step.match_mode,
+                ignore_case=step.ignore_case,
+                normalize_text=step.normalize_text,
+                min_confidence=step.min_confidence,
                 matched=matched,
                 attempts=attempts,
                 elapsed_seconds=elapsed,
@@ -406,13 +424,21 @@ class Orchestrator:
             screenshot = self._executor.screenshot(step.id)
             if screenshot:
                 self._observer.configure_screenshot(screenshot)
-                snapshot = self._observer.anchor_snapshot(profile, step.anchor_id)
+                snapshot = self._observer.anchor_snapshot(
+                    profile,
+                    step.anchor_id,
+                    view_id=step.view_id,
+                )
                 last_screenshot_path = self._run_sessions.save_screenshot(
                     session.session_id,
                     f"{step.id}_observe.png",
                     snapshot or screenshot,
                 )
-            observation = self._observer.observe_anchor(profile, step.anchor_id)
+            observation = self._observer.observe_anchor(
+                profile,
+                step.anchor_id,
+                view_id=step.view_id,
+            )
             last_observation = observation
             elapsed = time.monotonic() - start
             if self._observer.is_low_confidence(observation) and elapsed < timeout_seconds:
@@ -425,8 +451,7 @@ class Orchestrator:
             reading = observation.readings[0] if observation.readings else None
             matched = self._observer.matches(
                 reading,
-                expected_text=step.expected_text,
-                match_mode=step.match_mode,
+                **self._ocr_match_kwargs(step),
             )
             if matched or elapsed >= timeout_seconds or self._is_stopped(session, step.id):
                 return (
@@ -443,7 +468,12 @@ class Orchestrator:
                 )
             time.sleep(POLL_INTERVAL_SECONDS)
 
-    def _run_with_recovery(self, session: RunSession, step: WorkflowStep):
+    def _run_with_recovery(
+        self,
+        session: RunSession,
+        step: WorkflowStep,
+        profile: AnchorsContract | None,
+    ):
         """执行步骤并按策略重试可恢复异常。"""
 
         attempts = 0
@@ -456,10 +486,17 @@ class Orchestrator:
                     step.id,
                     IncidentType.SAFETY_LIMIT_VIOLATION,
                     str(exc),
+                    profile=profile,
                 )
                 return None
             except (WindowMissingError, AnchorMissingError, ExecutorError) as exc:
-                if not self._handle_incident(session, step.id, self._classify(exc), str(exc)):
+                if not self._handle_incident(
+                    session,
+                    step.id,
+                    self._classify(exc),
+                    str(exc),
+                    profile=profile,
+                ):
                     return None
                 attempts += 1
                 if attempts > self._max_retries:
@@ -489,9 +526,17 @@ class Orchestrator:
         step_id: str,
         incident_type: IncidentType,
         detail: str,
+        profile: AnchorsContract | None = None,
     ) -> bool:
         """记录异常并返回是否继续。"""
 
+        if incident_type == IncidentType.WINDOW_MISSING:
+            self._emit_window_missing(
+                session,
+                profile=profile,
+                detail=detail,
+                step_id=step_id,
+            )
         incident = self._incidents.open(
             session_id=session.session_id,
             step_id=step_id,
@@ -540,10 +585,16 @@ class Orchestrator:
         payload = {
             "step_id": step.id,
             "anchor_id": step.anchor_id,
+            "view_id": step.view_id,
             "min_confidence": observation.min_confidence,
+            "required_min_confidence": step.min_confidence,
             "expected_text": step.expected_text,
+            "expected_candidates": step.expected_candidates,
             "actual_text": reading.text if reading else None,
+            "confidence": reading.confidence if reading else None,
             "match_mode": step.match_mode,
+            "ignore_case": step.ignore_case,
+            "normalize_text": step.normalize_text,
             "matched": matched,
             "attempts": attempts,
             "elapsed_seconds": elapsed_seconds,
@@ -585,8 +636,7 @@ class Orchestrator:
         reading = observation.readings[0] if observation.readings else None
         matched = self._observer.matches(
             reading,
-            expected_text=step.expected_text,
-            match_mode=step.match_mode,
+            **self._ocr_match_kwargs(step),
         )
         record = RunTraceRecord(
             timestamp=datetime.now(timezone.utc),
@@ -595,12 +645,15 @@ class Orchestrator:
             template_id=workflow.metadata.template_id,
             template_version=workflow.metadata.template_version,
             step_id=step.id,
+            view_id=step.view_id,
             anchor_id=step.anchor_id,
             action=ActionPayload(type=step.action, value=step.value),
             wait_strategy=wait_strategy,
             expected_text=step.expected_text,
             actual_text=reading.text if reading else None,
             match_mode=step.match_mode,
+            confidence=reading.confidence if reading else None,
+            min_confidence=step.min_confidence,
             matched=matched,
             attempts=attempts,
             elapsed_seconds=max(0.0, elapsed_seconds),
@@ -630,6 +683,7 @@ class Orchestrator:
         session: RunSession,
         *,
         detail: str,
+        profile: AnchorsContract | None = None,
         step_id: str | None = None,
     ) -> RunSession:
         """标记运行失败。"""
@@ -644,8 +698,61 @@ class Orchestrator:
             RuntimeEventName.RUN_FAILED,
             step_id=step_id,
             detail=detail,
+            **self._profile_payload(profile),
         )
         return session
+
+    @staticmethod
+    def _ocr_match_kwargs(step: WorkflowStep) -> dict:
+        """Return OCR matching options from a workflow step."""
+
+        expected_text: object = step.expected_text
+        if step.expected_candidates:
+            if expected_text is None:
+                expected_text = list(step.expected_candidates)
+            elif isinstance(expected_text, list):
+                expected_text = [*expected_text, *step.expected_candidates]
+            else:
+                expected_text = [expected_text, *step.expected_candidates]
+            expected_text = list(dict.fromkeys(str(item) for item in expected_text))
+        return {
+            "expected_text": expected_text,
+            "match_mode": step.match_mode,
+            "ignore_case": step.ignore_case,
+            "normalize_text": step.normalize_text,
+            "min_confidence": step.min_confidence,
+        }
+
+    def _emit_window_missing(
+        self,
+        session: RunSession,
+        *,
+        profile: AnchorsContract | None,
+        detail: str,
+        step_id: str | None,
+    ) -> None:
+        """发布目标窗口缺失的结构化阻塞事件。"""
+
+        self._run_sessions.emit_event(
+            session,
+            RuntimeEventName.RUN_BLOCKED,
+            step_id=step_id,
+            incident_type=IncidentType.WINDOW_MISSING.value,
+            detail=detail,
+            reason=detail,
+            **self._profile_payload(profile),
+        )
+
+    @staticmethod
+    def _profile_payload(profile: AnchorsContract | None) -> dict[str, str | None]:
+        """返回 UI 告警需要的设备和窗口字段。"""
+
+        if profile is None:
+            return {"anchor_profile": None, "title_contains": None}
+        return {
+            "anchor_profile": profile.profile_id,
+            "title_contains": profile.window_signature.title_contains,
+        }
 
     def _is_stopped(self, session: RunSession, step_id: str | None = None) -> bool:
         """返回会话是否收到停止请求。"""

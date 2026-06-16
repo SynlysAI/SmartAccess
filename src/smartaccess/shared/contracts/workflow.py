@@ -65,12 +65,17 @@ class WorkflowStep(FlexibleContractModel):
 
     id: NonEmptyStr
     anchor_id: NonEmptyStr | None = None
+    view_id: NonEmptyStr = "main"
     target: str | None = Field(default=None, exclude=True)
     action: Literal["click", "type", "hotkey", "press_enter", "wait"]
     value: Any | None = None
     condition: dict[str, Any] | None = Field(default=None, exclude=True)
-    expected_text: str | None = None
+    expected_text: str | list[str] | None = None
+    expected_candidates: list[str] = Field(default_factory=list)
     match_mode: Literal["contains", "equals", "regex", "not_empty", "none"] = "none"
+    ignore_case: bool = False
+    normalize_text: bool = False
+    min_confidence: float | None = Field(default=None, ge=0, le=1)
     timeout_seconds: float | None = Field(default=None, ge=0)
     wait_seconds: float | None = Field(default=None, ge=0)
     requires_confirmation: bool = False
@@ -87,7 +92,17 @@ class WorkflowStep(FlexibleContractModel):
             if self.match_mode == "none" and normalized.get("match_mode"):
                 self.match_mode = normalized["match_mode"]
             if self.expected_text is None and normalized.get("expected_text") is not None:
-                self.expected_text = str(normalized["expected_text"])
+                self.expected_text = normalized["expected_text"]
+            if normalized.get("expected_candidates"):
+                self.expected_candidates = [
+                    str(value) for value in normalized["expected_candidates"]
+                ]
+            if normalized.get("ignore_case") is not None:
+                self.ignore_case = bool(normalized["ignore_case"])
+            if normalized.get("normalize_text") is not None:
+                self.normalize_text = bool(normalized["normalize_text"])
+            if normalized.get("min_confidence") is not None:
+                self.min_confidence = float(normalized["min_confidence"])
             if (
                 self.timeout_seconds is None
                 and normalized.get("timeout_seconds") is not None
@@ -96,9 +111,17 @@ class WorkflowStep(FlexibleContractModel):
         if self.action == "wait":
             self._normalize_wait_step()
             return self
+        if self.expected_candidates:
+            if self.expected_text is None:
+                self.expected_text = list(self.expected_candidates)
+            elif isinstance(self.expected_text, str):
+                values = [self.expected_text, *self.expected_candidates]
+                self.expected_text = list(dict.fromkeys(values))
         if self.match_mode == "none":
             self.expected_text = None
+            self.expected_candidates = []
             self.timeout_seconds = None
+            self.min_confidence = None
         if not self.anchor_id:
             self.migration_error = "anchor_id is required for executable workflow steps"
         return self
@@ -112,9 +135,12 @@ class WorkflowStep(FlexibleContractModel):
             self.wait_seconds = 1.0
         self.anchor_id = None
         self.target = None
+        self.view_id = "main"
         self.expected_text = None
+        self.expected_candidates = []
         self.timeout_seconds = None
         self.match_mode = "none"
+        self.min_confidence = None
         self.requires_confirmation = False
 
 
@@ -200,10 +226,25 @@ def normalize_condition(condition: dict[str, Any] | None) -> dict[str, Any] | No
     expected = condition.get("expected_text")
     if expected is None:
         expected = condition.get("expected")
+    candidates = condition.get("expected_candidates")
+    if candidates is None:
+        candidates = condition.get("candidates")
     timeout = condition.get("timeout_seconds", condition.get("timeout"))
     normalized: dict[str, Any] = {"match_mode": operator}
     if expected is not None and operator != "not_empty":
-        normalized["expected_text"] = str(expected)
+        normalized["expected_text"] = expected
+    if candidates is not None and operator != "not_empty":
+        if isinstance(candidates, (list, tuple)):
+            normalized["expected_candidates"] = [
+                str(value) for value in candidates if value is not None
+            ]
+        elif candidates:
+            normalized["expected_candidates"] = [str(candidates)]
+    for key in ("ignore_case", "normalize_text"):
+        if condition.get(key) is not None:
+            normalized[key] = bool(condition[key])
+    if condition.get("min_confidence") is not None:
+        normalized["min_confidence"] = float(condition["min_confidence"])
     if timeout is not None:
         normalized["timeout_seconds"] = _coerce_seconds(timeout)
     return normalized
@@ -326,7 +367,9 @@ def _wait_step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
     clean.pop("anchor_id", None)
     clean.pop("condition", None)
     clean.pop("expected_text", None)
+    clean.pop("expected_candidates", None)
     clean.pop("timeout_seconds", None)
+    clean.pop("min_confidence", None)
     clean["match_mode"] = "none"
     if clean.get("wait_seconds") is None and clean.get("value") is not None:
         clean["wait_seconds"] = _coerce_seconds(clean["value"])
@@ -340,13 +383,23 @@ def _condition_from_flat_step(step: dict[str, Any]) -> dict[str, Any] | None:
 
     match_mode = step.get("match_mode")
     expected_text = step.get("expected_text")
+    expected_candidates = step.get("expected_candidates")
     timeout = step.get("timeout_seconds")
-    if match_mode in MATCH_MODES and (match_mode != "none" or expected_text is not None):
+    if match_mode in MATCH_MODES and (
+        match_mode != "none"
+        or expected_text is not None
+        or expected_candidates is not None
+    ):
         condition: dict[str, Any] = {"match_mode": match_mode}
         if expected_text is not None:
             condition["expected_text"] = expected_text
+        if expected_candidates is not None:
+            condition["expected_candidates"] = expected_candidates
         if timeout is not None:
             condition["timeout_seconds"] = timeout
+        for key in ("ignore_case", "normalize_text", "min_confidence"):
+            if step.get(key) is not None:
+                condition[key] = step[key]
         return condition
     return normalize_condition(step.get("condition"))
 
@@ -362,8 +415,13 @@ def _merge_condition_into_step(
         step["match_mode"] = match_mode
     if condition.get("expected_text") is not None:
         step["expected_text"] = condition["expected_text"]
+    if condition.get("expected_candidates") is not None:
+        step["expected_candidates"] = condition["expected_candidates"]
     if condition.get("timeout_seconds") is not None:
         step["timeout_seconds"] = condition["timeout_seconds"]
+    for key in ("ignore_case", "normalize_text", "min_confidence"):
+        if condition.get(key) is not None:
+            step[key] = condition[key]
 
 
 def _migration_error(step: dict[str, Any], reason: str) -> dict[str, Any]:

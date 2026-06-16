@@ -195,7 +195,7 @@ class SmartAccessAiGenerator:
             '{"metadata":{"workflow_id":"...","author":"ai-assistant",'
             '"anchor_profile":"...","experiment_type":"...",'
             '"lifecycle_state":"Draft"},"preconditions":[],"steps":[{"id":"step_1",'
-            '"action":"click","anchor_id":"anchor_id","value":null,'
+            '"action":"click","view_id":"main","anchor_id":"anchor_id","value":null,'
             '"match_mode":"none","wait_seconds":1.0}],'
             '"retry_policy":{"max_attempts":2}}\n'
             "Allowed actions: click, type, hotkey, press_enter, wait.\n"
@@ -203,7 +203,7 @@ class SmartAccessAiGenerator:
             "For OCR checks, use expected_text, match_mode, and timeout_seconds on "
             "the preceding executable step.\n"
             "All wait_seconds and timeout_seconds values are seconds.\n"
-            "Use only calibrated anchors and actions from context."
+            "Use only calibrated anchors, view_id values, and actions from context."
         )
         user = {
             "user_prompt": prompt,
@@ -228,12 +228,14 @@ class SmartAccessAiGenerator:
             "Return only one JSON object, no Markdown.\n"
             "The JSON must match the simplified anchors.yaml model:\n"
             '{"profile_id":"...","window_signature":{"title_contains":"...",'
-            '"screenshot_size":{"width":0,"height":0}},"anchors":[{"id":"anchor_id",'
+            '"screenshot_size":{"width":0,"height":0}},"views":[{"view_id":"main",'
+            '"window_signature":{"title_contains":"..."},"screenshot_size":{"width":0,"height":0},'
+            '"anchors":[{"id":"anchor_id",'
             '"action_region":{"pixel":{"x":0,"y":0,"width":0,"height":0},'
             '"normalized":{"x":0,"y":0,"width":0,"height":0}},'
             '"observe_region":null,"supported_actions":["click"],'
             '"default_wait_seconds":2.0,'
-            '"action_bindings":[{"action":"click","requires_confirmation":false}]}]}\n'
+            '"action_bindings":[{"action":"click","requires_confirmation":false}]}]}]}\n'
             "Allowed actions: click, type, hotkey, press_enter.\n"
             "Each anchor has exactly one action_region and at most one OCR observe_region.\n"
             "Represent OCR only through observe_region.\n"
@@ -374,10 +376,13 @@ class SmartAccessAiGenerator:
         for step in workflow_data.get("steps", []) or []:
             if "anchor_id" not in step and step.get("target"):
                 step["anchor_id"] = step.get("target")
+            if not step.get("view_id"):
+                step["view_id"] = "main"
             action = step.get("action")
             if action == "wait":
                 step.pop("anchor_id", None)
                 step.pop("target", None)
+                step["view_id"] = "main"
                 step["match_mode"] = "none"
                 if step.get("wait_seconds") is None and step.get("value") is not None:
                     step["wait_seconds"] = SmartAccessAiGenerator._seconds(step["value"])
@@ -423,14 +428,57 @@ class SmartAccessAiGenerator:
                 "screenshot_size": {"width": width, "height": height},
             },
             "anchors": [],
+            "views": [],
             "supported_os": data.get("supported_os") or ["windows"],
             "safety_limits": data.get("safety_limits") or {},
         }
-        for anchor in data.get("anchors") or []:
-            if isinstance(anchor, dict):
-                normalized["anchors"].append(
-                    SmartAccessAiGenerator._normalize_anchor(anchor, width, height)
+        raw_views = data.get("views") or []
+        if raw_views:
+            for view in raw_views:
+                if not isinstance(view, dict):
+                    continue
+                view_signature = dict(view.get("window_signature") or {})
+                view_size = dict(view.get("screenshot_size") or view_signature.get("screenshot_size") or {})
+                view_width = view_size.get("width") or width
+                view_height = view_size.get("height") or height
+                view_anchors = [
+                    SmartAccessAiGenerator._normalize_anchor(anchor, view_width, view_height)
+                    for anchor in (view.get("anchors") or [])
+                    if isinstance(anchor, dict)
+                ]
+                normalized["views"].append(
+                    {
+                        "view_id": view.get("view_id") or "main",
+                        "window_signature": {
+                            "title_contains": view_signature.get("title_contains")
+                            or normalized["window_signature"]["title_contains"],
+                            "screenshot_size": {
+                                "width": view_width,
+                                "height": view_height,
+                            },
+                        },
+                        "screenshot_size": {"width": view_width, "height": view_height},
+                        "anchors": view_anchors,
+                        "capture_asset_path": view.get("capture_asset_path"),
+                    }
                 )
+                normalized["anchors"].extend(view_anchors)
+        else:
+            for anchor in data.get("anchors") or []:
+                if isinstance(anchor, dict):
+                    normalized["anchors"].append(
+                        SmartAccessAiGenerator._normalize_anchor(anchor, width, height)
+                    )
+        if not normalized["views"]:
+            normalized["views"].append(
+                {
+                    "view_id": "main",
+                    "window_signature": normalized["window_signature"],
+                    "screenshot_size": {"width": width, "height": height},
+                    "anchors": list(normalized["anchors"]),
+                    "capture_asset_path": "capture.png",
+                }
+            )
         return normalized
 
     @staticmethod

@@ -15,7 +15,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QVBoxLayout,
@@ -24,12 +23,15 @@ from PyQt6.QtWidgets import (
 
 from smartaccess.desktop.viewmodels.calibration_vm import CalibrationViewModel
 from smartaccess.desktop.widgets.anchor_table import AnchorRow, AnchorTable
+from smartaccess.desktop.widgets.ai_dialogs import AiBusyOverlay, AiPromptDialog
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.widgets.cards import create_card
 from smartaccess.desktop.widgets.roi_canvas import RoiCanvas
 from smartaccess.runtime.adapters.window_scanner import capture_error_reason
 from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.shared.contracts.anchors import AnchorsContract
+
+DEFAULT_VIEW_ID = "main"
 
 
 class CalibrationPage(QWidget):
@@ -49,6 +51,16 @@ class CalibrationPage(QWidget):
         self._selected_hwnd: int | None = None
         self._selected_title = ""
         self._latest_capture: bytes | None = None
+        self._current_view_id = DEFAULT_VIEW_ID
+        self._view_states: dict[str, dict] = {
+            DEFAULT_VIEW_ID: {
+                "title": "",
+                "capture": None,
+                "anchors": [],
+                "capture_width": None,
+                "capture_height": None,
+            }
+        }
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 18)
@@ -73,6 +85,7 @@ class CalibrationPage(QWidget):
         self._instruments.itemDoubleClicked.connect(self._load_instrument)
         self._instruments.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._instruments.customContextMenuRequested.connect(self._instrument_menu)
+        self._views.itemSelectionChanged.connect(self._on_view_selected)
 
         self._discover()
         self._refresh_instruments()
@@ -113,6 +126,24 @@ class CalibrationPage(QWidget):
         form.addRow("设备 ID", self._device_id)
         form.addRow("窗口标题", self._title_contains)
         layout.addLayout(form)
+
+        view_title = QLabel("视图")
+        view_title.setObjectName("PageHint")
+        layout.addWidget(view_title)
+        self._views = QListWidget()
+        self._views.setMaximumHeight(92)
+        layout.addWidget(self._views)
+        view_row = QHBoxLayout()
+        add_view_btn = QPushButton("新增视图")
+        add_view_btn.setObjectName("Secondary")
+        add_view_btn.clicked.connect(self._add_view)
+        view_row.addWidget(add_view_btn)
+        update_view_btn = QPushButton("保存当前视图")
+        update_view_btn.setObjectName("Secondary")
+        update_view_btn.clicked.connect(self._store_current_view)
+        view_row.addWidget(update_view_btn)
+        layout.addLayout(view_row)
+        self._refresh_views()
 
         window_title = QLabel("窗口")
         window_title.setObjectName("PageHint")
@@ -163,6 +194,8 @@ class CalibrationPage(QWidget):
         row.addWidget(self._ai_btn)
         row.addStretch(1)
         layout.addLayout(row)
+        self._ai_busy = AiBusyOverlay()
+        layout.addWidget(self._ai_busy)
         self._table = AnchorTable()
         layout.addWidget(self._table, 1)
         return panel
@@ -223,6 +256,7 @@ class CalibrationPage(QWidget):
             return
         self._latest_capture = data
         self._canvas.load_image(data)
+        self._store_current_view()
         self._refresh_all_roi_labels()
 
     def _add_anchor(self) -> None:
@@ -322,29 +356,49 @@ class CalibrationPage(QWidget):
 
         device_id = self._device_id.text().strip()
         title = self._title_contains.text().strip()
-        if not device_id:
-            QMessageBox.warning(self, "缺少设备 ID", "请输入设备 ID。")
-            return
-        if not title:
-            QMessageBox.warning(self, "缺少窗口标题", "请输入窗口标题关键字。")
+        if self._require_device_fields(device_id=device_id, title=title) is None:
             return
         try:
-            anchors = self._collect_anchors()
+            current_anchors = self._collect_anchors()
         except ValueError as exc:
             QMessageBox.warning(self, "锚点未完成", str(exc))
             return
+        self._store_current_view(anchors=current_anchors)
+        anchors = [
+            anchor
+            for state in self._view_states.values()
+            for anchor in (state.get("anchors") or [])
+        ]
         if not anchors:
             QMessageBox.warning(self, "缺少锚点", "请至少添加一个锚点。")
             return
-        width, height = self._canvas.source_size()
+        main_state = self._view_states.get(DEFAULT_VIEW_ID) or {}
+        width = main_state.get("capture_width")
+        height = main_state.get("capture_height")
+        if width is None or height is None:
+            width, height = self._canvas.source_size()
+        main_capture = main_state.get("capture")
+        views_payload = self._collect_views_payload(
+            title=title,
+            fallback_width=width,
+            fallback_height=height,
+            fallback_anchors=current_anchors,
+        )
+        view_captures = {
+            view_id: state["capture"]
+            for view_id, state in self._view_states.items()
+            if view_id != DEFAULT_VIEW_ID and state.get("capture")
+        }
         try:
             profile = self._vm.create_profile(
                 device_id=device_id,
                 title_contains=title,
                 anchors=anchors,
+                views=views_payload,
                 capture_width=width,
                 capture_height=height,
-                capture_data=self._latest_capture,
+                capture_data=main_capture,
+                view_captures=view_captures,
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "保存失败", str(exc))
@@ -359,27 +413,22 @@ class CalibrationPage(QWidget):
     def _ai_assist(self) -> None:
         """调用 AI 生成设备锚点草稿并加载到页面。"""
 
-        dialog = QInputDialog(self)
-        dialog.setWindowTitle("AI辅助接入")
-        dialog.setLabelText(
-            "描述这个软件界面里需要控制和识别的按钮、输入框、状态区域。\n"
-            "当前 AI：" + self._vm.ai_label()
-        )
-        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput)
-        dialog.setTextValue("")
-        text_edit = dialog.findChild(QPlainTextEdit)
-        if text_edit is not None:
-            text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-            text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        dialog.resize(550, 350)
-        if dialog.exec() != QInputDialog.DialogCode.Accepted:
+        fields = self._require_device_fields()
+        if fields is None:
             return
-        prompt = dialog.textValue()
+        dialog = AiPromptDialog(
+            title="AI辅助接入",
+            label="描述这个软件界面里需要控制和识别的按钮、输入框、状态区域。",
+            ai_label=self._vm.ai_label(),
+            parent=self,
+        )
+        if dialog.exec() != AiPromptDialog.DialogCode.Accepted:
+            return
+        prompt = dialog.text_value()
         if not prompt.strip():
             return
         prompt = prompt.strip()
-        device_id = self._device_id.text().strip() or "new_device"
-        title = self._title_contains.text().strip() or self._selected_title
+        device_id, title = fields
         width, height = self._canvas.source_size()
         context = {
             "device_id": device_id,
@@ -395,7 +444,8 @@ class CalibrationPage(QWidget):
             }
 
         self._ai_btn.setEnabled(False)
-        self._ai_btn.setText("生成中...")
+        self._ai_btn.setText("AI生成中")
+        self._ai_busy.set_busy(True, "AI生成中，请稍候")
 
         self._ai_task = BackgroundTask(
             lambda: self._vm.draft_profile(prompt, context), parent=self
@@ -409,6 +459,7 @@ class CalibrationPage(QWidget):
 
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI辅助接入")
+        self._ai_busy.set_busy(False)
         self._load_profile(result, capture_data=self._latest_capture)
         reasoning = self._vm.ai_reasoning()
         QMessageBox.information(
@@ -422,7 +473,163 @@ class CalibrationPage(QWidget):
 
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI辅助接入")
+        self._ai_busy.set_busy(False)
         QMessageBox.critical(self, "AI生成失败", msg)
+
+    def _require_device_fields(
+        self,
+        *,
+        device_id: str | None = None,
+        title: str | None = None,
+    ) -> tuple[str, str] | None:
+        """校验设备接入所需的设备 ID 和窗口标题。"""
+
+        device_id = (device_id if device_id is not None else self._device_id.text()).strip()
+        title = (title if title is not None else self._title_contains.text()).strip()
+        missing = []
+        if not device_id:
+            missing.append("设备 ID")
+        if not title:
+            missing.append("窗口标题")
+        if missing:
+            QMessageBox.warning(
+                self,
+                "缺少参数",
+                "请填写：" + "、".join(missing),
+            )
+            return None
+        return device_id, title
+
+    def _refresh_views(self) -> None:
+        """刷新设备视图列表。"""
+
+        current = self._current_view_id
+        self._views.blockSignals(True)
+        self._views.clear()
+        for view_id in self._view_states:
+            item = QListWidgetItem(view_id)
+            item.setData(Qt.ItemDataRole.UserRole, view_id)
+            self._views.addItem(item)
+            if view_id == current:
+                self._views.setCurrentItem(item)
+        self._views.blockSignals(False)
+
+    def _add_view(self) -> None:
+        """新增一个被控软件视图。"""
+
+        self._store_current_view()
+        default_name = self._next_view_name()
+        view_id, ok = QInputDialog.getText(self, "新增视图", "视图 ID：", text=default_name)
+        if not ok:
+            return
+        view_id = view_id.strip() or default_name
+        if view_id in self._view_states:
+            QMessageBox.warning(self, "视图重复", f"视图已存在：{view_id}")
+            return
+        self._view_states[view_id] = {
+            "title": self._title_contains.text().strip(),
+            "capture": None,
+            "anchors": [],
+            "capture_width": None,
+            "capture_height": None,
+        }
+        self._current_view_id = view_id
+        self._canvas.clear_all()
+        self._table.setRowCount(0)
+        self._latest_capture = None
+        self._refresh_views()
+
+    def _on_view_selected(self) -> None:
+        """视图切换时保存当前视图并加载目标视图。"""
+
+        item = self._views.currentItem()
+        if item is None:
+            return
+        view_id = item.data(Qt.ItemDataRole.UserRole)
+        if not view_id or str(view_id) == self._current_view_id:
+            return
+        old_view_id = self._current_view_id
+        self._store_current_view(view_id=old_view_id)
+        self._current_view_id = str(view_id)
+        self._load_view_state(self._current_view_id)
+
+    def _store_current_view(
+        self,
+        *,
+        view_id: str | None = None,
+        anchors: list[dict] | None = None,
+    ) -> None:
+        """把当前画布和表格状态保存到内存视图。"""
+
+        target = view_id or self._current_view_id
+        if anchors is None:
+            try:
+                anchors = self._collect_anchors()
+            except ValueError:
+                anchors = []
+        width, height = self._canvas.source_size()
+        self._view_states[target] = {
+            "title": self._title_contains.text().strip(),
+            "capture": self._latest_capture,
+            "anchors": anchors,
+            "capture_width": width,
+            "capture_height": height,
+        }
+
+    def _load_view_state(self, view_id: str) -> None:
+        """加载指定视图的截图和锚点。"""
+
+        state = self._view_states.get(view_id) or {}
+        self._canvas.clear_all()
+        self._table.setRowCount(0)
+        self._latest_capture = state.get("capture")
+        if state.get("title"):
+            self._title_contains.setText(str(state["title"]))
+        if self._latest_capture:
+            self._canvas.load_image(self._latest_capture)
+        for anchor in state.get("anchors") or []:
+            self._load_anchor_payload(anchor)
+        self._refresh_all_roi_labels()
+
+    def _collect_views_payload(
+        self,
+        *,
+        title: str,
+        fallback_width: int | None,
+        fallback_height: int | None,
+        fallback_anchors: list[dict],
+    ) -> list[dict]:
+        """构建设备多视图契约 payload。"""
+
+        views = []
+        if not self._view_states:
+            self._view_states[DEFAULT_VIEW_ID] = {
+                "title": title,
+                "capture": self._latest_capture,
+                "anchors": fallback_anchors,
+                "capture_width": fallback_width,
+                "capture_height": fallback_height,
+            }
+        for view_id, state in self._view_states.items():
+            width = state.get("capture_width") or fallback_width
+            height = state.get("capture_height") or fallback_height
+            views.append(
+                {
+                    "view_id": view_id,
+                    "window_signature": {
+                        "title_contains": state.get("title") or title,
+                        "screenshot_size": {"width": width, "height": height},
+                    },
+                    "screenshot_size": {"width": width, "height": height},
+                    "anchors": state.get("anchors") or [],
+                    "capture_asset_path": (
+                        "capture.png"
+                        if view_id == DEFAULT_VIEW_ID
+                        else f"views/{view_id}/capture.png"
+                    ),
+                }
+            )
+        return views
 
     def _collect_anchors(self) -> list[dict]:
         """从表格和画布收集锚点契约数据。"""
@@ -458,6 +665,48 @@ class CalibrationPage(QWidget):
                 }
             )
         return anchors
+
+    def _load_anchor_payload(self, anchor: dict) -> None:
+        """把锚点 payload 加载到画布和表格。"""
+
+        anchor_id = str(anchor.get("id") or self._next_anchor_name())
+        action_region = anchor.get("action_region") or {}
+        pixel = action_region.get("pixel") or {}
+        self._canvas.add_roi(
+            anchor_id,
+            float(pixel.get("x") or 0),
+            float(pixel.get("y") or 0),
+            float(pixel.get("width") or 80),
+            float(pixel.get("height") or 32),
+        )
+        observe_name = ""
+        observe_region = anchor.get("observe_region")
+        if isinstance(observe_region, dict):
+            observe = observe_region.get("pixel") or {}
+            observe_name = f"{anchor_id}_observe"
+            self._canvas.add_roi(
+                observe_name,
+                float(observe.get("x") or 0),
+                float(observe.get("y") or 0),
+                float(observe.get("width") or 80),
+                float(observe.get("height") or 32),
+            )
+        bindings = anchor.get("action_bindings") or []
+        requires_confirmation = any(
+            bool(binding.get("requires_confirmation"))
+            for binding in bindings
+            if isinstance(binding, dict)
+        )
+        self._table.add_anchor(
+            AnchorRow(
+                anchor_id=anchor_id,
+                action_roi=anchor_id,
+                action=self._main_action(list(anchor.get("supported_actions") or [])),
+                ocr_enabled=bool(observe_name),
+                observe_roi=observe_name,
+                requires_confirmation=requires_confirmation,
+            )
+        )
 
     def _refresh_instruments(self) -> None:
         """刷新已保存设备列表。"""
@@ -501,12 +750,56 @@ class CalibrationPage(QWidget):
         self._table.setRowCount(0)
         self._device_id.setText(profile.device_id)
         self._title_contains.setText(profile.window_signature.title_contains or "")
+        self._view_states = {}
+        for view in profile.views:
+            view_capture = (
+                capture_data
+                if view.view_id == DEFAULT_VIEW_ID
+                else self._vm.load_instrument_capture(
+                    profile.profile_id,
+                    view_id=view.view_id,
+                )
+            )
+            self._view_states[view.view_id] = {
+                "title": (
+                    view.window_signature.title_contains
+                    if view.window_signature is not None
+                    else profile.window_signature.title_contains
+                ),
+                "capture": view_capture,
+                "anchors": [
+                    anchor.model_dump(mode="json", exclude_none=True)
+                    for anchor in view.anchors
+                ],
+                "capture_width": (
+                    view.screenshot_size.width if view.screenshot_size else None
+                ),
+                "capture_height": (
+                    view.screenshot_size.height if view.screenshot_size else None
+                ),
+            }
+        if DEFAULT_VIEW_ID not in self._view_states:
+            self._view_states[DEFAULT_VIEW_ID] = {
+                "title": profile.window_signature.title_contains or "",
+                "capture": capture_data,
+                "anchors": [
+                    anchor.model_dump(mode="json", exclude_none=True)
+                    for anchor in profile.anchors
+                ],
+                "capture_width": profile.window_signature.capture_width,
+                "capture_height": profile.window_signature.capture_height,
+            }
+        self._current_view_id = DEFAULT_VIEW_ID
+        self._refresh_views()
         self._latest_capture = capture_data or self._vm.load_instrument_capture(
             profile.profile_id
         )
+        self._view_states[DEFAULT_VIEW_ID]["capture"] = self._latest_capture
         if self._latest_capture:
             self._canvas.load_image(self._latest_capture)
-        for anchor in profile.anchors:
+        default_view = profile.view_map().get(DEFAULT_VIEW_ID)
+        anchors_to_load = default_view.anchors if default_view is not None else profile.anchors
+        for anchor in anchors_to_load:
             pixel = anchor.action_region.pixel
             self._canvas.add_roi(
                 anchor.id,
@@ -547,6 +840,17 @@ class CalibrationPage(QWidget):
         self._selected_hwnd = None
         self._selected_title = ""
         self._latest_capture = None
+        self._current_view_id = DEFAULT_VIEW_ID
+        self._view_states = {
+            DEFAULT_VIEW_ID: {
+                "title": "",
+                "capture": None,
+                "anchors": [],
+                "capture_width": None,
+                "capture_height": None,
+            }
+        }
+        self._refresh_views()
         self._device_id.clear()
         self._title_contains.clear()
         self._capture_btn.setEnabled(False)
@@ -602,6 +906,15 @@ class CalibrationPage(QWidget):
         while f"anchor_{index}" in existing:
             index += 1
         return f"anchor_{index}"
+
+    def _next_view_name(self) -> str:
+        """生成下一个视图 ID。"""
+
+        existing = set(self._view_states)
+        index = 1
+        while f"view_{index}" in existing:
+            index += 1
+        return f"view_{index}"
 
     @staticmethod
     def _supported_actions(action: str) -> list[str]:

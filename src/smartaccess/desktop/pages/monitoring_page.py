@@ -23,6 +23,7 @@ from smartaccess.desktop.widgets import rich_text
 from smartaccess.desktop.widgets.timeline import TimelineTable
 from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.shared.events.bus import RuntimeEvent
+from smartaccess.shared.events.runtime import RuntimeEventName
 
 
 class MonitoringPage(QWidget):
@@ -259,6 +260,56 @@ class MonitoringPage(QWidget):
 
         if event.name.value == "run.step.observed":
             self._audit.setHtml(self._observation_html(event))
+        elif event.name == RuntimeEventName.RUN_BLOCKED:
+            self._handle_blocked_event(event)
+
+    @staticmethod
+    def _confirm_yes_button() -> QMessageBox.StandardButton:
+        """Return the QMessageBox yes button; useful for tests."""
+
+        return QMessageBox.StandardButton.Yes
+
+    def _handle_blocked_event(self, event: RuntimeEvent) -> None:
+        """Handle runtime blocked events with visible operator prompts."""
+
+        payload = event.payload
+        if payload.get("incident_type") == "WindowMissing":
+            self._show_window_missing_warning(payload)
+            return
+        session_id = event.session_id
+        step_id = str(payload.get("step_id") or "")
+        if not session_id or not step_id:
+            return
+        reason = str(payload.get("reason") or payload.get("detail") or "该步骤需要人工确认")
+        reply = QMessageBox.question(
+            self,
+            "人工确认",
+            f"{reason}\n\n确认后继续运行，取消后工作流保持阻塞。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        self._vm.resolve_confirmation(
+            session_id,
+            step_id,
+            reply == QMessageBox.StandardButton.Yes,
+        )
+
+    def _show_window_missing_warning(self, payload: dict) -> None:
+        """Show a warning when the controlled app window is not found."""
+
+        profile = payload.get("anchor_profile") or "-"
+        title = payload.get("title_contains") or "-"
+        detail = payload.get("detail") or payload.get("reason") or "未找到目标窗口"
+        QMessageBox.warning(
+            self,
+            "未检测到目标窗口",
+            (
+                f"{detail}\n\n"
+                f"绑定设备: {profile}\n"
+                f"窗口标题: {title}\n\n"
+                "请打开被控软件或重新扫描窗口后再运行。"
+            ),
+        )
 
     def _audit_html(self, session_id: str) -> str:
         """构建会话审计摘要。"""
@@ -331,7 +382,8 @@ class MonitoringPage(QWidget):
         """构建观察事件文本。"""
 
         payload = event.payload
-        rule = rich_text.ocr_rule(payload.get("match_mode"), payload.get("expected_text"))
+        expected = payload.get("expected_text") or payload.get("expected_candidates")
+        rule = rich_text.ocr_rule(payload.get("match_mode"), expected)
         body = "<br>".join(
             [
                 rich_text.field("步骤: ", payload.get("step_id")),

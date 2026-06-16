@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from smartaccess.runtime.application.ports import ActionOutcome, WindowInfo
-from smartaccess.shared.contracts.anchors import AnchorsContract
+from smartaccess.shared.contracts.anchors import AnchorView, AnchorsContract
 
 
 class StubAutomationProvider:
@@ -21,6 +21,7 @@ class StubAutomationProvider:
 
         self._window_title = window_title
         self._profile: AnchorsContract | None = None
+        self._view: AnchorView | None = None
         self.actions: list[tuple[str, str | None, Any]] = []
 
     def configure_profile(self, profile: AnchorsContract | None) -> None:
@@ -31,6 +32,12 @@ class StubAutomationProvider:
         """
 
         self._profile = profile
+        self._view = None
+
+    def configure_view(self, view: AnchorView | None) -> None:
+        """Configure the active calibrated view."""
+
+        self._view = view
 
     def window_present(self, title_contains: str | None) -> bool:
         """判断模拟窗口是否匹配。
@@ -45,8 +52,8 @@ class StubAutomationProvider:
         if not title_contains:
             return True
         match_mode = (
-            self._profile.window_signature.match_mode
-            if self._profile and self._profile.window_signature.match_mode
+            self._active_match_mode()
+            if self._active_match_mode()
             else "contains"
         )
         if match_mode == "equals":
@@ -132,8 +139,16 @@ class StubAutomationProvider:
 
         if not self._profile or not target:
             return ""
-        anchor = next((item for item in self._profile.anchors if item.id == target), None)
+        anchors = self._view.anchors if self._view is not None else self._profile.anchors
+        anchor = next((item for item in anchors if item.id == target), None)
         if anchor is None:
             return ""
         roi = anchor.action_region.pixel
         return f" @({roi.x:.0f},{roi.y:.0f},{roi.width:.0f},{roi.height:.0f})"
+
+    def _active_match_mode(self) -> str | None:
+        if self._view is not None and self._view.window_signature is not None:
+            return self._view.window_signature.match_mode
+        if self._profile is not None:
+            return self._profile.window_signature.match_mode
+        return None

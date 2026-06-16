@@ -9,7 +9,7 @@ from typing import Any
 
 from smartaccess.runtime.application.ports import ActionOutcome, WindowInfo
 from smartaccess.runtime.application.roi_resolver import resolve_anchor_roi
-from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorsContract
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorView, AnchorsContract
 
 from .window_scanner import WindowScanner, capture_window as _capture_real_window
 
@@ -56,6 +56,7 @@ class Win32AutomationProvider:
         self._configure_api()
         self._scanner = WindowScanner()
         self._profile: AnchorsContract | None = None
+        self._view: AnchorView | None = None
         self._hwnd: int | None = None
 
     def configure_profile(self, profile: AnchorsContract | None) -> None:
@@ -66,8 +67,18 @@ class Win32AutomationProvider:
         """
 
         self._profile = profile
+        self._view = None
         title = profile.window_signature.title_contains if profile else None
         self._hwnd = self._find_hwnd(title)
+
+    def configure_view(self, view: AnchorView | None) -> None:
+        """配置当前动作使用的窗口视图。"""
+
+        self._view = view
+        signature = view.window_signature if view is not None else None
+        self._hwnd = self._find_hwnd(
+            signature.title_contains if signature is not None else None
+        )
 
     def window_present(self, title_contains: str | None) -> bool:
         """判断目标窗口是否存在。"""
@@ -163,7 +174,7 @@ class Win32AutomationProvider:
 
         if not title_contains:
             windows = self._scanner.scan()
-        elif self._profile is not None and self._profile.window_signature.match_mode == "equals":
+        elif self._active_match_mode() == "equals":
             windows = self._scanner.scan_equals(title_contains)
         else:
             windows = self._scanner.scan_contains(title_contains)
@@ -185,10 +196,8 @@ class Win32AutomationProvider:
 
         if not anchor_id or self._profile is None:
             return None
-        return next(
-            (anchor for anchor in self._profile.anchors if anchor.id == anchor_id),
-            None,
-        )
+        anchors = self._view.anchors if self._view is not None else self._profile.anchors
+        return next((anchor for anchor in anchors if anchor.id == anchor_id), None)
 
     def _dispatch_action(
         self,
@@ -217,7 +226,7 @@ class Win32AutomationProvider:
         width, height = self._window_size()
         roi = resolve_anchor_roi(
             anchor,
-            self._profile.window_signature if self._profile else None,
+            self._active_signature(),
             current_width=width,
             current_height=height,
         )
@@ -253,6 +262,15 @@ class Win32AutomationProvider:
         if not self._user32.GetWindowRect(self._hwnd, ctypes.byref(rect)):
             return 0, 0
         return rect.left, rect.top
+
+    def _active_signature(self):
+        if self._view is not None and self._view.window_signature is not None:
+            return self._view.window_signature
+        return self._profile.window_signature if self._profile is not None else None
+
+    def _active_match_mode(self) -> str | None:
+        signature = self._active_signature()
+        return signature.match_mode if signature is not None else None
 
     def _type_text(self, text: str) -> None:
         """通过 SendInput 输入 Unicode 文本。"""

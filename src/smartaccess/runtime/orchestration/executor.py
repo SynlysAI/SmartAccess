@@ -64,6 +64,16 @@ class Executor:
         if not self._automation.window_present(title_contains):
             raise WindowMissingError(f"未找到目标窗口: {title_contains}")
 
+    def configure_step_view(self, step: WorkflowStep) -> None:
+        """Configure automation provider for the step's calibrated view."""
+
+        if self._profile is None:
+            return
+        view = self._profile.view_map().get(step.view_id or "main")
+        configure = getattr(self._automation, "configure_view", None)
+        if callable(configure):
+            configure(view)
+
     def requires_confirm(self, step: WorkflowStep) -> bool:
         """返回步骤执行前是否需要人工确认。
 
@@ -97,7 +107,8 @@ class Executor:
 
         if step.action == "wait" or self._profile is None or step.anchor_id is None:
             return None
-        return self._profile.anchor_map().get(step.anchor_id)
+        anchor = self._profile.anchor_for_view(step.view_id, step.anchor_id)
+        return anchor or self._profile.anchor_map().get(step.anchor_id)
 
     def run_step(self, step: WorkflowStep) -> ActionOutcome:
         """执行一个动作步骤。
@@ -112,6 +123,14 @@ class Executor:
         anchor = self.anchor_for_step(step)
         if anchor is None:
             raise AnchorMissingError(f"未知锚点: {step.anchor_id}")
+        self.configure_step_view(step)
+        view = self._profile.view_map().get(step.view_id or "main") if self._profile else None
+        title = (
+            view.window_signature.title_contains
+            if view is not None and view.window_signature is not None
+            else None
+        )
+        self.ensure_window(title)
         if step.action not in anchor.supported_actions:
             raise ExecutorError(
                 f"锚点 {step.anchor_id} 不支持动作 {step.action}"

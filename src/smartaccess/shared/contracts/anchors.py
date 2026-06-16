@@ -235,12 +235,36 @@ class AnchorDefinition(FlexibleContractModel):
         return self
 
 
+class AnchorView(FlexibleContractModel):
+    """同一被控应用中的一个可校准窗口或页面视图。"""
+
+    view_id: NonEmptyStr
+    window_signature: WindowSignature | None = None
+    screenshot_size: ScreenshotSize | None = None
+    anchors: list[AnchorDefinition] = Field(default_factory=list)
+    capture_asset_path: str | None = None
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def _sync_screenshot_size(self) -> "AnchorView":
+        """让视图级 screenshot_size 与 window_signature 保持兼容。"""
+
+        if self.window_signature is None:
+            self.window_signature = WindowSignature()
+        if self.screenshot_size is None:
+            self.screenshot_size = self.window_signature.screenshot_size
+        elif self.window_signature.screenshot_size is None:
+            self.window_signature.screenshot_size = self.screenshot_size
+        return self
+
+
 class AnchorsContract(ContractModel):
     """锚点配置顶层契约。"""
 
     profile_id: NonEmptyStr
     window_signature: WindowSignature
     anchors: list[AnchorDefinition] = Field(default_factory=list)
+    views: list[AnchorView] = Field(default_factory=list)
     supported_os: list[NonEmptyStr] = Field(default_factory=list, exclude=True)
     safety_limits: SafetyLimits = Field(default_factory=SafetyLimits, exclude=True)
 
@@ -248,12 +272,31 @@ class AnchorsContract(ContractModel):
     def _unique_anchor_ids(self) -> "AnchorsContract":
         """检查锚点 ID 不重复。"""
 
+        original_anchors = list(self.anchors)
+        if not self.views:
+            self.views = [
+                AnchorView(
+                    view_id="main",
+                    window_signature=self.window_signature,
+                    screenshot_size=self.window_signature.screenshot_size,
+                    anchors=list(self.anchors),
+                    capture_asset_path="capture.png",
+                )
+            ]
+        if not original_anchors:
+            self.anchors = [anchor for view in self.views for anchor in view.anchors]
         anchor_ids = [anchor.id for anchor in self.anchors]
         duplicates = sorted(
             {anchor_id for anchor_id in anchor_ids if anchor_ids.count(anchor_id) > 1}
         )
         if duplicates:
             raise ValueError(f"duplicate anchor ids: {', '.join(duplicates)}")
+        view_ids = [view.view_id for view in self.views]
+        duplicate_views = sorted(
+            {view_id for view_id in view_ids if view_ids.count(view_id) > 1}
+        )
+        if duplicate_views:
+            raise ValueError(f"duplicate view ids: {', '.join(duplicate_views)}")
         return self
 
     def anchor_map(self) -> dict[str, AnchorDefinition]:
@@ -264,6 +307,31 @@ class AnchorsContract(ContractModel):
         """
 
         return {anchor.id: anchor for anchor in self.anchors}
+
+    def view_map(self) -> dict[str, AnchorView]:
+        """返回按视图 ID 索引的视图字典。"""
+
+        return {view.view_id: view for view in self.views}
+
+    def anchors_for_view(self, view_id: str | None) -> list[AnchorDefinition]:
+        """返回指定视图中的锚点；未指定时使用 main。"""
+
+        view = self.view_map().get(view_id or "main")
+        return list(view.anchors) if view is not None else []
+
+    def anchor_for_view(
+        self,
+        view_id: str | None,
+        anchor_id: str | None,
+    ) -> AnchorDefinition | None:
+        """返回指定视图中的锚点。"""
+
+        if not anchor_id:
+            return None
+        return next(
+            (anchor for anchor in self.anchors_for_view(view_id) if anchor.id == anchor_id),
+            None,
+        )
 
     @property
     def device_id(self) -> str:
