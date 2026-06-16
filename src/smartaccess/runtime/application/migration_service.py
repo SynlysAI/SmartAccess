@@ -64,9 +64,17 @@ class MigrationService:
         if not source.exists():
             report.skipped.append(f"旧工作区不存在: {source}")
             return report
+        self._logger.info("开始导入旧工作区: %s", source)
         self._import_anchors(source, report)
         self._import_workflows(source, report)
         self._import_templates(source, report)
+        self._logger.info(
+            "旧工作区导入完成: 锚点 %d, 工作流 %d, 模板 %d, 跳过 %d",
+            report.imported_anchors,
+            report.imported_workflows,
+            report.imported_templates,
+            len(report.skipped),
+        )
         return report
 
     def _import_anchors(self, source: Path, report: MigrationReport) -> None:
@@ -92,6 +100,8 @@ class MigrationService:
             )
             seen.add(profile.profile_id)
             report.imported_anchors += 1
+        if report.imported_anchors:
+            self._logger.info("已导入 %d 个旧锚点配置", report.imported_anchors)
 
     def _load_anchor_profile(self, path: Path) -> AnchorsContract:
         """加载并兼容旧锚点配置字段。"""
@@ -136,6 +146,8 @@ class MigrationService:
                 ),
             )
             report.imported_workflows += 1
+        if report.imported_workflows:
+            self._logger.info("已导入 %d 个旧工作流", report.imported_workflows)
 
     def _import_templates(self, source: Path, report: MigrationReport) -> None:
         """导入旧本地模板工作流。"""
@@ -162,6 +174,8 @@ class MigrationService:
                 ),
             )
             report.imported_templates += 1
+        if report.imported_templates:
+            self._logger.info("已导入 %d 个旧模板", report.imported_templates)
 
     def _skip(self, report: MigrationReport, path: Path, exc: Exception) -> None:
         """记录跳过的旧数据文件。"""
