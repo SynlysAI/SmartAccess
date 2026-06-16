@@ -203,6 +203,8 @@ class RuntimeFacade:
         views: list[dict[str, Any]] | None = None,
         capture_width: int | None,
         capture_height: int | None,
+        capture_origin_x: int | None = None,
+        capture_origin_y: int | None = None,
     ) -> AnchorsContract:
         """创建并保存设备校准配置。
 
@@ -212,6 +214,8 @@ class RuntimeFacade:
             anchors: 锚点原始数据。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
+            capture_origin_x: 校准截图画布相对主窗口左侧的 X 偏移。
+            capture_origin_y: 校准截图画布相对主窗口顶部的 Y 偏移。
 
         Returns:
             已保存的锚点配置。
@@ -224,6 +228,8 @@ class RuntimeFacade:
             views=views,
             capture_width=capture_width,
             capture_height=capture_height,
+            capture_origin_x=capture_origin_x,
+            capture_origin_y=capture_origin_y,
         )
 
     def save_instrument_capture(
