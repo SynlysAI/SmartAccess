@@ -83,6 +83,24 @@ QLabel#PageHint, QLabel#SectionTitle {{
     color: {TEXT_MUTED};
     background: transparent;
 }}
+QLabel#AiBusyLabel {{
+    background: {PRIMARY_SOFT};
+    color: {PRIMARY_HOVER};
+    border: 1px solid {PRIMARY};
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-weight: 700;
+}}
+QWidget#AiBusyOverlay {{
+    background: {PRIMARY_SOFT};
+    border: 1px solid {PRIMARY};
+    border-radius: 6px;
+}}
+QLabel#AiBusyOverlayLabel {{
+    background: transparent;
+    color: {PRIMARY_HOVER};
+    font-weight: 700;
+}}
 QListWidget#NavList {{
     background: {SURFACE};
     border: none;

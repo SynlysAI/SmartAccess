@@ -34,7 +34,12 @@ class CalibrationViewModel(ViewModel):
 
         return self._facade.get_instrument(device_id)
 
-    def load_instrument_capture(self, device_id: str | None) -> bytes | None:
+    def load_instrument_capture(
+        self,
+        device_id: str | None,
+        *,
+        view_id: str | None = None,
+    ) -> bytes | None:
         """读取指定设备的校准截图。
 
         Args:
@@ -44,7 +49,7 @@ class CalibrationViewModel(ViewModel):
             PNG 截图字节；不存在时返回 None。
         """
 
-        return self._facade.load_instrument_capture(device_id)
+        return self._facade.load_instrument_capture(device_id, view_id=view_id)
 
     def workspace_dir(self) -> Path:
         """返回工作区目录。"""
@@ -92,9 +97,11 @@ class CalibrationViewModel(ViewModel):
         device_id: str,
         title_contains: str,
         anchors: list[dict[str, Any]],
+        views: list[dict[str, Any]] | None = None,
         capture_width: int | None,
         capture_height: int | None,
         capture_data: bytes | None = None,
+        view_captures: dict[str, bytes] | None = None,
     ) -> AnchorsContract:
         """创建并保存设备锚点配置。
 
@@ -114,10 +121,18 @@ class CalibrationViewModel(ViewModel):
             device_id=device_id,
             title_contains=title_contains,
             anchors=anchors,
+            views=views,
             capture_width=capture_width,
             capture_height=capture_height,
         )
         if capture_data:
             self._facade.save_instrument_capture(profile.profile_id, capture_data)
+        for view_id, data in (view_captures or {}).items():
+            if data:
+                self._facade.save_instrument_capture(
+                    profile.profile_id,
+                    data,
+                    view_id=view_id,
+                )
         self.changed.emit()
         return profile

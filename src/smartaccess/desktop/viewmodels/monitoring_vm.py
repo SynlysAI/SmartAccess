@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import queue
 
 from PyQt6.QtCore import pyqtSignal
 
@@ -61,10 +62,13 @@ class MonitoringViewModel(ViewModel):
         self._relay.event_received.connect(self._on_event)
         self._logs: list[MonitorLogEntry] = []
         self._active_session_id: str | None = None
+        self._confirm_queues: dict[tuple[str, str], queue.Queue[bool]] = {}
+        self._facade.set_confirm_handler(self._confirm_handler)
 
     def close(self) -> None:
         """释放事件订阅。"""
 
+        self._facade.set_confirm_handler(None)
         self._relay.close()
 
     def list_workflows(self) -> list[WorkflowContract]:
@@ -176,6 +180,21 @@ class MonitoringViewModel(ViewModel):
         self._logs.clear()
         self.changed.emit()
 
+    def resolve_confirmation(
+        self,
+        session_id: str,
+        step_id: str,
+        allowed: bool,
+    ) -> bool:
+        """Resolve a pending runtime confirmation request."""
+
+        key = (session_id, step_id)
+        pending = self._confirm_queues.get(key)
+        if pending is None:
+            return False
+        pending.put(bool(allowed))
+        return True
+
     def _on_event(self, event: RuntimeEvent) -> None:
         """处理运行时事件。"""
 
@@ -184,6 +203,17 @@ class MonitoringViewModel(ViewModel):
         self._logs.append(self._log_entry(event))
         self.event_received.emit(event)
         self.changed.emit()
+
+    def _confirm_handler(self, request) -> bool:
+        """Block the runtime thread until the UI resolves confirmation."""
+
+        pending: queue.Queue[bool] = queue.Queue(maxsize=1)
+        key = (request.session_id, request.step_id)
+        self._confirm_queues[key] = pending
+        try:
+            return bool(pending.get())
+        finally:
+            self._confirm_queues.pop(key, None)
 
     @staticmethod
     def _log_entry(event: RuntimeEvent) -> MonitorLogEntry:
@@ -220,7 +250,8 @@ class MonitoringViewModel(ViewModel):
         """为 OCR 观测日志追加规则和识别结果。"""
 
         match_mode = str(payload.get("match_mode") or "none")
-        rule = rich_text.ocr_rule(match_mode, payload.get("expected_text"))
+        expected = payload.get("expected_text") or payload.get("expected_candidates")
+        rule = rich_text.ocr_rule(match_mode, expected)
         actual_text = payload.get("actual_text") or "-"
         return (
             f"{message} / OCR规则: {rule} / OCR实际: {actual_text} / "

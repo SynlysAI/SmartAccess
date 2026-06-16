@@ -157,7 +157,16 @@ def ocr_rule(match_mode: object | None, expected_text: object | None) -> str:
     mode = str(match_mode or "none")
     if mode == "not_empty":
         return mode
-    return f"{mode} {expected_text or '-'}"
+    return f"{mode} {_format_expected_text(expected_text)}"
+
+
+def _format_expected_text(expected_text: object | None) -> str:
+    """Format OCR candidates without leaking Python list syntax into the UI."""
+
+    if isinstance(expected_text, (list, tuple)):
+        values = [str(item) for item in expected_text if item is not None and str(item)]
+        return " | ".join(values) if values else "-"
+    return str(expected_text or "-")
 
 
 def _status_color(status: str | None) -> str:

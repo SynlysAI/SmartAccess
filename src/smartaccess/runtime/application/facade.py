@@ -200,6 +200,7 @@ class RuntimeFacade:
         device_id: str,
         title_contains: str,
         anchors: list[dict[str, Any]],
+        views: list[dict[str, Any]] | None = None,
         capture_width: int | None,
         capture_height: int | None,
     ) -> AnchorsContract:
@@ -220,11 +221,18 @@ class RuntimeFacade:
             profile_id=device_id,
             title_contains=title_contains,
             anchors=anchors,
+            views=views,
             capture_width=capture_width,
             capture_height=capture_height,
         )
 
-    def save_instrument_capture(self, device_id: str, data: bytes) -> Path:
+    def save_instrument_capture(
+        self,
+        device_id: str,
+        data: bytes,
+        *,
+        view_id: str | None = None,
+    ) -> Path:
         """保存设备校准截图。
 
         Args:
@@ -235,9 +243,14 @@ class RuntimeFacade:
             保存后的截图路径。
         """
 
-        return self._anchors.save_capture(device_id, data)
+        return self._anchors.save_capture(device_id, data, view_id=view_id)
 
-    def load_instrument_capture(self, device_id: str | None) -> bytes | None:
+    def load_instrument_capture(
+        self,
+        device_id: str | None,
+        *,
+        view_id: str | None = None,
+    ) -> bytes | None:
         """读取设备校准截图。
 
         Args:
@@ -247,7 +260,7 @@ class RuntimeFacade:
             PNG 截图字节；不存在时返回 None。
         """
 
-        return self._anchors.load_capture(device_id)
+        return self._anchors.load_capture(device_id, view_id=view_id)
 
     def draft_instrument_from_prompt(
         self,

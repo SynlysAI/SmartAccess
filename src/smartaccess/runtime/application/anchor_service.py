@@ -58,6 +58,7 @@ class AnchorService:
         profile_id: str,
         title_contains: str,
         anchors: list[dict[str, Any]] | None = None,
+        views: list[dict[str, Any]] | None = None,
         process_name: str | None = None,
         capture_width: int | None = None,
         capture_height: int | None = None,
@@ -91,6 +92,7 @@ class AnchorService:
                 },
             ),
             anchors=[self._coerce_anchor(anchor) for anchor in (anchors or [])],
+            views=views or [],
             supported_os=supported_os or ["windows"],
             safety_limits=safety_limits or {},
         )
@@ -136,7 +138,13 @@ class AnchorService:
             shutil.rmtree(path.parent)
         self._logger.info("锚点配置已删除: profile_id=%s", profile_id)
 
-    def save_capture(self, profile_id: str, data: bytes) -> Path:
+    def save_capture(
+        self,
+        profile_id: str,
+        data: bytes,
+        *,
+        view_id: str | None = None,
+    ) -> Path:
         """保存设备校准截图。
 
         Args:
@@ -147,12 +155,17 @@ class AnchorService:
             已保存截图路径。
         """
 
-        path = self._capture_path(profile_id)
+        path = self._capture_path(profile_id, view_id=view_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         return path
 
-    def load_capture(self, profile_id: str | None) -> bytes | None:
+    def load_capture(
+        self,
+        profile_id: str | None,
+        *,
+        view_id: str | None = None,
+    ) -> bytes | None:
         """读取设备校准截图。
 
         Args:
@@ -164,7 +177,7 @@ class AnchorService:
 
         if not profile_id:
             return None
-        path = self._capture_path(profile_id)
+        path = self._capture_path(profile_id, view_id=view_id)
         if not path.exists():
             return None
         return path.read_bytes()
@@ -174,10 +187,12 @@ class AnchorService:
 
         return self._workspace_dir / "anchors" / profile_id / "anchors.yaml"
 
-    def _capture_path(self, profile_id: str) -> Path:
+    def _capture_path(self, profile_id: str, *, view_id: str | None = None) -> Path:
         """返回设备校准截图路径。"""
 
-        return self._workspace_dir / "anchors" / profile_id / "capture.png"
+        if not view_id or view_id == "main":
+            return self._workspace_dir / "anchors" / profile_id / "capture.png"
+        return self._workspace_dir / "anchors" / profile_id / "views" / view_id / "capture.png"
 
     @staticmethod
     def _coerce_anchor(raw: dict[str, Any]) -> AnchorDefinition:

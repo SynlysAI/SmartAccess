@@ -31,7 +31,6 @@ def validate_workflow_against_anchors(
     if workflow.metadata.anchor_profile != anchors.profile_id:
         issues.append("workflow.metadata.anchor_profile must match anchors.profile_id")
 
-    anchor_map = anchors.anchor_map()
     for step in workflow.steps:
         if step.action == "wait":
             _validate_wait_step(step.id, step.wait_seconds, issues)
@@ -42,7 +41,9 @@ def validate_workflow_against_anchors(
         if not step.anchor_id:
             issues.append(f"step {step.id}: anchor_id is required")
             continue
-        anchor = anchor_map.get(step.anchor_id)
+        anchor = anchors.anchor_for_view(step.view_id, step.anchor_id)
+        if anchor is None:
+            anchor = anchors.anchor_map().get(step.anchor_id)
         if anchor is None:
             issues.append(f"step {step.id}: unknown anchor_id '{step.anchor_id}'")
             continue
@@ -57,7 +58,12 @@ def validate_workflow_against_anchors(
                 f"step {step.id}: anchor '{step.anchor_id}' requires "
                 "observe_region for OCR matching"
             )
-        _validate_text_expectation(step.id, step.match_mode, step.expected_text, issues)
+        _validate_text_expectation(
+            step.id,
+            step.match_mode,
+            step.expected_text,
+            issues,
+        )
     return issues
 
 
@@ -75,20 +81,31 @@ def _validate_wait_step(
 def _validate_text_expectation(
     step_id: str,
     match_mode: str,
-    expected_text: str | None,
+    expected_text: str | list[str] | None,
     issues: list[str],
 ) -> None:
     """校验 OCR 文本匹配字段。"""
 
-    if match_mode in {"contains", "equals", "regex"} and not (
-        expected_text or ""
-    ).strip():
+    candidates = _expected_candidates(expected_text)
+    if match_mode in {"contains", "equals", "regex"} and not candidates:
         issues.append(
             f"step {step_id}: expected_text is required when "
             f"match_mode is '{match_mode}'"
         )
-    if match_mode == "regex" and expected_text:
-        try:
-            re.compile(expected_text)
-        except re.error as exc:
-            issues.append(f"step {step_id}: invalid regex '{expected_text}': {exc}")
+    if match_mode == "regex":
+        for candidate in candidates:
+            try:
+                re.compile(candidate)
+            except re.error as exc:
+                issues.append(f"step {step_id}: invalid regex '{candidate}': {exc}")
+
+
+def _expected_candidates(expected_text: str | list[str] | None) -> list[str]:
+    """把 OCR 期望文本转成非空候选列表。"""
+
+    if expected_text is None:
+        return []
+    if isinstance(expected_text, list):
+        return [str(value).strip() for value in expected_text if str(value).strip()]
+    text = str(expected_text).strip()
+    return [text] if text else []

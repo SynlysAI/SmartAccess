@@ -12,8 +12,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
-    QInputDialog,
-    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QSizePolicy,
@@ -33,6 +31,7 @@ def _selectable_msg(parent, icon, title, text):
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return box
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
+from smartaccess.desktop.widgets.ai_dialogs import AiBusyOverlay, AiPromptDialog
 from smartaccess.desktop.widgets.cards import create_card
 from smartaccess.desktop.widgets import rich_text
 from smartaccess.desktop.widgets.table_style import NoWheelComboBox
@@ -55,6 +54,7 @@ class WorkflowPage(QWidget):
         self._vm = WorkflowViewModel(facade, self)
         self._current: WorkflowContract | None = None
         self._anchor_ids: list[str] = []
+        self._view_ids: list[str] = ["main"]
         self._last_ai_prompt = ""
 
         root = QVBoxLayout(self)
@@ -211,6 +211,9 @@ class WorkflowPage(QWidget):
         label.setObjectName("PageHint")
         layout.addWidget(label)
 
+        self._ai_busy = AiBusyOverlay()
+        layout.addWidget(self._ai_busy)
+
         self._result = QTextEdit()
         self._result.setObjectName("WorkflowResult")
         self._result.setReadOnly(True)
@@ -268,8 +271,9 @@ class WorkflowPage(QWidget):
 
         profile = self._vm.get_anchor_profile(self._anchor_profile.currentData())
         self._anchor_ids = [anchor.id for anchor in profile.anchors] if profile else []
+        self._view_ids = [view.view_id for view in profile.views] if profile else ["main"]
         if hasattr(self, "_steps"):
-            self._steps.set_steps(self._steps.rows(), self._anchor_ids)
+            self._steps.set_steps(self._steps.rows(), self._anchor_ids, self._view_ids)
 
     def _new_workflow(self) -> None:
         """创建空工作流编辑状态。"""
@@ -280,7 +284,7 @@ class WorkflowPage(QWidget):
         self._lifecycle.setCurrentIndex(0)
         self._template_id.clear()
         self._template_version.clear()
-        self._steps.set_steps([], self._anchor_ids)
+        self._steps.set_steps([], self._anchor_ids, self._view_ids)
         self._clear_result()
 
     def _select_workflow(self) -> None:
@@ -321,17 +325,22 @@ class WorkflowPage(QWidget):
             StepRow(
                 step_id=step.id,
                 action=step.action,
+                view_id=step.view_id,
                 anchor_id=step.anchor_id,
                 value=step.value,
                 wait_seconds=step.wait_seconds,
                 match_mode=step.match_mode,
                 expected_text=step.expected_text,
+                expected_candidates=step.expected_candidates,
                 timeout_seconds=step.timeout_seconds,
+                min_confidence=step.min_confidence,
+                ignore_case=step.ignore_case,
+                normalize_text=step.normalize_text,
                 requires_confirmation=step.requires_confirmation,
             )
             for step in workflow.steps
         ]
-        self._steps.set_steps(rows, self._anchor_ids)
+        self._steps.set_steps(rows, self._anchor_ids, self._view_ids)
         self._clear_result()
 
     def _add_action(self) -> None:
@@ -356,6 +365,8 @@ class WorkflowPage(QWidget):
     def _save(self) -> None:
         """保存当前工作流。"""
 
+        if self._require_workflow_fields() is None:
+            return
         try:
             workflow = self._build_workflow()
             saved = self._vm.save_workflow(workflow)
@@ -369,6 +380,8 @@ class WorkflowPage(QWidget):
     def _standardize(self) -> None:
         """执行标准化检查。"""
 
+        if self._require_workflow_fields() is None:
+            return
         try:
             workflow = self._build_workflow()
             result = self._vm.standardize(workflow)
@@ -383,31 +396,25 @@ class WorkflowPage(QWidget):
     def _ai_generate(self) -> None:
         """根据文本描述调用 AI 生成工作流。"""
 
-        dialog = QInputDialog(self)
-        dialog.setWindowTitle("AI生成工作流")
-        dialog.setLabelText(
-            "输入实验步骤或自动化目标。\n当前 AI：" + self._vm.ai_label()
-        )
-        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput)
-        dialog.setTextValue(self._last_ai_prompt)
-        text_edit = dialog.findChild(QPlainTextEdit)
-        if text_edit is not None:
-            text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-            text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        dialog.resize(550, 350)
-        if dialog.exec() != QInputDialog.DialogCode.Accepted:
+        fields = self._require_workflow_fields()
+        if fields is None:
             return
-        prompt = dialog.textValue()
+        dialog = AiPromptDialog(
+            title="AI生成工作流",
+            label="输入实验步骤或自动化目标。",
+            ai_label=self._vm.ai_label(),
+            initial_text=self._last_ai_prompt,
+            parent=self,
+        )
+        if dialog.exec() != AiPromptDialog.DialogCode.Accepted:
+            return
+        prompt = dialog.text_value()
         prompt = prompt.strip()
         if not prompt:
             _selectable_msg(self, QMessageBox.Icon.Warning, "缺少描述", "请输入实验步骤或自动化目标。").exec()
             return
         self._last_ai_prompt = prompt
-        workflow_id = self._workflow_id.text().strip() or self._next_workflow_id()
-        anchor_profile = self._anchor_profile.currentData()
-        if not anchor_profile:
-            _selectable_msg(self, QMessageBox.Icon.Warning, "缺少设备", "请先选择设备。").exec()
-            return
+        workflow_id, anchor_profile = fields
         profile = self._vm.get_anchor_profile(str(anchor_profile))
         anchors = []
         if profile is not None:
@@ -420,18 +427,34 @@ class WorkflowPage(QWidget):
                 }
                 for anchor in profile.anchors
             ]
+            views = [
+                {
+                    "view_id": view.view_id,
+                    "title_contains": (
+                        view.window_signature.title_contains
+                        if view.window_signature is not None
+                        else None
+                    ),
+                    "anchors": [anchor.id for anchor in view.anchors],
+                }
+                for view in profile.views
+            ]
+        else:
+            views = [{"view_id": "main", "anchors": []}]
         context = {
             "workflow_id": workflow_id,
             "anchor_profile": str(anchor_profile),
             "experiment_type": "generic_automation",
             "anchors": anchors,
+            "views": views,
             "available_actions": sorted(
                 {action for item in anchors for action in item["supported_actions"]}
             ),
         }
 
         self._ai_btn.setEnabled(False)
-        self._ai_btn.setText("生成中...")
+        self._ai_btn.setText("AI生成中")
+        self._ai_busy.set_busy(True, "AI生成中，请稍候")
         self._set_result("AI 生成中，请稍候...")
 
         self._ai_task = BackgroundTask(
@@ -446,6 +469,7 @@ class WorkflowPage(QWidget):
 
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI生成")
+        self._ai_busy.set_busy(False)
         self._load_workflow(result)
         self._reload_workflows(result.metadata.workflow_id)
         self._steps.scrollToTop()
@@ -456,8 +480,28 @@ class WorkflowPage(QWidget):
 
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI生成")
+        self._ai_busy.set_busy(False)
         self._clear_result()
         _selectable_msg(self, QMessageBox.Icon.Critical, "AI生成失败", msg).exec()
+
+    def _require_workflow_fields(self) -> tuple[str, str] | None:
+        """校验工作流 ID 和绑定设备。"""
+
+        workflow_id = self._workflow_id.text().strip()
+        anchor_profile = self._anchor_profile.currentData()
+        missing = []
+        if not workflow_id:
+            missing.append("工作流 ID")
+        if not anchor_profile:
+            missing.append("设备")
+        if missing:
+            QMessageBox.warning(
+                self,
+                "缺少参数",
+                "请填写：" + "、".join(missing),
+            )
+            return None
+        return workflow_id, str(anchor_profile)
 
     def _build_workflow(self) -> WorkflowContract:
         """从编辑器构建工作流契约。"""
@@ -481,12 +525,17 @@ class WorkflowPage(QWidget):
             payload = {
                 "id": row.step_id,
                 "action": row.action,
+                "view_id": row.view_id,
                 "anchor_id": row.anchor_id,
                 "value": row.value,
                 "wait_seconds": row.wait_seconds,
                 "match_mode": row.match_mode,
                 "expected_text": row.expected_text,
+                "expected_candidates": row.expected_candidates,
                 "timeout_seconds": row.timeout_seconds,
+                "min_confidence": row.min_confidence,
+                "ignore_case": row.ignore_case,
+                "normalize_text": row.normalize_text,
                 "requires_confirmation": row.requires_confirmation,
             }
             steps.append(WorkflowStep.model_validate(payload))
