@@ -94,6 +94,8 @@ class CalibrationViewModel(ViewModel):
         anchors: list[dict[str, Any]],
         capture_width: int | None,
         capture_height: int | None,
+        capture_origin_x: int | None = None,
+        capture_origin_y: int | None = None,
         capture_data: bytes | None = None,
     ) -> AnchorsContract:
         """创建并保存设备锚点配置。
@@ -104,6 +106,8 @@ class CalibrationViewModel(ViewModel):
             anchors: 锚点列表。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
+            capture_origin_x: 校准截图画布相对主窗口左侧的 X 偏移。
+            capture_origin_y: 校准截图画布相对主窗口顶部的 Y 偏移。
             capture_data: 当前校准截图 PNG 字节。
 
         Returns:
@@ -116,6 +120,8 @@ class CalibrationViewModel(ViewModel):
             anchors=anchors,
             capture_width=capture_width,
             capture_height=capture_height,
+            capture_origin_x=capture_origin_x,
+            capture_origin_y=capture_origin_y,
         )
         if capture_data:
             self._facade.save_instrument_capture(profile.profile_id, capture_data)

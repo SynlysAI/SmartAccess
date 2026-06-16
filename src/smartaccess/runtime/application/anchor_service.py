@@ -61,6 +61,8 @@ class AnchorService:
         process_name: str | None = None,
         capture_width: int | None = None,
         capture_height: int | None = None,
+        capture_origin_x: int | None = None,
+        capture_origin_y: int | None = None,
         supported_os: list[str] | None = None,
         safety_limits: dict[str, Any] | None = None,
     ) -> AnchorsContract:
@@ -73,6 +75,8 @@ class AnchorService:
             process_name: 可选进程名。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
+            capture_origin_x: 校准截图画布相对主窗口左侧的 X 偏移。
+            capture_origin_y: 校准截图画布相对主窗口顶部的 Y 偏移。
             supported_os: 支持的操作系统。
             safety_limits: 安全限制。
 
@@ -89,6 +93,8 @@ class AnchorService:
                     "width": capture_width,
                     "height": capture_height,
                 },
+                capture_origin_x=capture_origin_x or 0,
+                capture_origin_y=capture_origin_y or 0,
             ),
             anchors=[self._coerce_anchor(anchor) for anchor in (anchors or [])],
             supported_os=supported_os or ["windows"],

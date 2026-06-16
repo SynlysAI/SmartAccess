@@ -13,6 +13,8 @@ from typing import Any
 _IS_WINDOWS = platform.system().lower() == "windows"
 _USER32: Any | None = ctypes.windll.user32 if _IS_WINDOWS else None
 _GDI32: Any | None = ctypes.windll.gdi32 if _IS_WINDOWS else None
+GA_ROOTOWNER = 3
+GW_OWNER = 4
 
 
 @dataclass(slots=True)
@@ -152,6 +154,14 @@ class WindowScanner:
 
 
 _LAST_CAPTURE_ERROR = ""
+_LAST_CAPTURE_METADATA: dict[str, int] = {
+    "origin_x": 0,
+    "origin_y": 0,
+    "window_x": 0,
+    "window_y": 0,
+    "offset_x": 0,
+    "offset_y": 0,
+}
 
 
 def capture_window(hwnd: int) -> bytes | None:
@@ -164,7 +174,7 @@ def capture_window(hwnd: int) -> bytes | None:
         PNG 字节；失败时返回 None。
     """
 
-    global _LAST_CAPTURE_ERROR  # noqa: PLW0603
+    global _LAST_CAPTURE_ERROR, _LAST_CAPTURE_METADATA  # noqa: PLW0603
     if _USER32 is None or _GDI32 is None:
         _LAST_CAPTURE_ERROR = CaptureErrorReason.NOT_WINDOWS
         return None
@@ -173,14 +183,23 @@ def capture_window(hwnd: int) -> bytes | None:
     if reason is not None:
         _LAST_CAPTURE_ERROR = reason
         return None
-    rect = wintypes.RECT()
-    _USER32.GetWindowRect(hwnd, ctypes.byref(rect))
+    rect = _capture_bounds(hwnd)
     width = rect.right - rect.left
     height = rect.bottom - rect.top
+    window_rect = wintypes.RECT()
+    _USER32.GetWindowRect(hwnd, ctypes.byref(window_rect))
+    _LAST_CAPTURE_METADATA = {
+        "origin_x": int(rect.left),
+        "origin_y": int(rect.top),
+        "window_x": int(window_rect.left),
+        "window_y": int(window_rect.top),
+        "offset_x": int(window_rect.left - rect.left),
+        "offset_y": int(window_rect.top - rect.top),
+    }
 
-    data = _print_window(hwnd, width, height)
+    data = _bitblt_window(rect.left, rect.top, width, height)
     if data is None:
-        data = _bitblt_window(rect.left, rect.top, width, height)
+        data = _print_window(hwnd, width, height)
     if data is None:
         _LAST_CAPTURE_ERROR = CaptureErrorReason.GDI_FAILED
         return None
@@ -191,6 +210,51 @@ def capture_error_reason() -> str:
     """返回最近一次截图失败原因。"""
 
     return _LAST_CAPTURE_ERROR or CaptureErrorReason.UNKNOWN
+
+
+def capture_metadata() -> dict[str, int]:
+    """返回最近一次截图的画布元数据。"""
+
+    return dict(_LAST_CAPTURE_METADATA)
+
+
+def _capture_bounds(hwnd: int) -> wintypes.RECT:
+    """计算截图区域，包含主窗口及其可见弹窗。
+
+    Args:
+        hwnd: 主窗口句柄。
+
+    Returns:
+        覆盖主窗口和相关弹窗的屏幕矩形。
+    """
+
+    rect = wintypes.RECT()
+    _USER32.GetWindowRect(hwnd, ctypes.byref(rect))
+    bounds = wintypes.RECT(rect.left, rect.top, rect.right, rect.bottom)
+
+    def _callback(candidate_hwnd: int, _lparam: int) -> bool:
+        if candidate_hwnd == hwnd:
+            return True
+        if not _USER32.IsWindowVisible(candidate_hwnd):
+            return True
+        if not _is_related_popup(hwnd, candidate_hwnd):
+            return True
+        candidate_rect = wintypes.RECT()
+        if not _USER32.GetWindowRect(candidate_hwnd, ctypes.byref(candidate_rect)):
+            return True
+        if candidate_rect.right <= candidate_rect.left:
+            return True
+        if candidate_rect.bottom <= candidate_rect.top:
+            return True
+        bounds.left = min(bounds.left, candidate_rect.left)
+        bounds.top = min(bounds.top, candidate_rect.top)
+        bounds.right = max(bounds.right, candidate_rect.right)
+        bounds.bottom = max(bounds.bottom, candidate_rect.bottom)
+        return True
+
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    _USER32.EnumWindows(enum_proc(_callback), 0)
+    return bounds
 
 
 def _configure_win32_api() -> None:
@@ -210,6 +274,10 @@ def _configure_win32_api() -> None:
     _USER32.GetClientRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
     _USER32.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
     _USER32.GetWindowDC.argtypes = (wintypes.HWND,)
+    _USER32.GetAncestor.argtypes = (wintypes.HWND, wintypes.UINT)
+    _USER32.GetAncestor.restype = wintypes.HWND
+    _USER32.GetWindow.argtypes = (wintypes.HWND, wintypes.UINT)
+    _USER32.GetWindow.restype = wintypes.HWND
     _USER32.ReleaseDC.argtypes = (wintypes.HWND, wintypes.HDC)
     _USER32.IsIconic.argtypes = (wintypes.HWND,)
     _USER32.PrintWindow.argtypes = (wintypes.HWND, wintypes.HDC, wintypes.UINT)
@@ -240,6 +308,27 @@ def _get_window_title(hwnd: int) -> str:
     buffer = ctypes.create_unicode_buffer(length + 1)
     _USER32.GetWindowTextW(hwnd, buffer, length + 1)
     return buffer.value or ""
+
+
+def _is_related_popup(root_hwnd: int, candidate_hwnd: int) -> bool:
+    """判断候选窗口是否属于目标窗口弹窗。
+
+    Args:
+        root_hwnd: 主窗口句柄。
+        candidate_hwnd: 候选弹窗句柄。
+
+    Returns:
+        是否属于同一主窗口的弹窗。
+    """
+
+    if _USER32.GetAncestor(candidate_hwnd, GA_ROOTOWNER) == root_hwnd:
+        return True
+    owner = _USER32.GetWindow(candidate_hwnd, GW_OWNER)
+    while owner:
+        if owner == root_hwnd:
+            return True
+        owner = _USER32.GetWindow(owner, GW_OWNER)
+    return False
 
 
 def _print_window(hwnd: int, width: int, height: int) -> bytes | None:
