@@ -47,6 +47,18 @@ class ConfirmRequest:
 ConfirmHandler = Callable[[ConfirmRequest], bool]
 
 
+@dataclass(frozen=True, slots=True)
+class ExceptionDetection:
+    """一次异常弹窗识别命中。"""
+
+    rule_id: str
+    view_id: str
+    anchor_id: str
+    message: str
+    observation: Observation
+    screenshot_path: str | None
+
+
 class Orchestrator:
     """协调执行器、观察器和恢复策略完成一次工作流运行。"""
 
@@ -169,11 +181,17 @@ class Orchestrator:
             match_mode=step.match_mode,
             min_confidence=step.min_confidence,
             requires_confirmation=(
-                False if step.action == "wait" else self._executor.requires_confirm(step)
+                step.requires_confirmation
+                if step.action == "wait"
+                else self._executor.requires_confirm(step)
             ),
         )
+        detected = self._detect_exception_popup(session, profile, step)
+        if detected is not None:
+            self._block_on_exception_popup(session, step, detected)
+            return False
         if step.action == "wait":
-            return self._run_wait_step(session, workflow, step)
+            return self._run_wait_step(session, workflow, profile, step)
         if self._executor.requires_confirm(step):
             allowed = self._confirm_gate(
                 session,
@@ -200,13 +218,30 @@ class Orchestrator:
         self,
         session: RunSession,
         workflow: WorkflowContract,
+        profile: AnchorsContract | None,
         step: WorkflowStep,
     ) -> bool:
-        """执行可取消的固定等待步骤。"""
+        """执行固定等待、等待 OCR 或人工确认步骤。"""
+
+        if step.requires_confirmation:
+            allowed = self._confirm_gate(
+                session,
+                step.id,
+                f"步骤 {step.id} 需要人工确认",
+            )
+            if not allowed:
+                self._set_step_status(session, step, RunStepStatus.BLOCKED)
+                return False
+        if step.match_mode != "none" and step.anchor_id:
+            return self._observe_after_action(session, workflow, profile, step)
 
         wait_seconds = float(step.wait_seconds or 0.0)
         start = time.monotonic()
         while time.monotonic() - start < wait_seconds:
+            detected = self._detect_exception_popup(session, profile, step)
+            if detected is not None:
+                self._block_on_exception_popup(session, step, detected)
+                return False
             if self._is_stopped(session, step.id):
                 self._record_trace(
                     session=session,
@@ -234,6 +269,10 @@ class Orchestrator:
                 return False
             time.sleep(min(0.1, max(0.0, wait_seconds - (time.monotonic() - start))))
         elapsed = time.monotonic() - start
+        detected = self._detect_exception_popup(session, profile, step)
+        if detected is not None:
+            self._block_on_exception_popup(session, step, detected)
+            return False
         self._record_trace(
             session=session,
             workflow=workflow,
@@ -269,9 +308,24 @@ class Orchestrator:
     ) -> bool:
         """动作后执行固定等待或 OCR 轮询。"""
 
-        observation, wait_strategy, attempts, elapsed, screenshot_path = (
+        observation, wait_strategy, attempts, elapsed, screenshot_path, detected = (
             self._post_action_observation(session, profile, step)
         )
+        if detected is not None:
+            self._record_trace(
+                session=session,
+                workflow=workflow,
+                step=step,
+                observation=detected.observation,
+                wait_strategy=wait_strategy,
+                attempts=attempts,
+                elapsed_seconds=elapsed,
+                screenshot_path=detected.screenshot_path,
+                status="failed",
+                error=ErrorPayload(type="device_popup", message=detected.message),
+            )
+            self._block_on_exception_popup(session, step, detected)
+            return False
         reading = observation.readings[0] if observation.readings else None
         matched = self._observer.matches(
             reading,
@@ -368,16 +422,37 @@ class Orchestrator:
         session: RunSession,
         profile: AnchorsContract | None,
         step: WorkflowStep,
-    ) -> tuple[Observation, WaitStrategyPayload, int, float, str | None]:
+    ) -> tuple[
+        Observation,
+        WaitStrategyPayload,
+        int,
+        float,
+        str | None,
+        ExceptionDetection | None,
+    ]:
         """动作后执行等待或 OCR 观察。"""
 
         anchor = self._executor.anchor_for_step(step)
+        if step.action == "wait" and profile is not None and step.anchor_id:
+            anchor = profile.anchor_for_view(step.view_id, step.anchor_id)
+            if anchor is None:
+                anchor = profile.anchor_map().get(step.anchor_id)
         if anchor is None:
-            return Observation(), WaitStrategyPayload(type="none"), 1, 0.0, None
+            return Observation(), WaitStrategyPayload(type="none"), 1, 0.0, None, None
         if step.match_mode == "none":
             wait_seconds = float(step.wait_seconds or anchor.default_wait_seconds or 0.0)
             start = time.monotonic()
             while time.monotonic() - start < wait_seconds:
+                detected = self._detect_exception_popup(session, profile, step)
+                if detected is not None:
+                    return (
+                        detected.observation,
+                        WaitStrategyPayload(type="fixed_wait", wait_seconds=wait_seconds),
+                        1,
+                        time.monotonic() - start,
+                        detected.screenshot_path,
+                        detected,
+                    )
                 if self._is_stopped(session, step.id):
                     break
                 time.sleep(min(0.1, max(0.0, wait_seconds - (time.monotonic() - start))))
@@ -387,6 +462,7 @@ class Orchestrator:
                 WaitStrategyPayload(type="fixed_wait", wait_seconds=wait_seconds),
                 1,
                 elapsed,
+                None,
                 None,
             )
         timeout_seconds = float(step.timeout_seconds or anchor.default_wait_seconds or 2.0)
@@ -414,6 +490,7 @@ class Orchestrator:
                 0,
                 wait_elapsed,
                 None,
+                None,
             )
         start = time.monotonic()
         attempts = 0
@@ -421,6 +498,22 @@ class Orchestrator:
         last_screenshot_path = None
         while True:
             attempts += 1
+            detected = self._detect_exception_popup(session, profile, step)
+            if detected is not None:
+                return (
+                    detected.observation,
+                    WaitStrategyPayload(
+                        type="ocr_poll",
+                        wait_seconds=pre_wait_seconds,
+                        timeout_seconds=timeout_seconds,
+                        poll_interval_seconds=POLL_INTERVAL_SECONDS,
+                    ),
+                    attempts,
+                    wait_elapsed + (time.monotonic() - start),
+                    detected.screenshot_path,
+                    detected,
+                )
+            self._executor.configure_step_view(step)
             screenshot = self._executor.screenshot(step.id)
             if screenshot:
                 self._observer.configure_screenshot(screenshot)
@@ -465,6 +558,7 @@ class Orchestrator:
                     attempts,
                     wait_elapsed + elapsed,
                     last_screenshot_path,
+                    None,
                 )
             time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -566,6 +660,105 @@ class Orchestrator:
             recovery=action.value,
         )
         return True
+
+    def _detect_exception_popup(
+        self,
+        session: RunSession,
+        profile: AnchorsContract | None,
+        step: WorkflowStep,
+    ) -> ExceptionDetection | None:
+        """识别设备级异常弹窗规则。"""
+
+        if profile is None or not profile.exception_rules:
+            return None
+        for rule in profile.exception_rules:
+            if not rule.blocking:
+                continue
+            anchor = profile.anchor_for_view(rule.view_id, rule.anchor_id)
+            if anchor is None or anchor.observe_region is None:
+                continue
+            self._configure_view_for_observation(profile, rule.view_id)
+            screenshot = self._executor.screenshot(f"{step.id}_{rule.id}_exception")
+            if not screenshot:
+                continue
+            self._observer.configure_screenshot(screenshot)
+            observation = self._observer.observe_anchor(
+                profile,
+                rule.anchor_id,
+                view_id=rule.view_id,
+            )
+            reading = observation.readings[0] if observation.readings else None
+            matched = self._observer.matches(
+                reading,
+                expected_text=rule.expected_text,
+                match_mode=rule.match_mode,
+                ignore_case=rule.ignore_case,
+                normalize_text=rule.normalize_text,
+                min_confidence=rule.min_confidence,
+            )
+            if matched is not True:
+                continue
+            snapshot = self._observer.anchor_snapshot(
+                profile,
+                rule.anchor_id,
+                view_id=rule.view_id,
+            )
+            screenshot_path = self._run_sessions.save_screenshot(
+                session.session_id,
+                f"{step.id}_{rule.id}_exception.png",
+                snapshot or screenshot,
+            )
+            return ExceptionDetection(
+                rule_id=rule.id,
+                view_id=rule.view_id,
+                anchor_id=rule.anchor_id,
+                message=rule.message or f"设备异常弹窗: {rule.id}",
+                observation=observation,
+                screenshot_path=screenshot_path,
+            )
+        return None
+
+    def _block_on_exception_popup(
+        self,
+        session: RunSession,
+        step: WorkflowStep,
+        detected: ExceptionDetection,
+    ) -> None:
+        """把异常弹窗命中转成阻断事件。"""
+
+        reading = detected.observation.readings[0] if detected.observation.readings else None
+        self._incidents.open(
+            session_id=session.session_id,
+            step_id=step.id,
+            incident_type=IncidentType.DEVICE_POPUP,
+            detail=detected.message,
+            emit_blocked=False,
+        )
+        self._set_step_status(session, step, RunStepStatus.BLOCKED)
+        self._run_sessions.emit_event(
+            session,
+            RuntimeEventName.RUN_BLOCKED,
+            step_id=step.id,
+            reason=detected.message,
+            detail=detected.message,
+            incident_type=IncidentType.DEVICE_POPUP.value,
+            exception_rule_id=detected.rule_id,
+            view_id=detected.view_id,
+            anchor_id=detected.anchor_id,
+            actual_text=reading.text if reading else None,
+            confidence=reading.confidence if reading else None,
+            screenshot_path=detected.screenshot_path,
+        )
+
+    def _configure_view_for_observation(
+        self,
+        profile: AnchorsContract,
+        view_id: str | None,
+    ) -> None:
+        """配置自动化 provider 使用指定视图截图。"""
+
+        _ = profile
+        self._executor.configure_view_id(view_id)
 
     def _emit_observation_event(
         self,

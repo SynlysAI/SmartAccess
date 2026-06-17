@@ -95,6 +95,21 @@ class VisionConfig(FlexibleContractModel):
     presence_threshold: float = Field(default=0.05, ge=0, le=1)
 
 
+class ExceptionRule(FlexibleContractModel):
+    """设备级异常弹窗识别规则。"""
+
+    id: NonEmptyStr
+    view_id: NonEmptyStr
+    anchor_id: NonEmptyStr
+    expected_text: str | list[str] | None = None
+    match_mode: Literal["contains", "equals", "regex", "not_empty"] = "contains"
+    ignore_case: bool = False
+    normalize_text: bool = False
+    min_confidence: float | None = Field(default=None, ge=0, le=1)
+    blocking: bool = True
+    message: str | None = None
+
+
 class SafetyField(FlexibleContractModel):
     """绑定到字段或步骤的安全确认规则。"""
 
@@ -265,6 +280,7 @@ class AnchorsContract(ContractModel):
     window_signature: WindowSignature
     anchors: list[AnchorDefinition] = Field(default_factory=list)
     views: list[AnchorView] = Field(default_factory=list)
+    exception_rules: list[ExceptionRule] = Field(default_factory=list)
     supported_os: list[NonEmptyStr] = Field(default_factory=list, exclude=True)
     safety_limits: SafetyLimits = Field(default_factory=SafetyLimits, exclude=True)
 

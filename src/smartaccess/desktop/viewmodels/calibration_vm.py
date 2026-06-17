@@ -142,3 +142,17 @@ class CalibrationViewModel(ViewModel):
                 )
         self.changed.emit()
         return profile
+
+    def preview_anchor_ocr(
+        self,
+        *,
+        capture_data: bytes,
+        anchor_payload: dict[str, Any],
+    ) -> str:
+        """对当前校准截图中的锚点执行一次 OCR 预览。"""
+
+        reading = self._facade.preview_anchor_ocr(
+            capture_data=capture_data,
+            anchor_payload=anchor_payload,
+        )
+        return reading.text

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import socket
+import ssl
+from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -11,6 +14,11 @@ from urllib.request import Request, urlopen
 
 import yaml
 from pydantic import ValidationError
+
+try:  # pragma: no cover - optional dependency in packaged builds
+    import certifi
+except Exception:  # noqa: BLE001
+    certifi = None  # type: ignore[assignment]
 
 from smartaccess.shared.config.settings import DEFAULT_AI_USER_AGENT
 from smartaccess.shared.contracts.anchors import (
@@ -24,6 +32,8 @@ CODEX_USER_AGENT = (
     "codex_vscode/0.137.0-alpha.4 "
     "(Windows 10.0.26200; x86_64) unknown (VS Code; 26.602.71036)"
 )
+CODEX_WORKFLOW_DRAFT_MIN_TIMEOUT_SECONDS = 120.0
+IMAGE_DRAFT_MIN_TIMEOUT_SECONDS = 120.0
 
 
 class SmartAccessAiGenerator:
@@ -98,7 +108,12 @@ class SmartAccessAiGenerator:
 
         payload = self._workflow_payload(prompt, context)
         try:
-            content = self._send(payload)
+            timeout_seconds = (
+                max(self._timeout, CODEX_WORKFLOW_DRAFT_MIN_TIMEOUT_SECONDS)
+                if self._provider == "codex"
+                else self._timeout
+            )
+            content = self._send(payload, timeout_seconds=timeout_seconds)
             workflow_data = self._normalize_workflow(self._extract_structured(content))
             self.last_reasoning = self._workflow_reasoning(workflow_data, prompt, context)
             return WorkflowContract.model_validate(workflow_data)
@@ -124,7 +139,17 @@ class SmartAccessAiGenerator:
 
         payload = self._instrument_payload(prompt, context)
         try:
-            content = self._send(payload)
+            has_image = bool(
+                self.supports_images
+                and isinstance(context.get("screenshot"), dict)
+                and context["screenshot"].get("data")
+            )
+            timeout_seconds = (
+                max(self._timeout, IMAGE_DRAFT_MIN_TIMEOUT_SECONDS)
+                if has_image
+                else self._timeout
+            )
+            content = self._send(payload, timeout_seconds=timeout_seconds)
             profile_data = self._normalize_anchor_profile(
                 self._extract_structured(content),
                 context,
@@ -140,33 +165,69 @@ class SmartAccessAiGenerator:
             self.last_reasoning = f"## Generation failed\n\n{self.last_error}"
             raise RuntimeError(f"{self._provider} 设备接入生成失败: {exc}") from exc
 
-    def _send(self, payload: dict[str, Any]) -> str:
+    def _send(
+        self,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> str:
         """按 provider 发送请求并返回文本内容。"""
 
         if self._provider == "codex":
-            data = self._post("/responses", payload)
+            data = self._post("/responses", payload, timeout_seconds=timeout_seconds)
             return self._responses_content(data)
-        data = self._post("/chat/completions", payload)
+        data = self._post("/chat/completions", payload, timeout_seconds=timeout_seconds)
         return self._chat_content(data)
 
-    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         """发送 JSON POST 请求。"""
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request = Request(
-            f"{self._base_url}{path}",
-            data=body,
-            headers=self._headers(),
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=self._timeout) as response:  # noqa: S310
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(self._format_http_error(exc.code, detail)) from exc
-        except URLError as exc:
-            raise RuntimeError(str(exc.reason)) from exc
+        url = f"{self._base_url}{path}"
+        request_timeout = timeout_seconds or self._timeout
+        last_error: Exception | None = None
+        for attempt in range(2):
+            request = Request(
+                url,
+                data=body,
+                headers=self._headers(),
+                method="POST",
+            )
+            try:
+                kwargs: dict[str, Any] = {"timeout": request_timeout}
+                context = self._https_context()
+                if context is not None and urlsplit(url).scheme == "https":
+                    kwargs["context"] = context
+                with urlopen(request, **kwargs) as response:  # noqa: S310
+                    return json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(self._format_http_error(exc.code, detail)) from exc
+            except TimeoutError as exc:
+                raise RuntimeError(self._format_timeout_error(request_timeout)) from exc
+            except socket.timeout as exc:
+                raise RuntimeError(self._format_timeout_error(request_timeout)) from exc
+            except ssl.SSLError as exc:
+                raise RuntimeError(self._format_transport_error(exc)) from exc
+            except URLError as exc:
+                if attempt == 0 and self._should_retry_transport_error(exc.reason):
+                    last_error = exc
+                    continue
+                raise RuntimeError(self._format_transport_error(exc.reason)) from exc
+            except OSError as exc:
+                if attempt == 0 and self._should_retry_transport_error(exc):
+                    last_error = exc
+                    continue
+                raise RuntimeError(self._format_transport_error(exc)) from exc
+        if last_error is not None:  # pragma: no cover - defensive
+            raise RuntimeError(self._format_transport_error(last_error)) from last_error
+        raise RuntimeError(self._format_transport_error("request failed"))
 
     def _headers(self) -> dict[str, str]:
         """构建请求头。"""
@@ -198,6 +259,8 @@ class SmartAccessAiGenerator:
             '"action":"click","view_id":"main","anchor_id":"anchor_id","value":null,'
             '"match_mode":"none","wait_seconds":1.0}],'
             '"retry_policy":{"max_attempts":2}}\n'
+            "match_mode must be one of contains, equals, regex, not_empty, none; "
+            "never use exact.\n"
             "Allowed actions: click, type, hotkey, press_enter, wait.\n"
             "For action=wait, omit anchor_id and set wait_seconds.\n"
             "For OCR checks, use expected_text, match_mode, and timeout_seconds on "
@@ -677,6 +740,53 @@ class SmartAccessAiGenerator:
         if not parts.scheme or not parts.netloc:
             return ""
         return f"{parts.scheme}://{parts.netloc}"
+
+    @staticmethod
+    def _https_context() -> ssl.SSLContext | None:
+        """Build a stable HTTPS context that ignores broken system CA bundles."""
+
+        if certifi is None:
+            return ssl.create_default_context()
+        cafile = certifi.where()
+        if not cafile:
+            return ssl.create_default_context()
+        try:
+            return ssl.create_default_context(cafile=cafile)
+        except ssl.SSLError:
+            return ssl.create_default_context()
+
+    @staticmethod
+    def _format_transport_error(reason: Any) -> str:
+        """Format network/TLS failures into a readable message."""
+
+        if isinstance(reason, tuple) and reason:
+            reason = reason[0]
+        text = str(reason).strip()
+        if isinstance(reason, ssl.SSLError) or "ASN1" in text or "PEM" in text:
+            return (
+                "TLS/SSL 证书加载失败: "
+                f"{text}。请检查系统证书链、SSL_CERT_FILE/SSL_CERT_DIR，"
+                "或使用可用的 CA bundle。"
+            )
+        return text
+
+    @staticmethod
+    def _should_retry_transport_error(reason: Any) -> bool:
+        """Return True for transient connection-reset style failures."""
+
+        if isinstance(reason, RemoteDisconnected):
+            return True
+        if isinstance(reason, ConnectionResetError):
+            return True
+        if isinstance(reason, OSError) and getattr(reason, "errno", None) == 10054:
+            return True
+        return False
+
+    @staticmethod
+    def _format_timeout_error(timeout_seconds: float) -> str:
+        """Format request timeouts with the configured budget."""
+
+        return f"AI request timed out after {timeout_seconds:g}s"
 
     @staticmethod
     def _format_http_error(code: int, detail: str) -> str:
