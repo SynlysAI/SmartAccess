@@ -32,10 +32,13 @@ def validate_workflow_against_anchors(
         issues.append("workflow.metadata.anchor_profile must match anchors.profile_id")
 
     for step in workflow.steps:
-        if step.action == "wait":
+        is_wait = step.action == "wait"
+        if is_wait and step.match_mode == "none" and not step.anchor_id:
             _validate_wait_step(step.id, step.wait_seconds, issues)
             continue
-        if step.action not in EXECUTABLE_WORKFLOW_ACTIONS:
+        if is_wait and step.wait_seconds is not None:
+            _validate_wait_step(step.id, step.wait_seconds, issues)
+        if not is_wait and step.action not in EXECUTABLE_WORKFLOW_ACTIONS:
             issues.append(f"step {step.id}: unsupported action '{step.action}'")
             continue
         if not step.anchor_id:
@@ -43,11 +46,15 @@ def validate_workflow_against_anchors(
             continue
         anchor = anchors.anchor_for_view(step.view_id, step.anchor_id)
         if anchor is None:
-            anchor = anchors.anchor_map().get(step.anchor_id)
-        if anchor is None:
-            issues.append(f"step {step.id}: unknown anchor_id '{step.anchor_id}'")
+            if anchors.anchor_map().get(step.anchor_id) is not None:
+                issues.append(
+                    f"step {step.id}: anchor_id '{step.anchor_id}' is not in "
+                    f"view '{step.view_id or 'main'}'"
+                )
+            else:
+                issues.append(f"step {step.id}: unknown anchor_id '{step.anchor_id}'")
             continue
-        if step.action not in anchor.supported_actions:
+        if not is_wait and step.action not in anchor.supported_actions:
             issues.append(
                 f"step {step.id}: action '{step.action}' not supported by "
                 f"anchor '{step.anchor_id}'"
