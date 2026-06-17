@@ -247,8 +247,10 @@ QComboBox#TableComboBox, QComboBox#ConditionMode {{
     padding-left: 6px;
     padding-right: 6px;
 }}
-QDoubleSpinBox#TableSpinBox, QDoubleSpinBox#ConditionTimeout {{
-    padding-right: 20px;
+QDoubleSpinBox#TableSpinBox,
+QDoubleSpinBox#ConditionTimeout,
+QDoubleSpinBox#ConditionConfidence {{
+    padding: 2px 2px 2px 6px;
 }}
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
     subcontrol-origin: border;
