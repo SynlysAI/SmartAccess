@@ -10,6 +10,7 @@ from typing import Any
 from smartaccess.runtime.application.ports import (
     ArtifactStore,
     AutomationProvider,
+    OcrReading,
     PlatformClient,
     VisionProvider,
     WindowInfo,
@@ -39,7 +40,7 @@ from smartaccess.runtime.application.workspace_service import (
 from smartaccess.runtime.domain.run_session import RunSession, RunStep
 from smartaccess.runtime.orchestration import Orchestrator
 from smartaccess.shared.config.settings import AppSettings
-from smartaccess.shared.contracts.anchors import AnchorsContract
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorsContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 from smartaccess.shared.events.bus import EventBus, Subscriber
 from smartaccess.shared.logging import get_logger
@@ -267,6 +268,20 @@ class RuntimeFacade:
         """
 
         return self._anchors.load_capture(device_id, view_id=view_id)
+
+    def preview_anchor_ocr(
+        self,
+        *,
+        capture_data: bytes,
+        anchor_payload: dict[str, Any],
+    ) -> OcrReading:
+        """对一张校准截图中的单个锚点执行一次 OCR 预览。"""
+
+        anchor = AnchorDefinition.model_validate(anchor_payload)
+        method = getattr(self._vision, "read_roi_text", None)
+        if not callable(method):
+            raise RuntimeError("当前视觉提供者不支持锚点 OCR 预览")
+        return method(screenshot=capture_data, anchor=anchor, roi=None)
 
     def draft_instrument_from_prompt(
         self,

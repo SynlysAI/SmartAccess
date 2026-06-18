@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QApplication, QPlainTextEdit  # noqa: E402
 
 from smartaccess.bootstrap import build_runtime_facade  # noqa: E402
 from smartaccess.desktop.widgets.anchor_table import AnchorRow  # noqa: E402
+from smartaccess.runtime.application.ports import WindowInfo  # noqa: E402
 from smartaccess.shared.config.settings import AppSettings  # noqa: E402
 from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowMetadata, WorkflowStep  # noqa: E402
 from smartaccess.shared.events.runtime import RuntimeEventName  # noqa: E402
@@ -112,6 +113,39 @@ def test_calibration_ai_requires_device_id_and_title(tmp_path: Path, monkeypatch
     assert "窗口标题" in messages[-1][1]
 
 
+def test_calibration_scan_refreshes_all_windows_after_selection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _app()
+    from smartaccess.desktop.pages.calibration_page import CalibrationPage
+
+    page = CalibrationPage(_facade(tmp_path))
+    monkeypatch.setattr(
+        page._vm,
+        "discover_windows",
+        lambda: [
+            WindowInfo(title="Calculator", width=612, height=750, matched=True, hwnd=1),
+            WindowInfo(title="WeChat", width=1290, height=1175, matched=True, hwnd=2),
+        ],
+    )
+
+    page._discover()
+    page._windows.setCurrentRow(0)
+    assert page._title_contains.text() == "Calculator"
+    assert page._selected_hwnd == 1
+    assert page._capture_btn.isEnabled()
+
+    page._discover()
+
+    labels = [page._windows.item(index).text() for index in range(page._windows.count())]
+    assert len(labels) == 2
+    assert any("Calculator" in label for label in labels)
+    assert any("WeChat" in label for label in labels)
+    assert page._selected_hwnd is None
+    assert not page._capture_btn.isEnabled()
+
+
 def test_calibration_save_preserves_main_capture_when_current_view_is_dialog(
     tmp_path: Path,
     monkeypatch,
@@ -162,6 +196,131 @@ def test_calibration_save_preserves_main_capture_when_current_view_is_dialog(
     assert profile is not None
     assert profile.window_signature.capture_width == 800
     assert profile.window_signature.capture_height == 600
+
+
+def test_calibration_ai_overwrites_current_view_without_resetting_to_main(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _app()
+    from smartaccess.desktop.pages.calibration_page import CalibrationPage
+    from smartaccess.shared.contracts.anchors import AnchorsContract
+
+    page = CalibrationPage(_facade(tmp_path))
+    monkeypatch.setattr(
+        "smartaccess.desktop.pages.calibration_page.QMessageBox.information",
+        lambda *_args: None,
+    )
+
+    main_capture = b"main-capture"
+    view_capture = b"view-new-capture"
+    main_anchor = _anchor_payload("main_saved")
+    old_view_anchor = _anchor_payload("old_view_anchor")
+    ai_anchor = _anchor_payload("ai_generated")
+    page._view_states = {
+        "main": {
+            "title": "Main",
+            "capture": main_capture,
+            "anchors": [main_anchor],
+            "capture_width": 800,
+            "capture_height": 600,
+        },
+        "view_new": {
+            "title": "Dialog",
+            "capture": view_capture,
+            "anchors": [old_view_anchor],
+            "capture_width": None,
+            "capture_height": None,
+        },
+    }
+    page._current_view_id = "view_new"
+    page._latest_capture = view_capture
+    page._load_view_state("view_new")
+    page._ai_target_view_id = "view_new"
+
+    result = AnchorsContract.model_validate(
+        {
+            "profile_id": "multi_device",
+            "window_signature": {
+                "title_contains": "Main",
+                "screenshot_size": {"width": 800, "height": 600},
+            },
+            "views": [
+                {
+                    "view_id": "main",
+                    "window_signature": {
+                        "title_contains": "Main",
+                        "screenshot_size": {"width": 800, "height": 600},
+                    },
+                    "screenshot_size": {"width": 800, "height": 600},
+                    "anchors": [ai_anchor],
+                }
+            ],
+        }
+    )
+
+    page._on_ai_assist_done(result)
+
+    assert page._current_view_id == "view_new"
+    assert page._view_states["main"]["anchors"] == [main_anchor]
+    assert [
+        anchor["id"] for anchor in page._view_states["view_new"]["anchors"]
+    ] == ["ai_generated"]
+    assert page._view_states["view_new"]["capture_width"] == 800
+    assert page._view_states["view_new"]["capture_height"] == 600
+    assert page._latest_capture == view_capture
+    assert [row.anchor_id for row in page._table.row_models()] == ["ai_generated"]
+
+
+def test_calibration_preview_current_view_ocr_reads_observe_anchor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _app()
+    from smartaccess.desktop.pages.calibration_page import CalibrationPage
+
+    facade = _facade(tmp_path)
+    page = CalibrationPage(facade)
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "smartaccess.desktop.pages.calibration_page.QMessageBox.information",
+        lambda _parent, title, text: shown.append((title, text)),
+    )
+
+    capture = b"current-dialog-capture"
+    anchor = _anchor_payload("dialog_text")
+    anchor["observe_region"] = anchor["action_region"]
+    page._view_states = {
+        "main": {
+            "title": "Main",
+            "capture": b"main-capture",
+            "anchors": [],
+            "capture_width": 800,
+            "capture_height": 600,
+        },
+        "dialog_done": {
+            "title": "Dialog",
+            "capture": capture,
+            "anchors": [anchor],
+            "capture_width": 800,
+            "capture_height": 600,
+        },
+    }
+    page._current_view_id = "dialog_done"
+    page._load_view_state("dialog_done")
+    monkeypatch.setattr(
+        page._vm,
+        "preview_anchor_ocr",
+        lambda *, capture_data, anchor_payload: (
+            "实验结束" if capture_data == capture and anchor_payload["id"] == "dialog_text" else ""
+        ),
+    )
+
+    page._preview_current_view_ocr()
+
+    assert shown
+    assert shown[-1][0] == "OCR预览"
+    assert "实验结束" in shown[-1][1]
 
 
 def test_workflow_ai_requires_workflow_id_and_device(tmp_path: Path, monkeypatch) -> None:

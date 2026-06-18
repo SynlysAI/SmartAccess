@@ -12,6 +12,7 @@ from smartaccess.shared.contracts.anchors import (
     AnchorDefinition,
     AnchorRegion,
     AnchorsContract,
+    ExceptionRule,
     NormalizedRegion,
     PixelRegion,
     SIMPLIFIED_ACTIONS,
@@ -117,6 +118,10 @@ class AnchorService:
             保存路径。
         """
 
+        profile.exception_rules = [
+            ExceptionRule.model_validate(rule)
+            for rule in profile.exception_rules
+        ]
         self._profiles[profile.profile_id] = profile
         path = dump_yaml_contract(profile, self._profile_path(profile.profile_id))
         self._logger.info("锚点配置已保存: profile_id=%s, 锚点数=%d",

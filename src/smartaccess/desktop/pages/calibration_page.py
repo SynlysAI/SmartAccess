@@ -32,7 +32,11 @@ from smartaccess.runtime.adapters.window_scanner import (
     capture_metadata,
 )
 from smartaccess.runtime.application.facade import RuntimeFacade
-from smartaccess.shared.contracts.anchors import AnchorsContract
+from smartaccess.shared.contracts.anchors import (
+    AnchorDefinition,
+    AnchorsContract,
+    AnchorView,
+)
 
 DEFAULT_VIEW_ID = "main"
 
@@ -56,6 +60,7 @@ class CalibrationPage(QWidget):
         self._latest_capture: bytes | None = None
         self._latest_capture_metadata: dict[str, int] = {}
         self._current_view_id = DEFAULT_VIEW_ID
+        self._ai_target_view_id: str | None = None
         self._view_states: dict[str, dict] = {
             DEFAULT_VIEW_ID: {
                 "title": "",
@@ -196,6 +201,10 @@ class CalibrationPage(QWidget):
         self._ai_btn.setObjectName("TableToolbarButton")
         self._ai_btn.clicked.connect(self._ai_assist)
         row.addWidget(self._ai_btn)
+        ocr_btn = QPushButton("OCR预览")
+        ocr_btn.setObjectName("TableToolbarButton")
+        ocr_btn.clicked.connect(self._preview_current_view_ocr)
+        row.addWidget(ocr_btn)
         row.addStretch(1)
         layout.addLayout(row)
         self._ai_busy = AiBusyOverlay()
@@ -265,6 +274,42 @@ class CalibrationPage(QWidget):
         self._canvas.load_image(data)
         self._store_current_view()
         self._refresh_all_roi_labels()
+
+    def _preview_current_view_ocr(self) -> None:
+        """对当前视图第一个 OCR 锚点做一次识别预览。"""
+
+        try:
+            anchors = self._collect_anchors()
+        except ValueError as exc:
+            QMessageBox.warning(self, "OCR预览失败", str(exc))
+            return
+        anchor = next(
+            (item for item in anchors if item.get("observe_region") is not None),
+            None,
+        )
+        if anchor is None:
+            QMessageBox.warning(self, "OCR预览失败", "当前视图没有开启 OCR 的锚点。")
+            return
+        capture_data = self._latest_capture
+        if capture_data is None:
+            state = self._view_states.get(self._current_view_id) or {}
+            capture_data = state.get("capture")
+        if capture_data is None:
+            QMessageBox.warning(self, "OCR预览失败", "请先刷新当前视图截图。")
+            return
+        try:
+            text = self._vm.preview_anchor_ocr(
+                capture_data=capture_data,
+                anchor_payload=anchor,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "OCR预览失败", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "OCR预览",
+            f"锚点：{anchor.get('id')}\n识别文本：{text or '-'}",
+        )
 
     def _restore_page_focus(self) -> None:
         """截图后把焦点切回 SmartAccess 页面。"""
@@ -459,6 +504,7 @@ class CalibrationPage(QWidget):
                 "mime_type": "image/png",
                 "data": base64.b64encode(self._latest_capture).decode("ascii"),
             }
+        self._ai_target_view_id = self._current_view_id
 
         self._ai_btn.setEnabled(False)
         self._ai_btn.setText("AI生成中")
@@ -477,12 +523,17 @@ class CalibrationPage(QWidget):
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI辅助接入")
         self._ai_busy.set_busy(False)
-        self._load_profile(result, capture_data=self._latest_capture)
+        target_view_id = self._ai_target_view_id or self._current_view_id
+        applied_count = self._apply_ai_profile_to_view(
+            result,
+            target_view_id=target_view_id,
+        )
+        self._ai_target_view_id = None
         reasoning = self._vm.ai_reasoning()
         QMessageBox.information(
             self,
             "AI建议已加载",
-            f"已生成 {len(result.anchors)} 个锚点。\n\n{reasoning[:800]}",
+            f"已生成 {applied_count} 个锚点。\n\n{reasoning[:800]}",
         )
 
     def _on_ai_assist_error(self, msg: str) -> None:
@@ -491,6 +542,7 @@ class CalibrationPage(QWidget):
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI辅助接入")
         self._ai_busy.set_busy(False)
+        self._ai_target_view_id = None
         QMessageBox.critical(self, "AI生成失败", msg)
 
     def _require_device_fields(
@@ -607,6 +659,66 @@ class CalibrationPage(QWidget):
         for anchor in state.get("anchors") or []:
             self._load_anchor_payload(anchor)
         self._refresh_all_roi_labels()
+
+    def _apply_ai_profile_to_view(
+        self,
+        profile: AnchorsContract,
+        *,
+        target_view_id: str,
+    ) -> int:
+        """Apply an AI anchor draft to one view without replacing the profile."""
+
+        ai_view = self._ai_view_for_target(profile, target_view_id)
+        anchor_models = ai_view.anchors if ai_view is not None else profile.anchors
+        anchors = self._anchor_payloads(anchor_models)
+        existing = self._view_states.get(target_view_id) or {}
+        width = existing.get("capture_width")
+        height = existing.get("capture_height")
+        if (width is None or height is None) and ai_view is not None:
+            if ai_view.screenshot_size is not None:
+                width = ai_view.screenshot_size.width if width is None else width
+                height = ai_view.screenshot_size.height if height is None else height
+            if ai_view.window_signature is not None:
+                width = ai_view.window_signature.capture_width if width is None else width
+                height = ai_view.window_signature.capture_height if height is None else height
+        if (width is None or height is None) and profile.window_signature is not None:
+            width = profile.window_signature.capture_width if width is None else width
+            height = profile.window_signature.capture_height if height is None else height
+        if width is None or height is None:
+            source_width, source_height = self._canvas.source_size()
+            width = source_width if width is None else width
+            height = source_height if height is None else height
+
+        self._view_states[target_view_id] = {
+            "title": existing.get("title") or self._title_contains.text().strip(),
+            "capture": existing.get("capture"),
+            "anchors": anchors,
+            "capture_width": width,
+            "capture_height": height,
+        }
+        self._refresh_views()
+        if target_view_id == self._current_view_id:
+            self._load_view_state(target_view_id)
+        return len(anchors)
+
+    def _ai_view_for_target(
+        self,
+        profile: AnchorsContract,
+        target_view_id: str,
+    ) -> AnchorView | None:
+        """Return the matching AI view, falling back to default main output."""
+
+        view_map = profile.view_map()
+        return view_map.get(target_view_id) or view_map.get(DEFAULT_VIEW_ID)
+
+    @staticmethod
+    def _anchor_payloads(anchors: list[AnchorDefinition]) -> list[dict]:
+        """Convert anchor models to UI state payloads."""
+
+        return [
+            anchor.model_dump(mode="json", exclude_none=True)
+            for anchor in anchors
+        ]
 
     def _collect_views_payload(
         self,

@@ -54,6 +54,7 @@ class WorkflowPage(QWidget):
         self._vm = WorkflowViewModel(facade, self)
         self._current: WorkflowContract | None = None
         self._anchor_ids: list[str] = []
+        self._anchors_by_view: dict[str, list[str]] = {}
         self._view_ids: list[str] = ["main"]
         self._last_ai_prompt = ""
 
@@ -189,6 +190,14 @@ class WorkflowPage(QWidget):
         wait_btn.setObjectName("TableToolbarButton")
         wait_btn.clicked.connect(self._insert_wait)
         row.addWidget(wait_btn)
+        wait_ocr_btn = QPushButton("等待OCR")
+        wait_ocr_btn.setObjectName("TableToolbarButton")
+        wait_ocr_btn.clicked.connect(self._insert_wait_ocr)
+        row.addWidget(wait_ocr_btn)
+        manual_btn = QPushButton("人工确认")
+        manual_btn.setObjectName("TableToolbarButton")
+        manual_btn.clicked.connect(self._insert_manual_confirm)
+        row.addWidget(manual_btn)
         return row
 
     def _build_result_box(self) -> QWidget:
@@ -270,10 +279,29 @@ class WorkflowPage(QWidget):
         """设备变化时刷新锚点列表。"""
 
         profile = self._vm.get_anchor_profile(self._anchor_profile.currentData())
-        self._anchor_ids = [anchor.id for anchor in profile.anchors] if profile else []
         self._view_ids = [view.view_id for view in profile.views] if profile else ["main"]
+        self._anchors_by_view = (
+            {
+                view.view_id: [anchor.id for anchor in view.anchors]
+                for view in profile.views
+            }
+            if profile
+            else {}
+        )
+        view_anchor_ids = [
+            anchor_id
+            for anchor_ids in self._anchors_by_view.values()
+            for anchor_id in anchor_ids
+        ]
+        profile_anchor_ids = [anchor.id for anchor in profile.anchors] if profile else []
+        self._anchor_ids = list(dict.fromkeys([*profile_anchor_ids, *view_anchor_ids]))
         if hasattr(self, "_steps"):
-            self._steps.set_steps(self._steps.rows(), self._anchor_ids, self._view_ids)
+            self._steps.set_steps(
+                self._steps.rows(),
+                self._anchor_ids,
+                self._view_ids,
+                anchors_by_view=self._anchors_by_view,
+            )
 
     def _new_workflow(self) -> None:
         """创建空工作流编辑状态。"""
@@ -284,7 +312,12 @@ class WorkflowPage(QWidget):
         self._lifecycle.setCurrentIndex(0)
         self._template_id.clear()
         self._template_version.clear()
-        self._steps.set_steps([], self._anchor_ids, self._view_ids)
+        self._steps.set_steps(
+            [],
+            self._anchor_ids,
+            self._view_ids,
+            anchors_by_view=self._anchors_by_view,
+        )
         self._clear_result()
 
     def _select_workflow(self) -> None:
@@ -340,7 +373,12 @@ class WorkflowPage(QWidget):
             )
             for step in workflow.steps
         ]
-        self._steps.set_steps(rows, self._anchor_ids, self._view_ids)
+        self._steps.set_steps(
+            rows,
+            self._anchor_ids,
+            self._view_ids,
+            anchors_by_view=self._anchors_by_view,
+        )
         self._clear_result()
 
     def _add_action(self) -> None:
@@ -361,6 +399,20 @@ class WorkflowPage(QWidget):
         row = self._steps.currentRow()
         insert_at = self._steps.rowCount() if row < 0 else row + 1
         self._steps.insert_wait(insert_at)
+
+    def _insert_wait_ocr(self) -> None:
+        """在当前选择行之后插入等待 OCR 锚点步骤。"""
+
+        row = self._steps.currentRow()
+        insert_at = self._steps.rowCount() if row < 0 else row + 1
+        self._steps.insert_wait_ocr(insert_at)
+
+    def _insert_manual_confirm(self) -> None:
+        """在当前选择行之后插入人工确认步骤。"""
+
+        row = self._steps.currentRow()
+        insert_at = self._steps.rowCount() if row < 0 else row + 1
+        self._steps.insert_manual_confirm(insert_at)
 
     def _save(self) -> None:
         """保存当前工作流。"""
