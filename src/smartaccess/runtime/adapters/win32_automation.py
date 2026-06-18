@@ -73,17 +73,20 @@ class Win32AutomationProvider:
         self._hwnd = self._find_hwnd(title)
 
     def configure_view(self, view: AnchorView | None) -> None:
-        """配置当前动作使用的窗口视图。"""
+        """配置当前动作使用的视图锚点集合。
+
+        多视图在运行时只用于选择锚点集合，目标窗口始终保持为
+        configure_profile 定位到的主窗口。主窗口关联的模态弹窗会由
+        截图层合并进同一画布。
+        """
 
         self._view = view
-        signature = view.window_signature if view is not None else None
-        self._hwnd = self._find_hwnd(
-            signature.title_contains if signature is not None else None
-        )
 
     def window_present(self, title_contains: str | None) -> bool:
         """判断目标窗口是否存在。"""
 
+        if self._window_alive(self._hwnd):
+            return True
         self._hwnd = self._find_hwnd(title_contains)
         return self._hwnd is not None
 
@@ -170,6 +173,8 @@ class Win32AutomationProvider:
         self._user32.SendInput.restype = wintypes.UINT
         self._user32.GetWindow.argtypes = (wintypes.HWND, wintypes.UINT)
         self._user32.GetWindow.restype = wintypes.HWND
+        self._user32.IsWindow.argtypes = (wintypes.HWND,)
+        self._user32.IsWindow.restype = wintypes.BOOL
 
     def _find_hwnd(self, title_contains: str | None) -> int | None:
         """查找目标窗口句柄。"""
@@ -213,6 +218,22 @@ class Win32AutomationProvider:
         if self._user32.IsIconic(hwnd):
             self._user32.ShowWindow(hwnd, SW_RESTORE)
             time.sleep(0.05)
+
+    def _window_alive(self, hwnd: int | None) -> bool:
+        """返回缓存的主窗口句柄是否仍可用。
+
+        Args:
+            hwnd: 缓存窗口句柄。
+
+        Returns:
+            句柄有效且窗口可见时返回 True。
+        """
+
+        if not hwnd:
+            return False
+        if not self._user32.IsWindow(hwnd):
+            return False
+        return bool(self._user32.IsWindowVisible(hwnd))
 
     def _focus_interaction_window(self) -> int | None:
         """前置当前交互窗口，弹窗存在时优先前置弹窗。
@@ -344,8 +365,6 @@ class Win32AutomationProvider:
         return rect.left, rect.top
 
     def _active_signature(self):
-        if self._view is not None and self._view.window_signature is not None:
-            return self._view.window_signature
         return self._profile.window_signature if self._profile is not None else None
 
     def _active_match_mode(self) -> str | None:

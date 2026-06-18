@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from smartaccess.runtime.adapters.win32_automation import Win32AutomationProvider
+from smartaccess.shared.contracts.anchors import AnchorView, AnchorsContract
 
 
 @dataclass(slots=True)
@@ -63,3 +64,44 @@ def test_win32_window_present_includes_disabled_modal_owner() -> None:
         ("contains", "Clash for Windows", True),
     ]
     assert provider._hwnd == 1003
+
+
+def test_win32_configure_view_keeps_main_window_handle() -> None:
+    provider = object.__new__(Win32AutomationProvider)
+    provider._scanner = _FakeScanner()
+    provider._view = None
+    provider._profile = None
+    provider._hwnd = None
+    profile = AnchorsContract.model_validate(
+        {
+            "profile_id": "app",
+            "window_signature": {"title_contains": "Main Window"},
+            "views": [
+                {
+                    "view_id": "main",
+                    "window_signature": {"title_contains": "Main Window"},
+                    "anchors": [],
+                },
+                {
+                    "view_id": "dialog",
+                    "window_signature": {"title_contains": "Dialog Window"},
+                    "anchors": [],
+                },
+            ],
+        }
+    )
+    dialog = AnchorView.model_validate(
+        {
+            "view_id": "dialog",
+            "window_signature": {"title_contains": "Dialog Window"},
+            "anchors": [],
+        }
+    )
+
+    provider.configure_profile(profile)
+    provider._scanner.calls.clear()
+    provider.configure_view(dialog)
+
+    assert provider._hwnd == 1002
+    assert provider._view is dialog
+    assert provider._scanner.calls == []

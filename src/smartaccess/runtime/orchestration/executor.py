@@ -65,14 +65,18 @@ class Executor:
             raise WindowMissingError(f"未找到目标窗口: {title_contains}")
 
     def configure_step_view(self, step: WorkflowStep) -> None:
-        """Configure automation provider for the step's calibrated view."""
+        """配置步骤视图中的锚点集合，不切换运行时目标窗口。"""
 
         if self._profile is None:
             return
         self.configure_view_id(step.view_id)
 
     def configure_view_id(self, view_id: str | None) -> None:
-        """Configure automation provider for a calibrated view id."""
+        """配置步骤使用的视图锚点集合。
+
+        Args:
+            view_id: 工作流步骤选择的视图 ID。
+        """
 
         if self._profile is None:
             return
@@ -131,10 +135,9 @@ class Executor:
         if anchor is None:
             raise AnchorMissingError(f"未知锚点: {step.anchor_id}")
         self.configure_step_view(step)
-        view = self._profile.view_map().get(step.view_id or "main") if self._profile else None
         title = (
-            view.window_signature.title_contains
-            if view is not None and view.window_signature is not None
+            self._profile.window_signature.title_contains
+            if self._profile is not None and self._profile.window_signature is not None
             else None
         )
         self.ensure_window(title)

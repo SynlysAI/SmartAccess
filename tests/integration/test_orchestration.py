@@ -95,7 +95,7 @@ def _facade_with_dialog_view(tmp_path: Path):
             },
             {
                 "view_id": "dialog_reset_done",
-                "window_signature": {"title_contains": "ElectroChem Console"},
+                "window_signature": {"title_contains": "Dialog Title"},
                 "screenshot_size": {"width": 1000, "height": 800},
                 "anchors": [
                     {
@@ -321,6 +321,36 @@ def test_wait_step_with_anchor_polls_ocr_without_running_action(tmp_path: Path) 
     assert trace[0].actual_text == "复位结束"
     assert trace[0].matched is True
     assert trace[0].screenshot_path
+
+
+def test_multiview_runtime_keeps_main_window_as_execution_target(tmp_path: Path) -> None:
+    facade = _facade_with_dialog_view(tmp_path)
+    workflow = facade.save_workflow(
+        WorkflowContract(
+            metadata=WorkflowMetadata(
+                workflow_id="wf_dialog_view_click",
+                author="test",
+                anchor_profile="d1",
+                lifecycle_state="Draft",
+            ),
+            steps=[
+                WorkflowStep(
+                    id="click_dialog_anchor",
+                    action="click",
+                    view_id="dialog_reset_done",
+                    anchor_id="reset_done_text",
+                    match_mode="none",
+                    wait_seconds=0.0,
+                )
+            ],
+        )
+    )
+
+    session = facade.start_run(workflow=workflow, background=False)
+    automation = facade.providers()["automation"]
+
+    assert session.status == RunSessionStatus.COMPLETED
+    assert automation.actions == [("click", "reset_done_text", None)]
 
 
 def test_exception_popup_rule_blocks_run_before_action(tmp_path: Path) -> None:

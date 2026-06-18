@@ -490,14 +490,6 @@ class LocalVisionProvider:
     def _resolved_roi(self, anchor: AnchorDefinition, img: np.ndarray) -> PixelRegion | None:
         height, width = img.shape[:2]
         if anchor.observe_region is not None:
-            normalized = anchor.observe_region.normalized
-            if width > 0 and height > 0:
-                return PixelRegion(
-                    x=normalized.x * width,
-                    y=normalized.y * height,
-                    width=normalized.width * width,
-                    height=normalized.height * height,
-                )
             return anchor.observe_region.pixel
         return resolve_anchor_roi(
             anchor,
