@@ -298,6 +298,21 @@ class RuntimeFacade:
 
         return self._anchors.load_capture(device_id, view_id=view_id)
 
+    def delete_instrument_capture(
+        self,
+        device_id: str,
+        *,
+        view_id: str | None = None,
+    ) -> None:
+        """删除设备校准截图。
+
+        Args:
+            device_id: 设备 ID。
+            view_id: 视图 ID；为空或 main 时删除主截图。
+        """
+
+        self._anchors.delete_capture(device_id, view_id=view_id)
+
     def preview_anchor_ocr(
         self,
         *,

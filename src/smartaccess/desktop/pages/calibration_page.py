@@ -155,6 +155,10 @@ class CalibrationPage(QWidget):
         update_view_btn.clicked.connect(self._store_current_view)
         view_row.addWidget(update_view_btn)
         layout.addLayout(view_row)
+        delete_view_btn = QPushButton("删除视图")
+        delete_view_btn.setObjectName("Secondary")
+        delete_view_btn.clicked.connect(self._delete_current_view)
+        layout.addWidget(delete_view_btn)
         self._refresh_views()
 
         window_title = QLabel("窗口")
@@ -684,6 +688,41 @@ class CalibrationPage(QWidget):
         self._store_current_view(view_id=old_view_id)
         self._current_view_id = str(view_id)
         self._load_view_state(self._current_view_id)
+
+    def _delete_current_view(self) -> None:
+        """删除当前非 main 视图并切回 main。"""
+
+        view_id = self._current_view_id
+        if view_id == DEFAULT_VIEW_ID:
+            QMessageBox.warning(self, "无法删除", "main 视图不能删除。")
+            return
+        if view_id not in self._view_states:
+            return
+        reply = QMessageBox.question(
+            self,
+            "删除视图",
+            f"确认删除视图 {view_id}？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._view_states.pop(view_id, None)
+        self._delete_view_capture(view_id)
+        self._current_view_id = DEFAULT_VIEW_ID
+        self._refresh_views()
+        self._load_view_state(DEFAULT_VIEW_ID)
+
+    def _delete_view_capture(self, view_id: str) -> None:
+        """删除已保存设备中的指定视图截图。"""
+
+        device_id = self._device_id.text().strip()
+        if not device_id or view_id == DEFAULT_VIEW_ID:
+            return
+        try:
+            self._vm.delete_instrument_capture(device_id, view_id=view_id)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "截图清理失败", str(exc))
 
     def _store_current_view(
         self,

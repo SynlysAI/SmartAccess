@@ -204,6 +204,58 @@ def test_calibration_save_preserves_main_capture_when_current_view_is_dialog(
     assert profile.view_map()["dialog_confirm"].window_signature.title_contains == "Dialog"
 
 
+def test_calibration_delete_current_view_removes_state_and_capture(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _app()
+    from smartaccess.desktop.pages.calibration_page import CalibrationPage
+    from PyQt6.QtWidgets import QMessageBox
+
+    facade = _facade(tmp_path)
+    page = CalibrationPage(facade)
+    facade.save_instrument_capture(
+        "multi_device",
+        b"dialog-capture",
+        view_id="dialog_confirm",
+    )
+    monkeypatch.setattr(
+        "smartaccess.desktop.pages.calibration_page.QMessageBox.question",
+        lambda *_args: QMessageBox.StandardButton.Yes,
+    )
+    page._device_id.setText("multi_device")
+    page._view_states = {
+        "main": {
+            "title": "Main",
+            "capture": b"main-capture",
+            "anchors": [],
+            "capture_width": 800,
+            "capture_height": 600,
+            "capture_metadata": {},
+            "capture_windows": [],
+        },
+        "dialog_confirm": {
+            "title": "Dialog",
+            "capture": b"dialog-capture",
+            "anchors": [_anchor_payload("ok")],
+            "capture_width": 360,
+            "capture_height": 220,
+            "capture_metadata": {},
+            "capture_windows": [],
+        },
+    }
+    page._current_view_id = "dialog_confirm"
+
+    page._delete_current_view()
+
+    assert page._current_view_id == "main"
+    assert "dialog_confirm" not in page._view_states
+    assert facade.load_instrument_capture(
+        "multi_device",
+        view_id="dialog_confirm",
+    ) is None
+
+
 def test_calibration_ai_overwrites_current_view_without_resetting_to_main(
     tmp_path: Path,
     monkeypatch,

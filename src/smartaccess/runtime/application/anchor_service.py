@@ -205,6 +205,23 @@ class AnchorService:
             return None
         return path.read_bytes()
 
+    def delete_capture(self, profile_id: str, *, view_id: str | None = None) -> None:
+        """删除指定设备视图的校准截图。
+
+        Args:
+            profile_id: 锚点配置 ID。
+            view_id: 视图 ID；为空或 main 时删除主截图。
+        """
+
+        path = self._capture_path(profile_id, view_id=view_id)
+        if view_id and view_id != "main":
+            view_dir = path.parent
+            if view_dir.exists():
+                shutil.rmtree(view_dir)
+            return
+        if path.exists():
+            path.unlink()
+
     def _profile_path(self, profile_id: str) -> Path:
         """返回锚点配置路径。"""
 
