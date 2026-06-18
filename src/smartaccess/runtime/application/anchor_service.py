@@ -65,6 +65,10 @@ class AnchorService:
         capture_height: int | None = None,
         capture_origin_x: int | None = None,
         capture_origin_y: int | None = None,
+        capture_mode: str = "window",
+        capture_screen_origin_x: int | None = None,
+        capture_screen_origin_y: int | None = None,
+        capture_windows: list[dict[str, Any]] | None = None,
         supported_os: list[str] | None = None,
         safety_limits: dict[str, Any] | None = None,
     ) -> AnchorsContract:
@@ -77,8 +81,12 @@ class AnchorService:
             process_name: 可选进程名。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
-            capture_origin_x: 校准截图画布相对主窗口左侧的 X 偏移。
-            capture_origin_y: 校准截图画布相对主窗口顶部的 Y 偏移。
+            capture_origin_x: 兼容旧窗口模式的截图原点 X 偏移。
+            capture_origin_y: 兼容旧窗口模式的截图原点 Y 偏移。
+            capture_mode: 截图坐标模式。
+            capture_screen_origin_x: 校准截图画布在屏幕上的左上角 X。
+            capture_screen_origin_y: 校准截图画布在屏幕上的左上角 Y。
+            capture_windows: 参与截图的窗口元数据。
             supported_os: 支持的操作系统。
             safety_limits: 安全限制。
 
@@ -97,6 +105,10 @@ class AnchorService:
                 },
                 capture_origin_x=capture_origin_x or 0,
                 capture_origin_y=capture_origin_y or 0,
+                capture_mode=capture_mode,
+                capture_screen_origin_x=capture_screen_origin_x,
+                capture_screen_origin_y=capture_screen_origin_y,
+                capture_windows=capture_windows or [],
             ),
             anchors=[self._coerce_anchor(anchor) for anchor in (anchors or [])],
             views=views or [],

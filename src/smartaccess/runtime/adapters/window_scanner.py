@@ -175,6 +175,8 @@ _LAST_CAPTURE_METADATA: dict[str, int] = {
     "window_y": 0,
     "offset_x": 0,
     "offset_y": 0,
+    "width": 0,
+    "height": 0,
 }
 
 
@@ -209,6 +211,8 @@ def capture_window(hwnd: int) -> bytes | None:
         "window_y": int(window_rect.top),
         "offset_x": int(window_rect.left - rect.left),
         "offset_y": int(window_rect.top - rect.top),
+        "width": int(width),
+        "height": int(height),
     }
 
     data = _bitblt_window(rect.left, rect.top, width, height)
@@ -217,6 +221,82 @@ def capture_window(hwnd: int) -> bytes | None:
     if data is None:
         _LAST_CAPTURE_ERROR = CaptureErrorReason.GDI_FAILED
         return None
+    return _raw_to_png(data, width, height)
+
+
+def capture_windows(hwnds: list[int]) -> bytes | None:
+    """按多个窗口的屏幕联合区域截取 PNG 图像。
+
+    Args:
+        hwnds: 参与联合截图的窗口句柄列表。
+
+    Returns:
+        PNG 字节；失败时返回 None。
+    """
+
+    global _LAST_CAPTURE_ERROR, _LAST_CAPTURE_METADATA  # noqa: PLW0603
+    if _USER32 is None or _GDI32 is None:
+        _LAST_CAPTURE_ERROR = CaptureErrorReason.NOT_WINDOWS
+        return None
+    _configure_win32_api()
+    rect = _windows_bounds(hwnds)
+    if rect is None:
+        _LAST_CAPTURE_ERROR = CaptureErrorReason.EMPTY_RECT
+        return None
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+    _LAST_CAPTURE_METADATA = {
+        "origin_x": int(rect.left),
+        "origin_y": int(rect.top),
+        "window_x": int(rect.left),
+        "window_y": int(rect.top),
+        "offset_x": 0,
+        "offset_y": 0,
+        "width": int(width),
+        "height": int(height),
+    }
+    data = _bitblt_window(rect.left, rect.top, width, height)
+    if data is None:
+        _LAST_CAPTURE_ERROR = CaptureErrorReason.GDI_FAILED
+        return None
+    return _raw_to_png(data, width, height)
+
+
+def capture_screen_region(x: int, y: int, width: int, height: int) -> bytes | None:
+    """按屏幕矩形截取 PNG 图像。
+
+    Args:
+        x: 屏幕矩形左上角 X。
+        y: 屏幕矩形左上角 Y。
+        width: 截图宽度。
+        height: 截图高度。
+
+    Returns:
+        PNG 字节；失败时返回 None。
+    """
+
+    global _LAST_CAPTURE_ERROR, _LAST_CAPTURE_METADATA  # noqa: PLW0603
+    if _USER32 is None or _GDI32 is None:
+        _LAST_CAPTURE_ERROR = CaptureErrorReason.NOT_WINDOWS
+        return None
+    if width <= 0 or height <= 0:
+        _LAST_CAPTURE_ERROR = CaptureErrorReason.EMPTY_RECT
+        return None
+    _configure_win32_api()
+    data = _bitblt_window(x, y, width, height)
+    if data is None:
+        _LAST_CAPTURE_ERROR = CaptureErrorReason.GDI_FAILED
+        return None
+    _LAST_CAPTURE_METADATA = {
+        "origin_x": int(x),
+        "origin_y": int(y),
+        "window_x": int(x),
+        "window_y": int(y),
+        "offset_x": 0,
+        "offset_y": 0,
+        "width": int(width),
+        "height": int(height),
+    }
     return _raw_to_png(data, width, height)
 
 
@@ -268,6 +348,36 @@ def _capture_bounds(hwnd: int) -> wintypes.RECT:
 
     enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     _USER32.EnumWindows(enum_proc(_callback), 0)
+    return bounds
+
+
+def _windows_bounds(hwnds: list[int]) -> wintypes.RECT | None:
+    """计算多个窗口的屏幕联合矩形。
+
+    Args:
+        hwnds: 窗口句柄列表。
+
+    Returns:
+        联合矩形；没有有效窗口时返回 None。
+    """
+
+    bounds: wintypes.RECT | None = None
+    for hwnd in dict.fromkeys(hwnds):
+        if not hwnd:
+            continue
+        reason = CaptureErrorReason.from_hwnd(hwnd)
+        if reason is not None:
+            continue
+        rect = _capture_bounds(hwnd)
+        if rect.right <= rect.left or rect.bottom <= rect.top:
+            continue
+        if bounds is None:
+            bounds = wintypes.RECT(rect.left, rect.top, rect.right, rect.bottom)
+            continue
+        bounds.left = min(bounds.left, rect.left)
+        bounds.top = min(bounds.top, rect.top)
+        bounds.right = max(bounds.right, rect.right)
+        bounds.bottom = max(bounds.bottom, rect.bottom)
     return bounds
 
 

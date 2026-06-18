@@ -24,6 +24,18 @@ class CalibrationViewModel(ViewModel):
 
         return self._facade.capture_window(hwnd)
 
+    def capture_windows(self, hwnds: list[int]) -> bytes | None:
+        """截取多个窗口的屏幕联合区域。
+
+        Args:
+            hwnds: 窗口句柄列表。
+
+        Returns:
+            PNG 截图字节；失败时返回 None。
+        """
+
+        return self._facade.capture_windows(hwnds)
+
     def list_instruments(self) -> list[AnchorsContract]:
         """列出已保存设备。"""
 
@@ -102,6 +114,10 @@ class CalibrationViewModel(ViewModel):
         capture_height: int | None,
         capture_origin_x: int | None = None,
         capture_origin_y: int | None = None,
+        capture_mode: str = "window",
+        capture_screen_origin_x: int | None = None,
+        capture_screen_origin_y: int | None = None,
+        capture_windows: list[dict[str, Any]] | None = None,
         capture_data: bytes | None = None,
         view_captures: dict[str, bytes] | None = None,
     ) -> AnchorsContract:
@@ -113,8 +129,12 @@ class CalibrationViewModel(ViewModel):
             anchors: 锚点列表。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
-            capture_origin_x: 校准截图画布相对主窗口左侧的 X 偏移。
-            capture_origin_y: 校准截图画布相对主窗口顶部的 Y 偏移。
+            capture_origin_x: 兼容旧窗口模式的截图原点 X 偏移。
+            capture_origin_y: 兼容旧窗口模式的截图原点 Y 偏移。
+            capture_mode: 截图坐标模式。
+            capture_screen_origin_x: 校准截图画布在屏幕上的左上角 X。
+            capture_screen_origin_y: 校准截图画布在屏幕上的左上角 Y。
+            capture_windows: 参与截图的窗口元数据。
             capture_data: 当前校准截图 PNG 字节。
 
         Returns:
@@ -130,6 +150,10 @@ class CalibrationViewModel(ViewModel):
             capture_height=capture_height,
             capture_origin_x=capture_origin_x,
             capture_origin_y=capture_origin_y,
+            capture_mode=capture_mode,
+            capture_screen_origin_x=capture_screen_origin_x,
+            capture_screen_origin_y=capture_screen_origin_y,
+            capture_windows=capture_windows,
         )
         if capture_data:
             self._facade.save_instrument_capture(profile.profile_id, capture_data)
