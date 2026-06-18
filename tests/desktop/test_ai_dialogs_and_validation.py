@@ -169,6 +169,8 @@ def test_calibration_save_preserves_main_capture_when_current_view_is_dialog(
             "anchors": [_anchor_payload("start")],
             "capture_width": 800,
             "capture_height": 600,
+            "capture_metadata": {},
+            "capture_windows": [],
         },
         "dialog_confirm": {
             "title": "Dialog",
@@ -176,6 +178,8 @@ def test_calibration_save_preserves_main_capture_when_current_view_is_dialog(
             "anchors": [],
             "capture_width": 360,
             "capture_height": 220,
+            "capture_metadata": {},
+            "capture_windows": [],
         },
     }
     page._current_view_id = "dialog_confirm"
@@ -194,8 +198,10 @@ def test_calibration_save_preserves_main_capture_when_current_view_is_dialog(
     )
     profile = facade.get_instrument("multi_device")
     assert profile is not None
+    assert profile.window_signature.title_contains == "Main"
     assert profile.window_signature.capture_width == 800
     assert profile.window_signature.capture_height == 600
+    assert profile.view_map()["dialog_confirm"].window_signature.title_contains == "Dialog"
 
 
 def test_calibration_ai_overwrites_current_view_without_resetting_to_main(
