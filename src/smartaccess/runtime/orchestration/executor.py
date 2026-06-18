@@ -69,7 +69,14 @@ class Executor:
 
         if self._profile is None:
             return
-        view = self._profile.view_map().get(step.view_id or "main")
+        self.configure_view_id(step.view_id)
+
+    def configure_view_id(self, view_id: str | None) -> None:
+        """Configure automation provider for a calibrated view id."""
+
+        if self._profile is None:
+            return
+        view = self._profile.view_map().get(view_id or "main")
         configure = getattr(self._automation, "configure_view", None)
         if callable(configure):
             configure(view)

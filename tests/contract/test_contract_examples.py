@@ -50,6 +50,25 @@ def test_load_core_contract_examples() -> None:
     assert run_trace[1].actual_text == "Status: Running"
 
 
+def test_package_exports_platform_and_eval_contracts() -> None:
+    platform_adapter = PlatformAdapterContract.model_validate(
+        {
+            "base_url": "http://example.test/api",
+            "endpoint_map": {"fetch_template": "/templates/{template_version}"},
+        }
+    )
+    eval_case = EvalCaseContract.model_validate(
+        {
+            "scenario": {"id": "case_01"},
+            "inputs": {},
+            "pass_criteria": ["loads"],
+        }
+    )
+
+    assert platform_adapter.endpoint_map.fetch_template == "/templates/{template_version}"
+    assert eval_case.scenario.id == "case_01"
+
+
 def test_load_eval_harness_cases() -> None:
     case_dir = REPO_ROOT / "ai/harness/evals/cases"
     case_files = sorted(case_dir.glob("*.yaml"))

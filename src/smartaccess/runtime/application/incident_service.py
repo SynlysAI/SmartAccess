@@ -29,6 +29,7 @@ class IncidentService:
         step_id: str,
         incident_type: IncidentType,
         detail: str,
+        emit_blocked: bool = True,
     ) -> Incident:
         """打开一条异常。"""
 
@@ -40,7 +41,7 @@ class IncidentService:
             detail=detail,
         )
         self._incidents[incident.incident_id] = incident
-        if incident.requires_manual_confirm:
+        if emit_blocked and incident.requires_manual_confirm:
             self._event_bus.emit(
                 RuntimeEventName.RUN_BLOCKED,
                 session_id=session_id,

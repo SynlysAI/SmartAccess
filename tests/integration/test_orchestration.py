@@ -5,6 +5,7 @@ from pathlib import Path
 from smartaccess.bootstrap import build_runtime_facade
 from smartaccess.runtime.application.ports import OcrReading
 from smartaccess.runtime.domain.run_session import RunSessionStatus, RunStepStatus
+from smartaccess.shared.contracts.anchors import ExceptionRule
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.contracts.anchors import SafetyLimits
 from smartaccess.shared.contracts.workflow import (
@@ -60,6 +61,69 @@ def _facade(tmp_path: Path):
     profile.safety_limits = SafetyLimits(max_voltage=5.0, min_voltage=0.0)
     facade.save_instrument(profile)
     facade.save_workflow(_workflow())
+    return facade
+
+
+def _facade_with_dialog_view(tmp_path: Path):
+    facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
+    facade.create_calibration(
+        device_id="d1",
+        title_contains="ElectroChem Console",
+        anchors=[],
+        capture_width=1000,
+        capture_height=800,
+        views=[
+            {
+                "view_id": "main",
+                "window_signature": {"title_contains": "ElectroChem Console"},
+                "screenshot_size": {"width": 1000, "height": 800},
+                "anchors": [
+                    {
+                        "id": "start_button",
+                        "action_region": {
+                            "pixel": {"x": 10, "y": 10, "width": 80, "height": 32},
+                            "normalized": {
+                                "x": 0.01,
+                                "y": 0.01,
+                                "width": 0.08,
+                                "height": 0.03,
+                            },
+                        },
+                        "supported_actions": ["click"],
+                    }
+                ],
+            },
+            {
+                "view_id": "dialog_reset_done",
+                "window_signature": {"title_contains": "ElectroChem Console"},
+                "screenshot_size": {"width": 1000, "height": 800},
+                "anchors": [
+                    {
+                        "id": "reset_done_text",
+                        "action_region": {
+                            "pixel": {"x": 100, "y": 100, "width": 180, "height": 60},
+                            "normalized": {
+                                "x": 0.1,
+                                "y": 0.1,
+                                "width": 0.18,
+                                "height": 0.06,
+                            },
+                        },
+                        "observe_region": {
+                            "pixel": {"x": 100, "y": 100, "width": 180, "height": 60},
+                            "normalized": {
+                                "x": 0.1,
+                                "y": 0.1,
+                                "width": 0.18,
+                                "height": 0.06,
+                            },
+                        },
+                        "supported_actions": ["click"],
+                    }
+                ],
+            },
+        ],
+    )
     return facade
 
 
@@ -213,3 +277,150 @@ def test_safety_violation_blocks_run(tmp_path: Path) -> None:
     ))
     session = facade.start_run(workflow=workflow, background=False)
     assert session.status == RunSessionStatus.FAILED
+
+
+def test_wait_step_with_anchor_polls_ocr_without_running_action(tmp_path: Path) -> None:
+    facade = _facade_with_dialog_view(tmp_path)
+    workflow = facade.save_workflow(
+        WorkflowContract(
+            metadata=WorkflowMetadata(
+                workflow_id="wf_wait_for_dialog",
+                author="test",
+                anchor_profile="d1",
+                lifecycle_state="Draft",
+            ),
+            steps=[
+                WorkflowStep(
+                    id="wait_for_reset_done",
+                    action="wait",
+                    view_id="dialog_reset_done",
+                    anchor_id="reset_done_text",
+                    expected_text="复位结束",
+                    match_mode="contains",
+                    timeout_seconds=1,
+                )
+            ],
+        )
+    )
+
+    facade._orchestrator._observer._vision.read_roi_text = lambda **_kwargs: OcrReading(
+        roi="reset_done_text",
+        text="复位结束",
+        confidence=0.96,
+    )
+    session = facade.start_run(workflow=workflow, background=False)
+    trace = facade.get_trace(session.session_id)
+    automation = facade.providers()["automation"]
+
+    assert session.status == RunSessionStatus.COMPLETED
+    assert automation.actions == []
+    assert trace[0].action.type == "wait"
+    assert trace[0].view_id == "dialog_reset_done"
+    assert trace[0].anchor_id == "reset_done_text"
+    assert trace[0].wait_strategy.type == "ocr_poll"
+    assert trace[0].actual_text == "复位结束"
+    assert trace[0].matched is True
+    assert trace[0].screenshot_path
+
+
+def test_exception_popup_rule_blocks_run_before_action(tmp_path: Path) -> None:
+    facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
+    profile = facade.create_calibration(
+        device_id="d1",
+        title_contains="ElectroChem Console",
+        anchors=[],
+        capture_width=1000,
+        capture_height=800,
+        views=[
+            {
+                "view_id": "main",
+                "window_signature": {"title_contains": "ElectroChem Console"},
+                "anchors": [
+                    {
+                        "id": "start_button",
+                        "action_region": {
+                            "pixel": {"x": 10, "y": 10, "width": 80, "height": 32},
+                            "normalized": {
+                                "x": 0.01,
+                                "y": 0.01,
+                                "width": 0.08,
+                                "height": 0.03,
+                            },
+                        },
+                        "supported_actions": ["click"],
+                    }
+                ],
+            },
+            {
+                "view_id": "dialog_connection_failed",
+                "window_signature": {"title_contains": "ElectroChem Console"},
+                "anchors": [
+                    {
+                        "id": "connection_failed_text",
+                        "action_region": {
+                            "pixel": {"x": 100, "y": 100, "width": 200, "height": 80},
+                            "normalized": {
+                                "x": 0.1,
+                                "y": 0.1,
+                                "width": 0.2,
+                                "height": 0.08,
+                            },
+                        },
+                        "observe_region": {
+                            "pixel": {"x": 100, "y": 100, "width": 200, "height": 80},
+                            "normalized": {
+                                "x": 0.1,
+                                "y": 0.1,
+                                "width": 0.2,
+                                "height": 0.08,
+                            },
+                        },
+                        "supported_actions": ["click"],
+                    }
+                ],
+            },
+        ],
+    )
+    profile.exception_rules = [
+        ExceptionRule(
+            id="connection_failed",
+            view_id="dialog_connection_failed",
+            anchor_id="connection_failed_text",
+            expected_text="连接失败",
+            match_mode="contains",
+            blocking=True,
+            message="设备连接失败，请人工处理",
+        )
+    ]
+    facade.save_instrument(profile)
+    workflow = facade.save_workflow(
+        WorkflowContract(
+            metadata=WorkflowMetadata(
+                workflow_id="wf_exception_popup",
+                author="test",
+                anchor_profile="d1",
+                lifecycle_state="Draft",
+            ),
+            steps=[WorkflowStep(id="start", action="click", anchor_id="start_button")],
+        )
+    )
+    events = []
+    facade.subscribe(lambda event: events.append(event))
+    facade._orchestrator._observer._vision.read_roi_text = lambda **_kwargs: OcrReading(
+        roi="connection_failed_text",
+        text="设备连接失败",
+        confidence=0.97,
+    )
+
+    session = facade.start_run(workflow=workflow, background=False)
+    automation = facade.providers()["automation"]
+    blocked = [event.payload for event in events if event.name == RuntimeEventName.RUN_BLOCKED]
+
+    assert session.status == RunSessionStatus.BLOCKED
+    assert session.steps[0].status == RunStepStatus.BLOCKED
+    assert automation.actions == []
+    assert len(blocked) == 1
+    assert blocked[-1]["incident_type"] == "DevicePopup"
+    assert blocked[-1]["exception_rule_id"] == "connection_failed"
+    assert blocked[-1]["actual_text"] == "设备连接失败"
+    assert blocked[-1]["view_id"] == "dialog_connection_failed"

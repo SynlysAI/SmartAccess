@@ -81,6 +81,28 @@ class WorkflowStep(FlexibleContractModel):
     requires_confirmation: bool = False
     migration_error: str | None = Field(default=None, exclude=True)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nullable_lists(cls, raw: Any) -> Any:
+        """Normalize nullable UI/YAML fields before strict field validation."""
+
+        if not isinstance(raw, dict):
+            return raw
+        data = dict(raw)
+        if data.get("expected_candidates") is None:
+            data.pop("expected_candidates", None)
+        if data.get("match_mode") == "exact":
+            data["match_mode"] = "equals"
+        condition = data.get("condition")
+        if isinstance(condition, dict):
+            normalized_condition = dict(condition)
+            if normalized_condition.get("match_mode") == "exact":
+                normalized_condition["match_mode"] = "equals"
+            if normalized_condition.get("operator") == "exact":
+                normalized_condition["operator"] = "equals"
+            data["condition"] = normalized_condition
+        return data
+
     @model_validator(mode="after")
     def _normalize_expectation(self) -> "WorkflowStep":
         """标准化锚点、等待时间和 OCR 条件。"""
@@ -133,15 +155,23 @@ class WorkflowStep(FlexibleContractModel):
             self.wait_seconds = _coerce_seconds(self.value)
         if self.wait_seconds is None:
             self.wait_seconds = 1.0
-        self.anchor_id = None
-        self.target = None
-        self.view_id = "main"
-        self.expected_text = None
-        self.expected_candidates = []
-        self.timeout_seconds = None
-        self.match_mode = "none"
-        self.min_confidence = None
-        self.requires_confirmation = False
+        if self.match_mode == "none":
+            self.anchor_id = None
+            self.target = None
+            self.view_id = "main"
+            self.expected_text = None
+            self.expected_candidates = []
+            self.timeout_seconds = None
+            self.min_confidence = None
+            return
+        if self.expected_candidates:
+            if self.expected_text is None:
+                self.expected_text = list(self.expected_candidates)
+            elif isinstance(self.expected_text, str):
+                values = [self.expected_text, *self.expected_candidates]
+                self.expected_text = list(dict.fromkeys(values))
+        if not self.anchor_id:
+            self.migration_error = "anchor_id is required for OCR wait steps"
 
 
 class WorkflowMigrationError(FlexibleContractModel):
@@ -221,6 +251,8 @@ def normalize_condition(condition: dict[str, Any] | None) -> dict[str, Any] | No
     operator = condition.get("match_mode") or condition.get("operator") or "contains"
     if operator == "exists":
         operator = "not_empty"
+    if operator == "exact":
+        operator = "equals"
     if operator not in MATCH_MODES:
         operator = "contains"
     expected = condition.get("expected_text")
@@ -338,7 +370,7 @@ def _merge_legacy_condition(
         errors.append(
             _migration_error(
                 step,
-                "legacy OCR wait/check must follow an executable action step",
+                "legacy OCR wait/check must follow an executable action step and rebind",
             )
         )
 
@@ -364,17 +396,21 @@ def _wait_step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
     clean["id"] = step_id
     clean["action"] = "wait"
     clean.pop("target", None)
-    clean.pop("anchor_id", None)
+    condition = _condition_from_flat_step(clean)
     clean.pop("condition", None)
-    clean.pop("expected_text", None)
-    clean.pop("expected_candidates", None)
-    clean.pop("timeout_seconds", None)
-    clean.pop("min_confidence", None)
-    clean["match_mode"] = "none"
     if clean.get("wait_seconds") is None and clean.get("value") is not None:
         clean["wait_seconds"] = _coerce_seconds(clean["value"])
     if clean.get("wait_seconds") is None:
         clean["wait_seconds"] = 1.0
+    if condition:
+        _merge_condition_into_step(clean, condition)
+    if clean.get("match_mode") in (None, "none"):
+        clean.pop("anchor_id", None)
+        clean.pop("expected_text", None)
+        clean.pop("expected_candidates", None)
+        clean.pop("timeout_seconds", None)
+        clean.pop("min_confidence", None)
+        clean["match_mode"] = "none"
     return clean
 
 
