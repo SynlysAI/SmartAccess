@@ -477,13 +477,23 @@ class CalibrationPage(QWidget):
             QMessageBox.warning(self, "缺少锚点", "请至少添加一个锚点。")
             return
         main_state = self._view_states.get(DEFAULT_VIEW_ID) or {}
+        main_title = str(main_state.get("title") or "").strip()
+        if not main_title:
+            main_title = title if self._current_view_id == DEFAULT_VIEW_ID else ""
+        if not main_title:
+            QMessageBox.warning(
+                self,
+                "缺少主窗口标题",
+                "请先在 main 视图保存主窗口标题，再保存弹窗视图。",
+            )
+            return
         width = main_state.get("capture_width")
         height = main_state.get("capture_height")
         if width is None or height is None:
             width, height = self._canvas.source_size()
         main_capture = main_state.get("capture")
         views_payload = self._collect_views_payload(
-            title=title,
+            title=main_title,
             fallback_width=width,
             fallback_height=height,
             fallback_anchors=current_anchors,
@@ -498,7 +508,7 @@ class CalibrationPage(QWidget):
             main_origin_x, main_origin_y = self._legacy_capture_origin(main_metadata)
             profile = self._vm.create_profile(
                 device_id=device_id,
-                title_contains=title,
+                title_contains=main_title,
                 anchors=anchors,
                 views=views_payload,
                 capture_width=width,
