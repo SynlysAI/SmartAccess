@@ -63,6 +63,21 @@ class CalibrationViewModel(ViewModel):
 
         return self._facade.load_instrument_capture(device_id, view_id=view_id)
 
+    def delete_instrument_capture(
+        self,
+        device_id: str,
+        *,
+        view_id: str | None = None,
+    ) -> None:
+        """删除指定设备视图的校准截图。
+
+        Args:
+            device_id: 设备 ID。
+            view_id: 视图 ID。
+        """
+
+        self._facade.delete_instrument_capture(device_id, view_id=view_id)
+
     def workspace_dir(self) -> Path:
         """返回工作区目录。"""
 
