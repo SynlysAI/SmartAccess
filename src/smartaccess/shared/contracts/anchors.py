@@ -46,6 +46,12 @@ class WindowSignature(FlexibleContractModel):
     process_name: str | None = None
     screenshot_size: ScreenshotSize | None = None
     match_mode: Literal["equals", "contains"] = "equals"
+    capture_origin_x: int | None = None
+    capture_origin_y: int | None = None
+    capture_mode: Literal["window", "screen_canvas"] = "window"
+    capture_screen_origin_x: int | None = None
+    capture_screen_origin_y: int | None = None
+    capture_windows: list[JsonMap] = Field(default_factory=list)
 
     @property
     def capture_width(self) -> int | None:

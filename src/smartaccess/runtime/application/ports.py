@@ -118,6 +118,9 @@ class AutomationProvider(Protocol):
     def capture_window(self, hwnd: int) -> bytes | None:
         """按窗口句柄截图。"""
 
+    def capture_windows(self, hwnds: list[int]) -> bytes | None:
+        """按多个窗口的屏幕联合区域截图。"""
+
 
 class VisionProvider(Protocol):
     """截图视觉识别提供者协议。"""

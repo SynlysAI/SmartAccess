@@ -11,7 +11,12 @@ from smartaccess.runtime.application.ports import ActionOutcome, WindowInfo
 from smartaccess.runtime.application.roi_resolver import resolve_anchor_roi
 from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorView, AnchorsContract
 
-from .window_scanner import WindowScanner, capture_window as _capture_real_window
+from .window_scanner import (
+    WindowScanner,
+    capture_screen_region as _capture_screen_region,
+    capture_window as _capture_real_window,
+    capture_windows as _capture_real_windows,
+)
 
 SW_RESTORE = 9
 MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -111,6 +116,21 @@ class Win32AutomationProvider:
         Win32AutomationProvider._restore_and_focus_window(hwnd)
         return _capture_real_window(hwnd)
 
+    @staticmethod
+    def capture_windows(hwnds: list[int]) -> bytes | None:
+        """按多个窗口的屏幕联合区域截图。
+
+        Args:
+            hwnds: 窗口句柄列表。
+
+        Returns:
+            PNG 截图字节；失败时返回 None。
+        """
+
+        for hwnd in hwnds:
+            Win32AutomationProvider._restore_and_focus_window(hwnd)
+        return _capture_real_windows(hwnds)
+
     def locate_anchor(self, anchor_id: str) -> bool:
         """判断锚点是否存在于当前配置。"""
 
@@ -136,7 +156,7 @@ class Win32AutomationProvider:
         anchor = self._anchor(target) if target else None
         if target and anchor is None:
             return ActionOutcome(ok=False, detail=f"未找到锚点: {target}")
-        if self._hwnd:
+        if self._hwnd and not self._uses_screen_canvas():
             self._focus_interaction_window()
         try:
             self._dispatch_action(action, anchor, value)
@@ -147,6 +167,9 @@ class Win32AutomationProvider:
     def screenshot(self, label: str) -> bytes:
         """截取当前目标窗口图像。"""
 
+        screen_capture = self._screen_canvas_screenshot()
+        if screen_capture is not None:
+            return screen_capture
         if self._hwnd is None:
             return b""
         self._focus_interaction_window()
@@ -301,6 +324,15 @@ class Win32AutomationProvider:
     def _click_anchor(self, anchor: AnchorDefinition) -> None:
         """点击锚点中心位置。"""
 
+        if self._uses_screen_canvas():
+            roi = anchor.action_region.pixel
+            left, top = self._screen_canvas_origin()
+            screen_x = int(left + roi.x + roi.width / 2)
+            screen_y = int(top + roi.y + roi.height / 2)
+            self._user32.SetCursorPos(screen_x, screen_y)
+            self._user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
+            self._user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
+            return
         width, height = self._capture_reference_size()
         roi = resolve_anchor_roi(
             anchor,
@@ -325,7 +357,7 @@ class Win32AutomationProvider:
     def _capture_reference_size(self) -> tuple[int, int]:
         """返回用于解析锚点坐标的参考截图尺寸。"""
 
-        signature = self._profile.window_signature if self._profile else None
+        signature = self._active_signature()
         if signature and signature.capture_width and signature.capture_height:
             return signature.capture_width, signature.capture_height
         return self._window_size()
@@ -343,6 +375,33 @@ class Win32AutomationProvider:
         capture_origin_x = int(getattr(signature, "capture_origin_x", 0) or 0)
         capture_origin_y = int(getattr(signature, "capture_origin_y", 0) or 0)
         return capture_origin_x, capture_origin_y
+
+    def _screen_canvas_screenshot(self) -> bytes | None:
+        """按当前视图的屏幕画布坐标截图。"""
+
+        if not self._uses_screen_canvas():
+            return None
+        width, height = self._capture_reference_size()
+        if width <= 0 or height <= 0:
+            return None
+        left, top = self._screen_canvas_origin()
+        return _capture_screen_region(left, top, width, height) or b""
+
+    def _uses_screen_canvas(self) -> bool:
+        """返回当前视图是否使用屏幕画布坐标。"""
+
+        signature = self._active_signature()
+        return getattr(signature, "capture_mode", None) == "screen_canvas"
+
+    def _screen_canvas_origin(self) -> tuple[int, int]:
+        """返回当前屏幕画布左上角坐标。"""
+
+        signature = self._active_signature()
+        if signature is None:
+            return 0, 0
+        x = int(getattr(signature, "capture_screen_origin_x", 0) or 0)
+        y = int(getattr(signature, "capture_screen_origin_y", 0) or 0)
+        return x, y
 
     def _window_size(self) -> tuple[int, int]:
         """返回当前目标窗口尺寸。"""
@@ -365,6 +424,8 @@ class Win32AutomationProvider:
         return rect.left, rect.top
 
     def _active_signature(self):
+        if self._view is not None and self._view.window_signature is not None:
+            return self._view.window_signature
         return self._profile.window_signature if self._profile is not None else None
 
     def _active_match_mode(self) -> str | None:

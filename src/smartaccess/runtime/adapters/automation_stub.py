@@ -86,6 +86,20 @@ class StubAutomationProvider:
         return f"stub-window-capture:{hwnd}".encode("utf-8")
 
     @staticmethod
+    def capture_windows(hwnds: list[int]) -> bytes | None:
+        """返回模拟多窗口联合截图。
+
+        Args:
+            hwnds: 窗口句柄列表。
+
+        Returns:
+            模拟截图字节。
+        """
+
+        joined = ",".join(str(hwnd) for hwnd in hwnds)
+        return f"stub-windows-capture:{joined}".encode("utf-8")
+
+    @staticmethod
     def locate_anchor(anchor_id: str) -> bool:
         """判断锚点是否可定位。"""
 

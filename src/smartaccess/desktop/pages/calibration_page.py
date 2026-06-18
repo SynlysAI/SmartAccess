@@ -58,7 +58,7 @@ class CalibrationPage(QWidget):
         self._selected_hwnd: int | None = None
         self._selected_title = ""
         self._latest_capture: bytes | None = None
-        self._latest_capture_metadata: dict[str, int] = {}
+        self._latest_capture_metadata: dict[str, object] = {}
         self._current_view_id = DEFAULT_VIEW_ID
         self._ai_target_view_id: str | None = None
         self._view_states: dict[str, dict] = {
@@ -68,6 +68,8 @@ class CalibrationPage(QWidget):
                 "anchors": [],
                 "capture_width": None,
                 "capture_height": None,
+                "capture_metadata": {},
+                "capture_windows": [],
             }
         }
 
@@ -91,6 +93,7 @@ class CalibrationPage(QWidget):
         self._table.row_delete_requested.connect(self._delete_anchor_row)
         self._table.row_ocr_toggled.connect(self._on_ocr_toggled)
         self._windows.itemSelectionChanged.connect(self._on_window_selected)
+        self._windows.itemChanged.connect(self._on_window_checked)
         self._instruments.itemDoubleClicked.connect(self._load_instrument)
         self._instruments.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._instruments.customContextMenuRequested.connect(self._instrument_menu)
@@ -233,6 +236,8 @@ class CalibrationPage(QWidget):
                 }
             )
             item = QListWidgetItem(f"{window.title}  ({window.width}x{window.height})")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
             self._windows.addItem(item)
         if not windows:
             self._windows.addItem("未发现可用窗口")
@@ -251,14 +256,27 @@ class CalibrationPage(QWidget):
         self._capture_btn.setEnabled(self._selected_hwnd is not None)
         self._title_contains.setText(self._selected_title)
 
-    def _capture(self) -> None:
-        """捕获选中窗口截图。"""
+    def _on_window_checked(self, _item: QListWidgetItem) -> None:
+        """窗口勾选变化时同步截图按钮状态。"""
 
-        if self._selected_hwnd is None:
+        has_checked = bool(self._checked_window_hwnds())
+        self._capture_btn.setEnabled(has_checked or self._selected_hwnd is not None)
+
+    def _capture(self) -> None:
+        """捕获选中窗口或多窗口联合截图。"""
+
+        hwnds = self._ordered_capture_hwnds()
+        if not hwnds and self._selected_hwnd is not None:
+            hwnds = [self._selected_hwnd]
+        if not hwnds:
             QMessageBox.warning(self, "未选择窗口", "请先选择窗口。")
             return
         try:
-            data = self._vm.capture_window(self._selected_hwnd)
+            data = (
+                self._vm.capture_window(hwnds[0])
+                if len(hwnds) == 1
+                else self._vm.capture_windows(hwnds)
+            )
         except Exception as exc:  # noqa: BLE001
             self._restore_page_focus()
             QMessageBox.critical(self, "截图失败", str(exc))
@@ -271,9 +289,35 @@ class CalibrationPage(QWidget):
             return
         self._latest_capture = data
         self._latest_capture_metadata = capture_metadata()
+        self._latest_capture_metadata["capture_mode"] = (
+            "screen_canvas" if len(hwnds) > 1 else "window"
+        )
+        self._latest_capture_metadata["window_count"] = len(hwnds)
         self._canvas.load_image(data)
         self._store_current_view()
         self._refresh_all_roi_labels()
+
+    def _checked_window_hwnds(self) -> list[int]:
+        """返回当前勾选的窗口句柄。"""
+
+        hwnds: list[int] = []
+        for row, data in enumerate(self._windows_data):
+            item = self._windows.item(row)
+            if item is None:
+                continue
+            if item.checkState() == Qt.CheckState.Checked and data.get("hwnd"):
+                hwnds.append(int(data["hwnd"]))
+        return hwnds
+
+    def _ordered_capture_hwnds(self) -> list[int]:
+        """返回用于截图的窗口句柄顺序，当前选中窗口最后前置。"""
+
+        hwnds = self._checked_window_hwnds()
+        if self._selected_hwnd is None or self._selected_hwnd not in hwnds:
+            return hwnds
+        return [hwnd for hwnd in hwnds if hwnd != self._selected_hwnd] + [
+            self._selected_hwnd,
+        ]
 
     def _preview_current_view_ocr(self) -> None:
         """对当前视图第一个 OCR 锚点做一次识别预览。"""
@@ -450,6 +494,8 @@ class CalibrationPage(QWidget):
             if view_id != DEFAULT_VIEW_ID and state.get("capture")
         }
         try:
+            main_metadata = main_state.get("capture_metadata") or {}
+            main_origin_x, main_origin_y = self._legacy_capture_origin(main_metadata)
             profile = self._vm.create_profile(
                 device_id=device_id,
                 title_contains=title,
@@ -457,8 +503,12 @@ class CalibrationPage(QWidget):
                 views=views_payload,
                 capture_width=width,
                 capture_height=height,
-                capture_origin_x=self._latest_capture_metadata.get("offset_x"),
-                capture_origin_y=self._latest_capture_metadata.get("offset_y"),
+                capture_origin_x=main_origin_x,
+                capture_origin_y=main_origin_y,
+                capture_mode=str(main_metadata.get("capture_mode") or "window"),
+                capture_screen_origin_x=main_metadata.get("origin_x"),
+                capture_screen_origin_y=main_metadata.get("origin_y"),
+                capture_windows=main_state.get("capture_windows") or [],
                 capture_data=main_capture,
                 view_captures=view_captures,
             )
@@ -601,11 +651,14 @@ class CalibrationPage(QWidget):
             "anchors": [],
             "capture_width": None,
             "capture_height": None,
+            "capture_metadata": {},
+            "capture_windows": [],
         }
         self._current_view_id = view_id
         self._canvas.clear_all()
         self._table.setRowCount(0)
         self._latest_capture = None
+        self._latest_capture_metadata = {}
         self._refresh_views()
 
     def _on_view_selected(self) -> None:
@@ -643,6 +696,8 @@ class CalibrationPage(QWidget):
             "anchors": anchors,
             "capture_width": width,
             "capture_height": height,
+            "capture_metadata": dict(self._latest_capture_metadata),
+            "capture_windows": self._selected_capture_windows(),
         }
 
     def _load_view_state(self, view_id: str) -> None:
@@ -652,6 +707,7 @@ class CalibrationPage(QWidget):
         self._canvas.clear_all()
         self._table.setRowCount(0)
         self._latest_capture = state.get("capture")
+        self._latest_capture_metadata = dict(state.get("capture_metadata") or {})
         if state.get("title"):
             self._title_contains.setText(str(state["title"]))
         if self._latest_capture:
@@ -695,6 +751,8 @@ class CalibrationPage(QWidget):
             "anchors": anchors,
             "capture_width": width,
             "capture_height": height,
+            "capture_metadata": existing.get("capture_metadata") or {},
+            "capture_windows": existing.get("capture_windows") or [],
         }
         self._refresh_views()
         if target_view_id == self._current_view_id:
@@ -738,16 +796,26 @@ class CalibrationPage(QWidget):
                 "anchors": fallback_anchors,
                 "capture_width": fallback_width,
                 "capture_height": fallback_height,
+                "capture_metadata": dict(self._latest_capture_metadata),
+                "capture_windows": self._selected_capture_windows(),
             }
         for view_id, state in self._view_states.items():
             width = state.get("capture_width") or fallback_width
             height = state.get("capture_height") or fallback_height
+            metadata = state.get("capture_metadata") or {}
+            origin_x, origin_y = self._legacy_capture_origin(metadata)
             views.append(
                 {
                     "view_id": view_id,
                     "window_signature": {
                         "title_contains": state.get("title") or title,
                         "screenshot_size": {"width": width, "height": height},
+                        "capture_origin_x": origin_x,
+                        "capture_origin_y": origin_y,
+                        "capture_mode": str(metadata.get("capture_mode") or "window"),
+                        "capture_screen_origin_x": metadata.get("origin_x"),
+                        "capture_screen_origin_y": metadata.get("origin_y"),
+                        "capture_windows": state.get("capture_windows") or [],
                     },
                     "screenshot_size": {"width": width, "height": height},
                     "anchors": state.get("anchors") or [],
@@ -759,6 +827,51 @@ class CalibrationPage(QWidget):
                 }
             )
         return views
+
+    @staticmethod
+    def _legacy_capture_origin(metadata: dict) -> tuple[int | None, int | None]:
+        """返回兼容旧运行逻辑的截图原点偏移。"""
+
+        if metadata.get("capture_mode") == "screen_canvas":
+            return 0, 0
+        return metadata.get("offset_x"), metadata.get("offset_y")
+
+    def _selected_capture_windows(self) -> list[dict]:
+        """返回当前截图参与窗口的轻量元数据。"""
+
+        selected = set(self._checked_window_hwnds())
+        if not selected and self._selected_hwnd is not None:
+            selected = {self._selected_hwnd}
+        windows = []
+        for data in self._windows_data:
+            hwnd = data.get("hwnd")
+            if hwnd not in selected:
+                continue
+            windows.append(
+                {
+                    "title": data.get("title"),
+                    "hwnd": hwnd,
+                    "width": data.get("width"),
+                    "height": data.get("height"),
+                }
+            )
+        return windows
+
+    @staticmethod
+    def _metadata_from_signature(signature: object | None) -> dict:
+        """从窗口签名还原页面使用的截图元数据。"""
+
+        if signature is None:
+            return {}
+        return {
+            "capture_mode": getattr(signature, "capture_mode", "window") or "window",
+            "origin_x": getattr(signature, "capture_screen_origin_x", None),
+            "origin_y": getattr(signature, "capture_screen_origin_y", None),
+            "offset_x": getattr(signature, "capture_origin_x", 0) or 0,
+            "offset_y": getattr(signature, "capture_origin_y", 0) or 0,
+            "width": getattr(signature, "capture_width", None),
+            "height": getattr(signature, "capture_height", None),
+        }
 
     def _collect_anchors(self) -> list[dict]:
         """从表格和画布收集锚点契约数据。"""
@@ -906,6 +1019,14 @@ class CalibrationPage(QWidget):
                 "capture_height": (
                     view.screenshot_size.height if view.screenshot_size else None
                 ),
+                "capture_metadata": self._metadata_from_signature(
+                    view.window_signature,
+                ),
+                "capture_windows": (
+                    getattr(view.window_signature, "capture_windows", [])
+                    if view.window_signature is not None
+                    else []
+                ),
             }
         if DEFAULT_VIEW_ID not in self._view_states:
             self._view_states[DEFAULT_VIEW_ID] = {
@@ -917,6 +1038,14 @@ class CalibrationPage(QWidget):
                 ],
                 "capture_width": profile.window_signature.capture_width,
                 "capture_height": profile.window_signature.capture_height,
+                "capture_metadata": self._metadata_from_signature(
+                    profile.window_signature,
+                ),
+                "capture_windows": getattr(
+                    profile.window_signature,
+                    "capture_windows",
+                    [],
+                ),
             }
         self._current_view_id = DEFAULT_VIEW_ID
         self._refresh_views()
@@ -978,6 +1107,8 @@ class CalibrationPage(QWidget):
                 "anchors": [],
                 "capture_width": None,
                 "capture_height": None,
+                "capture_metadata": {},
+                "capture_windows": [],
             }
         }
         self._refresh_views()

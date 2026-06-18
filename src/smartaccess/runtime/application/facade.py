@@ -169,6 +169,23 @@ class RuntimeFacade:
 
         return self._automation.capture_window(hwnd)
 
+    def capture_windows(self, hwnds: list[int]) -> bytes | None:
+        """截取多个窗口的屏幕联合区域。
+
+        Args:
+            hwnds: 窗口句柄列表。
+
+        Returns:
+            PNG 字节；失败时返回 None。
+        """
+
+        method = getattr(self._automation, "capture_windows", None)
+        if callable(method):
+            return method(hwnds)
+        if len(hwnds) == 1:
+            return self._automation.capture_window(hwnds[0])
+        return None
+
     def platform_health(self) -> bool:
         """返回平台连接是否可用。"""
 
@@ -206,6 +223,10 @@ class RuntimeFacade:
         capture_height: int | None,
         capture_origin_x: int | None = None,
         capture_origin_y: int | None = None,
+        capture_mode: str = "window",
+        capture_screen_origin_x: int | None = None,
+        capture_screen_origin_y: int | None = None,
+        capture_windows: list[dict[str, Any]] | None = None,
     ) -> AnchorsContract:
         """创建并保存设备校准配置。
 
@@ -215,8 +236,12 @@ class RuntimeFacade:
             anchors: 锚点原始数据。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
-            capture_origin_x: 校准截图画布相对主窗口左侧的 X 偏移。
-            capture_origin_y: 校准截图画布相对主窗口顶部的 Y 偏移。
+            capture_origin_x: 兼容旧窗口模式的截图原点 X 偏移。
+            capture_origin_y: 兼容旧窗口模式的截图原点 Y 偏移。
+            capture_mode: 截图坐标模式。
+            capture_screen_origin_x: 校准截图画布在屏幕上的左上角 X。
+            capture_screen_origin_y: 校准截图画布在屏幕上的左上角 Y。
+            capture_windows: 参与截图的窗口元数据。
 
         Returns:
             已保存的锚点配置。
@@ -231,6 +256,10 @@ class RuntimeFacade:
             capture_height=capture_height,
             capture_origin_x=capture_origin_x,
             capture_origin_y=capture_origin_y,
+            capture_mode=capture_mode,
+            capture_screen_origin_x=capture_screen_origin_x,
+            capture_screen_origin_y=capture_screen_origin_y,
+            capture_windows=capture_windows,
         )
 
     def save_instrument_capture(
