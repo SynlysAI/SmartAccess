@@ -175,11 +175,17 @@ class Win32AutomationProvider:
         """查找目标窗口句柄。"""
 
         if not title_contains:
-            windows = self._scanner.scan()
+            windows = self._scanner.scan(include_disabled=True)
         elif self._active_match_mode() == "equals":
-            windows = self._scanner.scan_equals(title_contains)
+            windows = self._scanner.scan_equals(
+                title_contains,
+                include_disabled=True,
+            )
         else:
-            windows = self._scanner.scan_contains(title_contains)
+            windows = self._scanner.scan_contains(
+                title_contains,
+                include_disabled=True,
+            )
         return windows[0].hwnd if windows else None
 
     @staticmethod

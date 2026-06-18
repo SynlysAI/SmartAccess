@@ -83,6 +83,7 @@ class WindowScanner:
         title_equals: str | None = None,
         min_title_len: int = 1,
         skip_empty_title: bool = True,
+        include_disabled: bool = False,
     ) -> list[WindowInfo]:
         """扫描窗口列表。
 
@@ -91,6 +92,7 @@ class WindowScanner:
             title_equals: 标题精确匹配过滤文本（忽略大小写）。
             min_title_len: 最小标题长度。
             skip_empty_title: 是否跳过空标题窗口。
+            include_disabled: 是否包含被模态弹窗禁用的宿主窗口。
 
         Returns:
             窗口信息列表。
@@ -103,7 +105,7 @@ class WindowScanner:
         def _callback(hwnd: int, _lparam: int) -> bool:
             if not _USER32.IsWindowVisible(hwnd):
                 return True
-            if not _USER32.IsWindowEnabled(hwnd):
+            if not include_disabled and not _USER32.IsWindowEnabled(hwnd):
                 return True
             title = _get_window_title(hwnd)
             if skip_empty_title and not title.strip():
@@ -128,29 +130,41 @@ class WindowScanner:
         results.sort(key=lambda item: item.title.lower())
         return results
 
-    def scan_contains(self, substring: str) -> list[WindowInfo]:
+    def scan_contains(
+        self,
+        substring: str,
+        *,
+        include_disabled: bool = False,
+    ) -> list[WindowInfo]:
         """扫描标题包含指定文本的窗口。
 
         Args:
             substring: 标题包含文本。
+            include_disabled: 是否包含被模态弹窗禁用的宿主窗口。
 
         Returns:
             匹配窗口列表。
         """
 
-        return self.scan(title_contains=substring)
+        return self.scan(title_contains=substring, include_disabled=include_disabled)
 
-    def scan_equals(self, title: str) -> list[WindowInfo]:
+    def scan_equals(
+        self,
+        title: str,
+        *,
+        include_disabled: bool = False,
+    ) -> list[WindowInfo]:
         """扫描标题与指定文本精确相等的窗口（忽略大小写）。
 
         Args:
             title: 精确匹配的窗口标题。
+            include_disabled: 是否包含被模态弹窗禁用的宿主窗口。
 
         Returns:
             匹配窗口列表。
         """
 
-        return self.scan(title_equals=title)
+        return self.scan(title_equals=title, include_disabled=include_disabled)
 
 
 _LAST_CAPTURE_ERROR = ""
