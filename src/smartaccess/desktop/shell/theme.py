@@ -221,6 +221,9 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QText
     selection-background-color: {PRIMARY_SOFT};
     selection-color: {TEXT};
 }}
+QComboBox {{
+    padding-right: 28px;
+}}
 QTableWidget QLineEdit {{
     padding-top: 2px;
     padding-bottom: 2px;
@@ -240,12 +243,24 @@ QComboBox::drop-down {{
     border-top-right-radius: 6px;
     border-bottom-right-radius: 6px;
 }}
+QComboBox::down-arrow {{
+    image: none;
+    width: 0px;
+    height: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {TEXT_MUTED};
+    margin-right: 6px;
+}}
+QComboBox::down-arrow:hover {{
+    border-top-color: {PRIMARY_HOVER};
+}}
 QComboBox#TableComboBox::drop-down, QComboBox#ConditionMode::drop-down {{
     width: 20px;
 }}
 QComboBox#TableComboBox, QComboBox#ConditionMode {{
     padding-left: 6px;
-    padding-right: 6px;
+    padding-right: 26px;
 }}
 QDoubleSpinBox#TableSpinBox,
 QDoubleSpinBox#ConditionTimeout,
