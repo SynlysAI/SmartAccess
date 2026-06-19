@@ -22,7 +22,10 @@ from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.runtime.application.incident_service import IncidentService
 from smartaccess.runtime.application.migration_service import MigrationService
 from smartaccess.runtime.application.platform_sync_service import PlatformSyncService
-from smartaccess.runtime.application.run_session_service import RunSessionService
+from smartaccess.runtime.application.run_session_service import (
+    IncrementCounterService,
+    RunSessionService,
+)
 from smartaccess.runtime.application.template_service import TemplateService
 from smartaccess.runtime.application.workflow_service import WorkflowService
 from smartaccess.runtime.application.workspace_service import WorkspaceService
@@ -60,6 +63,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         draft_generator=ai_generator,
     )
     run_sessions = RunSessionService(artifact_store=artifacts, event_bus=event_bus)
+    increment_counters = IncrementCounterService(settings.workspace_dir)
     incidents = IncidentService(event_bus=event_bus)
     platform_sync = PlatformSyncService(
         platform=platform,
@@ -86,6 +90,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         recovery=RecoveryEngine(),
         run_sessions=run_sessions,
         incidents=incidents,
+        increment_counters=increment_counters,
     )
     return RuntimeFacade(
         settings=settings,
@@ -101,6 +106,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         run_sessions=run_sessions,
         incidents=incidents,
         platform_sync=platform_sync,
+        increment_counters=increment_counters,
         orchestrator=orchestrator,
         migration=migration,
         ai_generator=ai_generator,

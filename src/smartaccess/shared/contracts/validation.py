@@ -7,6 +7,42 @@ import re
 from .anchors import AnchorsContract
 from .workflow import EXECUTABLE_WORKFLOW_ACTIONS, WorkflowContract
 
+WINDOWS_PATH_ILLEGAL_CHARS = set('/\\:*?"<>|')
+
+
+def validate_device_id(device_id: str | None) -> list[str]:
+    """Validate the four-part device ID used by new anchor profiles."""
+
+    issues: list[str] = []
+    if device_id is None:
+        return ["device_id is required"]
+    if device_id != device_id.strip():
+        issues.append("device_id must not have leading or trailing whitespace")
+    value = device_id.strip()
+    parts = value.split("-")
+    if len(parts) != 4:
+        issues.append(
+            "device_id must use four '-' separated parts: "
+            "体系-实验室-产品型号-设备编号"
+        )
+    if any(part.strip() != part or not part for part in parts):
+        issues.append("device_id parts must be non-empty and trim-clean")
+    illegal = sorted({char for char in value if char in WINDOWS_PATH_ILLEGAL_CHARS})
+    if illegal:
+        issues.append(
+            "device_id must not contain Windows path characters: " + "".join(illegal)
+        )
+    return issues
+
+
+def require_valid_device_id(device_id: str | None) -> str:
+    """Return a normalized device ID or raise ValueError with validation details."""
+
+    issues = validate_device_id(device_id)
+    if issues:
+        raise ValueError("; ".join(issues))
+    return str(device_id).strip()
+
 
 def validate_workflow_against_anchors(
     workflow: WorkflowContract,

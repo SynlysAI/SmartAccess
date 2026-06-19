@@ -20,6 +20,7 @@ from smartaccess.shared.events.bus import RuntimeEvent  # noqa: E402
 from smartaccess.shared.events.runtime import RuntimeEventName  # noqa: E402
 
 _APP: QApplication | None = None
+DEVICE_ID = "氟基-2236实验室-元能极片电阻仪-01"
 
 
 def _app() -> QApplication:
@@ -31,7 +32,7 @@ def _app() -> QApplication:
 def _facade(tmp_path: Path):
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         capture_width=800,
         capture_height=600,
@@ -73,7 +74,7 @@ def _facade(tmp_path: Path):
             metadata=WorkflowMetadata(
                 workflow_id="wf_test",
                 author="test",
-                anchor_profile="d1",
+                anchor_profile=DEVICE_ID,
                 experiment_type="smoke_test",
                 lifecycle_state="Draft",
                 template_id="tpl_demo",
@@ -115,7 +116,7 @@ def test_monitoring_vm_describes_selected_workflow_device(tmp_path: Path) -> Non
     summary = vm.workflow_summary("wf_test")
 
     assert summary.workflow_id == "wf_test"
-    assert summary.anchor_profile == "d1"
+    assert summary.anchor_profile == DEVICE_ID
     assert summary.device_found is True
     assert summary.title_contains == "ElectroChem Console"
     assert summary.anchor_count == 2
@@ -151,7 +152,7 @@ def test_monitoring_page_refreshes_workflow_device_info(tmp_path: Path) -> None:
 
     info = page._workflow_info.toPlainText()
     assert "wf_test" in info
-    assert "d1" in info
+    assert DEVICE_ID in info
     assert "ElectroChem Console" in info
     assert "锚点: 2" in info
     assert "OCR观测: 1" in info
@@ -254,6 +255,33 @@ def test_ocr_failed_log_includes_rule_actual_match_and_attempts() -> None:
     assert "OCR实际: 识别到了小旭" in entry.message
     assert "匹配: False" in entry.message
     assert "尝试: 4" in entry.message
+
+
+def test_run_boundary_log_renders_context_with_separator() -> None:
+    from smartaccess.desktop.viewmodels.monitoring_vm import MonitorLogEntry
+    from smartaccess.desktop.widgets.log_view import LogView
+
+    _app()
+    view = LogView()
+    view.set_entries([
+        MonitorLogEntry(
+            timestamp="16:10:01",
+            level="INFO",
+            message=(
+                "START / device_id=氟基-2236实验室-元能极片电阻仪-01 / "
+                "author=test / workflow=wf_test / session=run_1"
+            ),
+            session_id="run_1",
+        )
+    ])
+
+    plain = view.toPlainText()
+    html = view.toHtml()
+    assert "==============================" in plain
+    assert "\n\n" in plain
+    assert "运行上下文" in plain
+    assert "device_id=氟基-2236实验室-元能极片电阻仪-01" in plain
+    assert "background-color" in html
 
 
 def test_log_view_renders_error_and_ocr_fields_as_html() -> None:

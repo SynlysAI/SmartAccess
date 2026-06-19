@@ -17,6 +17,7 @@ from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowMeta
 from smartaccess.shared.events.runtime import RuntimeEventName  # noqa: E402
 
 _APP: QApplication | None = None
+DEVICE_ID = "氟基-2236实验室-元能极片电阻仪-01"
 
 
 def _app() -> QApplication:
@@ -28,7 +29,7 @@ def _app() -> QApplication:
 def _facade(tmp_path: Path):
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         capture_width=800,
         capture_height=600,
@@ -46,7 +47,7 @@ def _facade(tmp_path: Path):
             metadata=WorkflowMetadata(
                 workflow_id="wf_test",
                 author="test",
-                anchor_profile="d1",
+                anchor_profile=DEVICE_ID,
                 lifecycle_state="Draft",
             ),
             steps=[WorkflowStep(id="start", action="click", anchor_id="status_button")],
@@ -111,6 +112,24 @@ def test_calibration_ai_requires_device_id_and_title(tmp_path: Path, monkeypatch
     assert messages
     assert "设备 ID" in messages[-1][1]
     assert "窗口标题" in messages[-1][1]
+
+
+def test_calibration_device_id_hint_tracks_validation_state(tmp_path: Path) -> None:
+    _app()
+    from smartaccess.desktop.pages.calibration_page import CalibrationPage
+
+    page = CalibrationPage(_facade(tmp_path))
+
+    assert "体系-实验室-产品型号-设备编号" in page._device_id_hint.text()
+    assert page._device_id.property("validationState") == "neutral"
+
+    page._device_id.setText("d1")
+    assert "格式需调整" in page._device_id_hint.text()
+    assert page._device_id.property("validationState") == "invalid"
+
+    page._device_id.setText(DEVICE_ID)
+    assert "格式正确" in page._device_id_hint.text()
+    assert page._device_id.property("validationState") == "valid"
 
 
 def test_calibration_scan_refreshes_all_windows_after_selection(

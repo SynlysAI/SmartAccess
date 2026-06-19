@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from smartaccess.bootstrap import build_runtime_facade
@@ -17,6 +18,8 @@ from smartaccess.shared.contracts.workflow import (
 )
 from smartaccess.shared.events import RuntimeEventName
 
+DEVICE_ID = "氟基-2236实验室-元能极片电阻仪-01"
+
 
 def _workflow(
     workflow_id: str = "wf_test",
@@ -26,7 +29,7 @@ def _workflow(
         metadata=WorkflowMetadata(
             workflow_id=workflow_id,
             author="test",
-            instrument_profile="d1",
+            instrument_profile=DEVICE_ID,
             experiment_type="smoke_test",
             lifecycle_state="Draft",
         ),
@@ -42,7 +45,7 @@ def _workflow(
 def _facade(tmp_path: Path):
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
     profile = facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         anchors=[
             {
@@ -67,7 +70,7 @@ def _facade(tmp_path: Path):
 def _facade_with_dialog_view(tmp_path: Path):
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         anchors=[],
         capture_width=1000,
@@ -206,6 +209,163 @@ def test_action_without_ocr_condition_uses_fixed_wait(tmp_path: Path) -> None:
     assert trace[0].matched is None
 
 
+def test_incrementing_type_steps_persist_and_reuse_per_run_value(tmp_path: Path) -> None:
+    facade = _facade(tmp_path)
+    workflow = facade.save_workflow(
+        _workflow(
+            "wf_incrementing_input",
+            [
+                {
+                    "id": "input_1",
+                    "action": "type",
+                    "target": "anchor_voltage_input",
+                    "input_mode": "incrementing",
+                    "increment_rule": {},
+                    "wait_seconds": 0.0,
+                },
+                {
+                    "id": "input_2",
+                    "action": "type",
+                    "target": "anchor_voltage_input",
+                    "input_mode": "incrementing",
+                    "increment_rule": {},
+                    "wait_seconds": 0.0,
+                },
+            ],
+        )
+    )
+
+    first = facade.start_run(workflow=workflow, background=False)
+    first_trace = facade.get_trace(first.session_id)
+    second = facade.start_run(workflow=workflow, background=False)
+    second_trace = facade.get_trace(second.session_id)
+
+    date = datetime.now().strftime("%Y%m%d")
+    assert workflow.steps[0].value is None
+    assert first_trace[0].action.value == f"{DEVICE_ID}-test-{date}-001"
+    assert first_trace[1].action.value == f"{DEVICE_ID}-test-{date}-001"
+    assert second_trace[0].action.value == f"{DEVICE_ID}-test-{date}-002"
+
+
+def test_incrementing_type_step_resolves_custom_pattern_without_mutating_workflow(
+    tmp_path: Path,
+) -> None:
+    facade = _facade(tmp_path)
+    workflow = facade.save_workflow(
+        _workflow(
+            "wf_custom_increment",
+            [
+                {
+                    "id": "input_sample",
+                    "action": "type",
+                    "target": "anchor_voltage_input",
+                    "input_mode": "incrementing",
+                    "increment_rule": {
+                        "pattern": "{workflow_id}-{counter:02d}",
+                        "start": 7,
+                        "width": 2,
+                    },
+                    "wait_seconds": 0.0,
+                },
+            ],
+        )
+    )
+
+    session = facade.start_run(workflow=workflow, background=False)
+    trace = facade.get_trace(session.session_id)
+
+    second = facade.start_run(workflow=workflow, background=False)
+    second_trace = facade.get_trace(second.session_id)
+
+    assert trace[0].action.value == "wf_custom_increment-07"
+    assert second_trace[0].action.value == "wf_custom_increment-08"
+    assert workflow.steps[0].value is None
+    assert workflow.steps[0].increment_rule is not None
+    assert workflow.steps[0].increment_rule.pattern == "{workflow_id}-{counter:02d}"
+
+
+def test_incrementing_type_step_does_not_advance_after_failed_run(
+    tmp_path: Path,
+) -> None:
+    facade = _facade(tmp_path)
+    workflow = facade.save_workflow(
+        _workflow(
+            "wf_failed_increment",
+            [
+                {
+                    "id": "input_sample",
+                    "action": "type",
+                    "target": "anchor_voltage_input",
+                    "input_mode": "incrementing",
+                    "increment_rule": {"pattern": "{counter:03d}"},
+                    "match_mode": "contains",
+                    "expected_text": "never-matches",
+                    "timeout_seconds": 0.1,
+                },
+            ],
+        )
+    )
+
+    failed = facade.start_run(workflow=workflow, background=False)
+    failed_trace = facade.get_trace(failed.session_id)
+    success_workflow = facade.save_workflow(
+        _workflow(
+            "wf_failed_increment",
+            [
+                {
+                    "id": "input_sample",
+                    "action": "type",
+                    "target": "anchor_voltage_input",
+                    "input_mode": "incrementing",
+                    "increment_rule": {"pattern": "{counter:03d}"},
+                    "wait_seconds": 0.0,
+                },
+            ],
+        )
+    )
+    success = facade.start_run(workflow=success_workflow, background=False)
+    success_trace = facade.get_trace(success.session_id)
+
+    assert failed.status == RunSessionStatus.FAILED
+    assert failed_trace[0].action.value == "001"
+    assert success_trace[0].action.value == "001"
+
+
+def test_incrementing_type_step_cycles_and_formats_date(tmp_path: Path) -> None:
+    facade = _facade(tmp_path)
+    workflow = facade.save_workflow(
+        _workflow(
+            "wf_cycle_increment",
+            [
+                {
+                    "id": "input_sample",
+                    "action": "type",
+                    "target": "anchor_voltage_input",
+                    "input_mode": "incrementing",
+                    "increment_rule": {
+                        "pattern": "{date}-{counter:02d}",
+                        "date_format": "%Y-%m-%d",
+                        "start": 100,
+                        "min_value": 0,
+                        "max_value": 100,
+                        "cycle": True,
+                    },
+                    "wait_seconds": 0.0,
+                },
+            ],
+        )
+    )
+
+    first = facade.start_run(workflow=workflow, background=False)
+    second = facade.start_run(workflow=workflow, background=False)
+    first_trace = facade.get_trace(first.session_id)
+    second_trace = facade.get_trace(second.session_id)
+    date = datetime.now().strftime("%Y-%m-%d")
+
+    assert first_trace[0].action.value == f"{date}-100"
+    assert second_trace[0].action.value == f"{date}-00"
+
+
 def test_observation_exception_fails_run_without_thread_crash(tmp_path: Path) -> None:
     facade = _facade(tmp_path)
     events: list[tuple[RuntimeEventName, dict]] = []
@@ -286,7 +446,7 @@ def test_wait_step_with_anchor_polls_ocr_without_running_action(tmp_path: Path) 
             metadata=WorkflowMetadata(
                 workflow_id="wf_wait_for_dialog",
                 author="test",
-                anchor_profile="d1",
+                anchor_profile=DEVICE_ID,
                 lifecycle_state="Draft",
             ),
             steps=[
@@ -330,7 +490,7 @@ def test_multiview_runtime_keeps_main_window_as_execution_target(tmp_path: Path)
             metadata=WorkflowMetadata(
                 workflow_id="wf_dialog_view_click",
                 author="test",
-                anchor_profile="d1",
+                anchor_profile=DEVICE_ID,
                 lifecycle_state="Draft",
             ),
             steps=[
@@ -356,7 +516,7 @@ def test_multiview_runtime_keeps_main_window_as_execution_target(tmp_path: Path)
 def test_exception_popup_rule_blocks_run_before_action(tmp_path: Path) -> None:
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
     profile = facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         anchors=[],
         capture_width=1000,
@@ -428,7 +588,7 @@ def test_exception_popup_rule_blocks_run_before_action(tmp_path: Path) -> None:
             metadata=WorkflowMetadata(
                 workflow_id="wf_exception_popup",
                 author="test",
-                anchor_profile="d1",
+                anchor_profile=DEVICE_ID,
                 lifecycle_state="Draft",
             ),
             steps=[WorkflowStep(id="start", action="click", anchor_id="start_button")],

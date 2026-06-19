@@ -130,9 +130,11 @@ class WorkflowPage(QWidget):
 
         self._workflow_id = QLineEdit()
         self._workflow_id.setPlaceholderText("wf_new_experiment")
+        self._workflow_id.textChanged.connect(lambda _text: self._refresh_increment_context())
         self._anchor_profile = NoWheelComboBox()
         self._anchor_profile.currentIndexChanged.connect(self._on_profile_changed)
         self._author = QLineEdit("smartaccess")
+        self._author.textChanged.connect(lambda _text: self._refresh_increment_context())
         self._lifecycle = NoWheelComboBox()
         for state in ("Draft", "Standardized", "Published"):
             self._lifecycle.addItem(state, state)
@@ -296,12 +298,38 @@ class WorkflowPage(QWidget):
         profile_anchor_ids = [anchor.id for anchor in profile.anchors] if profile else []
         self._anchor_ids = list(dict.fromkeys([*profile_anchor_ids, *view_anchor_ids]))
         if hasattr(self, "_steps"):
+            self._refresh_increment_context()
             self._steps.set_steps(
                 self._steps.rows(),
                 self._anchor_ids,
                 self._view_ids,
                 anchors_by_view=self._anchors_by_view,
             )
+
+    def _refresh_increment_context(self) -> None:
+        """Refresh per-row incrementing input previews from workflow metadata."""
+
+        if not hasattr(self, "_steps"):
+            return
+        workflow_id = self._workflow_id.text().strip()
+        anchor_profile = self._anchor_profile.currentData()
+        def preview_counter(rule: dict) -> int | None:
+            if not workflow_id:
+                return None
+            try:
+                return self._vm.preview_increment_value(workflow_id, rule)
+            except Exception:  # noqa: BLE001 - preview must not block editing.
+                return None
+
+        self._steps.set_increment_context(
+            {
+                "device_id": str(anchor_profile or ""),
+                "author": self._author.text().strip() or "smartaccess",
+                "workflow_id": workflow_id,
+                "workflow_name": workflow_id,
+            },
+            preview_counter=preview_counter,
+        )
 
     def _new_workflow(self) -> None:
         """创建空工作流编辑状态。"""
@@ -318,6 +346,7 @@ class WorkflowPage(QWidget):
             self._view_ids,
             anchors_by_view=self._anchors_by_view,
         )
+        self._refresh_increment_context()
         self._clear_result()
 
     def _select_workflow(self) -> None:
@@ -361,6 +390,12 @@ class WorkflowPage(QWidget):
                 view_id=step.view_id,
                 anchor_id=step.anchor_id,
                 value=step.value,
+                input_mode=step.input_mode,
+                increment_rule=(
+                    step.increment_rule.model_dump(mode="json")
+                    if step.increment_rule is not None
+                    else None
+                ),
                 wait_seconds=step.wait_seconds,
                 match_mode=step.match_mode,
                 expected_text=step.expected_text,
@@ -379,6 +414,7 @@ class WorkflowPage(QWidget):
             self._view_ids,
             anchors_by_view=self._anchors_by_view,
         )
+        self._refresh_increment_context()
         self._clear_result()
 
     def _add_action(self) -> None:
@@ -580,6 +616,8 @@ class WorkflowPage(QWidget):
                 "view_id": row.view_id,
                 "anchor_id": row.anchor_id,
                 "value": row.value,
+                "input_mode": row.input_mode,
+                "increment_rule": row.increment_rule,
                 "wait_seconds": row.wait_seconds,
                 "match_mode": row.match_mode,
                 "expected_text": row.expected_text,

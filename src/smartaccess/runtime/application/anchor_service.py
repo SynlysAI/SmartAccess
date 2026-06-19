@@ -19,6 +19,7 @@ from smartaccess.shared.contracts.anchors import (
     WindowSignature,
 )
 from smartaccess.shared.contracts.io import dump_yaml_contract, load_yaml_contract
+from smartaccess.shared.contracts.validation import require_valid_device_id
 from smartaccess.shared.logging import get_logger
 
 
@@ -94,6 +95,7 @@ class AnchorService:
             已保存的锚点契约。
         """
 
+        profile_id = require_valid_device_id(profile_id)
         profile = AnchorsContract(
             profile_id=profile_id,
             window_signature=WindowSignature(

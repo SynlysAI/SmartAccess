@@ -229,6 +229,34 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QPlainTextEdit:focus, QTextEdit:focus {{
     border: 1px solid {PRIMARY};
 }}
+QLineEdit[validationState="valid"] {{
+    border: 1px solid {SUCCESS};
+    background: #F0FDF4;
+}}
+QLineEdit[validationState="invalid"] {{
+    border: 1px solid {DANGER};
+    background: {DANGER_SOFT};
+}}
+QLabel#DeviceIdHint {{
+    background: {SURFACE_ALT};
+    color: {TEXT_MUTED};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 5px 8px;
+    line-height: 1.35;
+}}
+QLabel#DeviceIdHint[validationState="valid"] {{
+    background: #F0FDF4;
+    color: {SUCCESS};
+    border-color: {SUCCESS};
+    font-weight: 600;
+}}
+QLabel#DeviceIdHint[validationState="invalid"] {{
+    background: {DANGER_SOFT};
+    color: {DANGER};
+    border-color: {DANGER};
+    font-weight: 600;
+}}
 QPlainTextEdit#WorkflowResult {{
     background: {SURFACE_ALT};
     border: 1px solid {BORDER};

@@ -2,6 +2,14 @@
 
 本文件记录已落地或已明确进入实现基线的产品能力。详细产品范围以 `docs/PRD.zh-CN.md` 为准，技术语义以 `docs/SPEC.zh-CN.md` 与 `docs/contracts/interfaces.md` 为准。
 
+## 2026-06-19 设备 ID、输入模式与运行日志边界
+
+- 新建设备接入的 `profile_id`/设备 ID 统一为 `体系-实验室-产品型号-设备编号` 四段格式，例如 `氟基-2236实验室-元能极片电阻仪-01`；历史旧 `anchors.yaml` 仍可加载。
+- `WorkflowStep` 增加 `input_mode` 与 `increment_rule`，`type` 步骤支持 `free` 自由输入和 `incrementing` 运行内递增输入。
+- 工作流表格在递增式输入行的“值”列提供模板预览和“配置”入口；每行独立保存 `increment_rule`，可配置变量名、日期格式、计数位数和循环范围。
+- 递增式输入运行时解析为真实 `action.value` 写入 trace，不修改原始 workflow；计数按 `workflow_id + sequence_key` 持久化，成功运行后才推进，失败/取消/阻塞不消耗编号。
+- `RunSession` 记录 `device_id`、`author`、`workflow_name`，运行日志在开始和完成/失败/取消时输出 START/END 边界。
+
 ## 2026-06-15 运行监控设备摘要与 OCR 日志增强
 
 ### 运行监控

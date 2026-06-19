@@ -53,6 +53,13 @@ SmartAccess 是运行在实验室设备侧的非侵入式仪器接入与执行�
 | Eval Case | 回归评测场景，定义输入、预期事件和通过标准 | `eval_case.yaml` | `Draft -> Runnable -> Passing/Failing -> Retired` |
 | Template Version | 发布到 SpecLabOS 的稳定模板版本 | `workflow.yaml` + 平台模板接口 | `Draft -> Standardized -> Published -> Superseded/RolledBack` |
 
+补充约束：
+
+- 新建 Anchor Profile 的设备 ID 必须使用 `体系-实验室-产品型号-设备编号` 四段格式，并禁止 Windows 路径非法字符；旧文件加载不执行该阻断。
+- Workflow `type` 步骤的 `input_mode` 默认为 `free`；`incrementing` 使用 `increment_rule` 生成真实输入值，并按 `workflow_id + sequence_key` 持久化计数。
+- 每个 `type + incrementing` 步骤独立保存一份 `increment_rule`；桌面步骤表在该行“值”列展示预览，并通过“配置”按钮编辑模板、变量名、日期格式和循环范围。
+- Run Session 保存 `device_id`、`author`、`workflow_name`；运行监控日志对 `run.started` 和 `run.completed/run.failed/run.cancelled` 输出 START/END 边界。
+
 ## 5. 模块规格
 
 ### 5.1 工作台 Shell

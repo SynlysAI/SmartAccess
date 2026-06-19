@@ -11,11 +11,13 @@ from smartaccess.shared.contracts.workflow import (
 )
 from smartaccess.shared.events.runtime import RuntimeEventName
 
+DEVICE_ID = "氟基-2236实验室-元能极片电阻仪-01"
+
 
 def _facade(tmp_path: Path):
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         capture_width=800,
         capture_height=600,
@@ -53,7 +55,7 @@ def test_ocr_mismatch_failed_event_includes_debug_payload(tmp_path: Path) -> Non
             metadata=WorkflowMetadata(
                 workflow_id="wf_ocr_mismatch",
                 author="test",
-                anchor_profile="d1",
+                anchor_profile=DEVICE_ID,
                 lifecycle_state="Draft",
             ),
             steps=[

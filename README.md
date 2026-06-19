@@ -215,6 +215,8 @@ copy .envexample .env
 4. 在 `ai/agents/runtime/` 明确 orchestrator、executor、observer、recovery 的职责分配。
 5. 在 `ai/harness/evals/cases/` 新增回归用例，覆盖首次接入、执行、OCR 命中/超时、异常和回传。
 
+新建设备 ID 必须使用 `体系-实验室-产品型号-设备编号` 四段格式，并用 ASCII `-` 分隔，例如 `氟基-2236实验室-元能极片电阻仪-01`。该 ID 同时作为新建 `anchors.yaml` 的 `profile_id` 和 workflow 的 `metadata.anchor_profile` 引用；历史旧锚点文件仍可加载，但新建设备接入页和后端创建路径会阻断非法 ID。
+
 ## 观察区域锚点编辑
 
 1. 在设备接入页先选择目标窗口并捕获截图。
@@ -228,8 +230,12 @@ copy .envexample .env
 - 本地 OCR provider 是 `LocalVisionProvider`，依赖 `opencv-python`、`paddleocr` 和 `paddlepaddle`。
 - 锚点配置在 `anchors.yaml`：`action_region` 用于点击/聚焦，`observe_region` 用于动作后的 OCR 读取。
 - 工作流配置在 `workflow.yaml`：步骤用 `expected_text`、`match_mode`、`timeout_seconds` 声明 OCR 预期；`match_mode: none` 表示不做 OCR。
+- `type` 步骤支持 `input_mode: free` 和 `input_mode: incrementing`。自由输入沿用 `value`；递增式输入在运行时按 `{device_id}-{author}-{date}-{counter:03d}` 解析，日期由 `date_format` 控制，计数器按 `workflow_id + sequence_key` 持久化。
+- 每个 `type + incrementing` 步骤都有独立 `increment_rule`；桌面工作流表格在该行“值”列显示递增预览，并通过“配置”按钮编辑本行模板、变量名、日期格式、起始值、计数位数和循环范围。
+- 同一次 run session 内相同递增变量只生成一次值并复用；只有 workflow 成功完成后才持久化推进下次值，失败、取消或阻塞不会消耗编号。
 - Orchestrator 先执行动作；无 OCR 时按 `step.wait_seconds -> anchor.default_wait_seconds -> 0` 固定等待；有 OCR 时每 0.5 秒截图、裁剪 observe region、识别并匹配文本。
-- 每步都会写入 `run_trace.jsonl`，包含期望 OCR、实际 OCR、匹配结果、尝试次数、耗时、截图路径和错误详情。
+- 每步都会写入 `run_trace.jsonl`，包含期望 OCR、实际 OCR、匹配结果、尝试次数、耗时、截图路径和错误详情；递增式输入写入 trace 的 `action.value` 是运行时解析后的真实输入值。
+- 运行监控日志在任务开始和结束时输出 START/END 边界，包含设备 ID、作者、工作流名称和 session；失败日志保留 OCR 规则、实际文本、匹配结果和尝试次数。
 
 ## 能力示例
 
@@ -266,10 +272,13 @@ copy .envexample .env
 
 - ✅ 四页主导航：锚点、工作流、模板/平台、执行
 - ✅ `anchors.yaml` 作为唯一锚点配置
-- ✅ 简化 `workflow.yaml`：线性步骤 + anchor_id + action + expected_text/match_mode
+- ✅ 新建设备 ID 使用 `体系-实验室-产品型号-设备编号` 四段主键规则
+- ✅ 简化 `workflow.yaml`：线性步骤 + anchor_id + action + expected_text/match_mode + type 输入模式
+- ✅ `type` 步骤支持自由输入和运行内递增输入
 - ✅ OCR-only 观测链路：截图、裁剪、OCR 读取、文本匹配
 - ✅ 真实 Win32 UI 自动化（click/type/hotkey/press_enter；双击用两个连续 click 步骤表达）
-- ✅ `run_trace.jsonl` 自动记录每步 OCR 事实、截图路径、等待策略和错误详情
+- ✅ `run_trace.jsonl` 自动记录每步 OCR 事实、截图路径、等待策略、真实输入值和错误详情
+- ✅ 运行日志 START/END 边界标识设备、作者、工作流和 session
 - ✅ 平台从 trace 提取结果
 - ✅ 模板/平台仍为一级入口，但只发布和回拉新简化 workflow
 

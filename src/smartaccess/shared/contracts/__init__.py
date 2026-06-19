@@ -40,8 +40,10 @@ from .run_trace import (
     WaitStrategyPayload,
 )
 from .validation import validate_workflow_against_anchors
+from .validation import require_valid_device_id, validate_device_id
 from .workflow import (
     WorkflowContract,
+    WorkflowIncrementRule,
     WorkflowMetadata,
     WorkflowMigrationError,
     WorkflowOutput,
@@ -87,4 +89,7 @@ __all__ = [
     "load_jsonl_contracts",
     "load_yaml_contract",
     "validate_workflow_against_anchors",
+    "require_valid_device_id",
+    "validate_device_id",
+    "WorkflowIncrementRule",
 ]

@@ -77,3 +77,8 @@ class WorkflowViewModel(ViewModel):
         """执行标准化检查。"""
 
         return self._facade.standardize(workflow)
+
+    def preview_increment_value(self, workflow_id: str, rule: dict) -> int:
+        """Return the next persisted increment value for preview."""
+
+        return self._facade.preview_increment_value(workflow_id, rule)

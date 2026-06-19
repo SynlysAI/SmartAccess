@@ -60,6 +60,30 @@ class WorkflowMetadata(FlexibleContractModel):
         return self
 
 
+class WorkflowIncrementRule(FlexibleContractModel):
+    """Runtime-only input increment rule for type steps."""
+
+    pattern: str = "{device_id}-{author}-{date}-{counter:03d}"
+    start: int = Field(default=1, ge=0)
+    width: int = Field(default=3, ge=1)
+    sequence_key: NonEmptyStr = "default"
+    date_format: NonEmptyStr = "%Y%m%d"
+    min_value: int | None = Field(default=None, ge=0)
+    max_value: int | None = Field(default=None, ge=0)
+    cycle: bool = False
+
+    @model_validator(mode="after")
+    def _normalize_increment_range(self) -> "WorkflowIncrementRule":
+        """Validate persistent increment counter bounds."""
+
+        lower = self.min_value if self.min_value is not None else self.start
+        if self.max_value is not None and self.max_value < lower:
+            raise ValueError("increment_rule.max_value must be >= min_value/start")
+        if self.cycle and self.max_value is None:
+            raise ValueError("increment_rule.max_value is required when cycle is true")
+        return self
+
+
 class WorkflowStep(FlexibleContractModel):
     """工作流中的一个动作步骤或等待步骤。"""
 
@@ -69,6 +93,8 @@ class WorkflowStep(FlexibleContractModel):
     target: str | None = Field(default=None, exclude=True)
     action: Literal["click", "type", "hotkey", "press_enter", "wait"]
     value: Any | None = None
+    input_mode: Literal["free", "incrementing"] = "free"
+    increment_rule: WorkflowIncrementRule | None = None
     condition: dict[str, Any] | None = Field(default=None, exclude=True)
     expected_text: str | list[str] | None = None
     expected_candidates: list[str] = Field(default_factory=list)
@@ -131,8 +157,15 @@ class WorkflowStep(FlexibleContractModel):
             ):
                 self.timeout_seconds = float(normalized["timeout_seconds"])
         if self.action == "wait":
+            self.input_mode = "free"
+            self.increment_rule = None
             self._normalize_wait_step()
             return self
+        if self.action != "type":
+            self.input_mode = "free"
+            self.increment_rule = None
+        elif self.input_mode == "incrementing" and self.increment_rule is None:
+            self.increment_rule = WorkflowIncrementRule()
         if self.expected_candidates:
             if self.expected_text is None:
                 self.expected_text = list(self.expected_candidates)

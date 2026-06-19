@@ -37,6 +37,7 @@ from smartaccess.shared.contracts.anchors import (
     AnchorsContract,
     AnchorView,
 )
+from smartaccess.shared.contracts.validation import validate_device_id
 
 DEFAULT_VIEW_ID = "main"
 
@@ -132,12 +133,18 @@ class CalibrationPage(QWidget):
 
         form = QFormLayout()
         self._device_id = QLineEdit()
-        self._device_id.setPlaceholderText("device_01")
+        self._device_id.setPlaceholderText("氟基-2236实验室-元能极片电阻仪-01")
+        self._device_id.textChanged.connect(self._update_device_id_hint)
         self._title_contains = QLineEdit()
         self._title_contains.setPlaceholderText("窗口标题关键字")
         form.addRow("设备 ID", self._device_id)
+        self._device_id_hint = QLabel()
+        self._device_id_hint.setObjectName("DeviceIdHint")
+        self._device_id_hint.setWordWrap(True)
+        form.addRow("", self._device_id_hint)
         form.addRow("窗口标题", self._title_contains)
         layout.addLayout(form)
+        self._update_device_id_hint()
 
         view_title = QLabel("视图")
         view_title.setObjectName("PageHint")
@@ -619,6 +626,7 @@ class CalibrationPage(QWidget):
 
         device_id = (device_id if device_id is not None else self._device_id.text()).strip()
         title = (title if title is not None else self._title_contains.text()).strip()
+        self._update_device_id_hint(device_id)
         missing = []
         if not device_id:
             missing.append("设备 ID")
@@ -631,7 +639,42 @@ class CalibrationPage(QWidget):
                 "请填写：" + "、".join(missing),
             )
             return None
+        issues = validate_device_id(device_id)
+        if issues:
+            QMessageBox.warning(
+                self,
+                "设备 ID 格式错误",
+                "设备 ID 必须使用 体系-实验室-产品型号-设备编号 四段格式，例如：\n"
+                "氟基-2236实验室-元能极片电阻仪-01\n\n"
+                + "\n".join(issues),
+            )
+            return None
         return device_id, title
+
+    def _update_device_id_hint(self, value: str | None = None) -> None:
+        """Refresh the inline device ID validation hint."""
+
+        device_id = (value if value is not None else self._device_id.text()).strip()
+        if not device_id:
+            self._set_device_id_state(
+                "neutral",
+                "格式：体系-实验室-产品型号-设备编号，例如 氟基-2236实验室-元能极片电阻仪-01",
+            )
+            return
+        issues = validate_device_id(device_id)
+        if issues:
+            self._set_device_id_state("invalid", "格式需调整：" + "；".join(issues))
+            return
+        self._set_device_id_state("valid", "格式正确，可用于设备配置保存和工作流绑定。")
+
+    def _set_device_id_state(self, state: str, text: str) -> None:
+        """Apply validation state to the device ID field and hint."""
+
+        self._device_id_hint.setText(text)
+        for widget in (self._device_id, self._device_id_hint):
+            widget.setProperty("validationState", state)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def _refresh_views(self) -> None:
         """刷新设备视图列表。"""

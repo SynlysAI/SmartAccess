@@ -36,6 +36,8 @@
 
 描述一个上位机窗口中的可执行锚点集合。锚点是动作入口，不是自由 ROI 库；每个锚点固定包含动作区域，可选包含一个动作后 OCR 观测区域。
 
+新建设备接入时，`profile_id` 同时作为设备主键，必须使用 `体系-实验室-产品型号-设备编号` 四段格式，并用 ASCII `-` 分隔，例如 `氟基-2236实验室-元能极片电阻仪-01`。新建路径禁止 Windows 路径非法字符 `/\:*?"<>|` 和首尾空白；历史已存在的旧 `anchors.yaml` 仍允许加载。
+
 ### 4.2 顶层字段
 
 | 字段 | 说明 |
@@ -84,6 +86,16 @@
 | `steps[].anchor_id` | 目标锚点 ID |
 | `steps[].action` | `click`、`type`、`hotkey`、`press_enter` 之一；双击用两个连续 `click` 步骤表达 |
 | `steps[].value` | 可选输入值，例如文本或快捷键 |
+| `steps[].input_mode` | 可选，`free` 或 `incrementing`，默认 `free`；仅 `type` 步骤启用 |
+| `steps[].increment_rule` | `incrementing` 输入的持久化递增规则；每个 `type + incrementing` 步骤独立保存一份规则 |
+| `steps[].increment_rule.pattern` | 默认 `{device_id}-{author}-{date}-{counter:03d}`；桌面端在该行“值”列的“配置”按钮中编辑 |
+| `steps[].increment_rule.start` | 默认 `1` |
+| `steps[].increment_rule.width` | 默认 `3`，用于默认模板中的计数宽度说明 |
+| `steps[].increment_rule.sequence_key` | 默认 `default`；同一 workflow 内相同变量名复用同一个持久化计数 |
+| `steps[].increment_rule.date_format` | 默认 `%Y%m%d`，用于渲染 `{date}` |
+| `steps[].increment_rule.min_value` | 可选循环下限；为空时使用 `start` |
+| `steps[].increment_rule.max_value` | 可选循环上限 |
+| `steps[].increment_rule.cycle` | 默认 `false`；为 `true` 时达到 `max_value` 后回到 `min_value/start` |
 | `steps[].expected_text` | 可选 OCR 预期文本；非空时运行器轮询该锚点 `observe_region` |
 | `steps[].match_mode` | `contains`、`equals`、`regex`、`not_empty` 或 `none` |
 | `steps[].timeout_seconds` | 可选 OCR 轮询超时秒数 |
@@ -103,6 +115,9 @@
 
 - workflow 不声明运行结果字段；OCR 事实由运行器自动写入 `run_trace.jsonl`。
 - workflow 不声明复杂判断树、流程控制或多模式识别。
+- `incrementing` 输入在运行时解析为真实 `value`，不回写原始 workflow；计数器状态持久化到 `workspace/state/increment_counters.yaml`。
+- 同一次 run session 内相同 `sequence_key` 只生成一次值并复用；只有 workflow 成功完成后才推进下次值，失败、取消、阻塞不消耗编号。
+- 递增模板不是全局配置；UI 保存时必须保留每行已加载或已编辑的 `increment_rule`，不能重置为默认模板或当前计数。
 - 平台若仍需要旧字段名，由平台适配器映射，不污染主契约。
 
 ## 6. `platform_adapter.yaml`
@@ -177,6 +192,7 @@
 
 - `run_trace.jsonl` 采用 JSONL，方便流式写入和平台补传。
 - OCR 结果自动进入 trace。
+- 递增式输入写入 trace 时，`action.value` 必须是运行时解析后的真实输入值。
 - 与模板相关的事件应能标识 `template_id`、`template_version` 和来源。
 
 ## 9. `eval_case.yaml`

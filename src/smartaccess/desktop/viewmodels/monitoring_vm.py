@@ -224,6 +224,9 @@ class MonitoringViewModel(ViewModel):
         detail = payload.get("detail") or payload.get("reason") or ""
         action = payload.get("action")
         message = str(event.name.value)
+        boundary = MonitoringViewModel._boundary_message(event.name.value, payload, event.session_id)
+        if boundary:
+            message = boundary
         if step_id:
             message = f"{message} / {step_id}"
         if action:
@@ -243,6 +246,38 @@ class MonitoringViewModel(ViewModel):
             message=message,
             session_id=event.session_id,
             step_id=str(step_id) if step_id else None,
+        )
+
+    @staticmethod
+    def _boundary_message(
+        event_name: str,
+        payload: dict,
+        session_id: str | None,
+    ) -> str | None:
+        """Return START/END run boundary message for lifecycle events."""
+
+        if event_name == "run.started":
+            label = "START"
+        elif event_name == "run.completed":
+            label = "END completed"
+        elif event_name == "run.failed":
+            label = "END failed"
+        elif event_name == "run.cancelled":
+            label = "END cancelled"
+        else:
+            return None
+        if not any(
+            key in payload
+            for key in ("device_id", "author", "workflow_name", "workflow_id")
+        ):
+            return None
+        device_id = payload.get("device_id") or "-"
+        author = payload.get("author") or "-"
+        workflow_name = payload.get("workflow_name") or payload.get("workflow_id") or "-"
+        session = session_id or "-"
+        return (
+            f"{label} / device_id={device_id} / author={author} / "
+            f"workflow={workflow_name} / session={session}"
         )
 
     @staticmethod

@@ -8,7 +8,12 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from smartaccess.runtime.application.incident_service import IncidentService
-from smartaccess.runtime.application.run_session_service import RunSessionService
+from smartaccess.runtime.application.run_session_service import (
+    IncrementCounterError,
+    IncrementCounterService,
+    IncrementReservation,
+    RunSessionService,
+)
 from smartaccess.runtime.domain.incident import IncidentType, RecoveryAction
 from smartaccess.runtime.domain.run_session import RunSession, RunStep, RunStepStatus
 from smartaccess.shared.contracts.anchors import AnchorsContract
@@ -70,6 +75,7 @@ class Orchestrator:
         recovery: RecoveryEngine,
         run_sessions: RunSessionService,
         incidents: IncidentService,
+        increment_counters: IncrementCounterService | None = None,
         confirm_handler: ConfirmHandler | None = None,
         max_retries: int = 2,
     ) -> None:
@@ -90,6 +96,7 @@ class Orchestrator:
         self._recovery = recovery
         self._run_sessions = run_sessions
         self._incidents = incidents
+        self._increment_counters = increment_counters
         self._confirm: ConfirmHandler = confirm_handler or (lambda _request: True)
         self._max_retries = max_retries
 
@@ -122,6 +129,7 @@ class Orchestrator:
 
         try:
             self._executor.configure_profile(profile)
+            increment_values: dict[str, IncrementReservation] = {}
             title = profile.window_signature.title_contains if profile else None
             self._run_sessions.emit_event(session, RuntimeEventName.RUN_READY)
             try:
@@ -137,12 +145,21 @@ class Orchestrator:
             self._run_sessions.emit_event(session, RuntimeEventName.RUN_STARTED)
             for step in workflow.steps:
                 if self._is_stopped(session, step.id):
+                    self._release_increment_counters(session)
                     return self._cancel_run(session, step_id=step.id)
+                step = self._resolve_runtime_step(
+                    step,
+                    session=session,
+                    values=increment_values,
+                )
                 if not self._run_step(session, workflow, profile, step):
+                    self._release_increment_counters(session)
                     return session
                 if self._is_stopped(session, step.id):
+                    self._release_increment_counters(session)
                     return self._cancel_run(session, step_id=step.id)
         except Exception as exc:  # noqa: BLE001 - 编排层需要兜底记录失败
+            self._release_increment_counters(session)
             current_step = next(
                 (item for item in session.steps if item.status == RunStepStatus.RUNNING),
                 None,
@@ -152,6 +169,15 @@ class Orchestrator:
                 detail=str(exc),
                 profile=profile,
                 step_id=current_step.step_id if current_step else None,
+            )
+        try:
+            self._commit_increment_counters(session, list(increment_values.values()))
+        except IncrementCounterError as exc:
+            return self._fail_run(
+                session,
+                detail=str(exc),
+                profile=profile,
+                step_id=None,
             )
         self._run_sessions.emit_event(session, RuntimeEventName.RUN_COMPLETED)
         return session
@@ -213,6 +239,74 @@ class Orchestrator:
             )
             return False
         return self._observe_after_action(session, workflow, profile, step)
+
+    def _resolve_runtime_step(
+        self,
+        step: WorkflowStep,
+        *,
+        session: RunSession,
+        values: dict[str, IncrementReservation],
+    ) -> WorkflowStep:
+        """Return a run-scoped copy with persistent incrementing input resolved."""
+
+        if step.action != "type" or step.input_mode != "incrementing":
+            return step
+        rule = step.increment_rule
+        if rule is None:
+            return step
+        key = rule.sequence_key
+        reservation = values.get(key)
+        if reservation is None:
+            context = {
+                "device_id": session.device_id or "",
+                "author": session.author or "",
+                "workflow_name": session.workflow_name or session.workflow_id,
+                "workflow_id": session.workflow_id,
+                "session": session.session_id,
+            }
+            if self._increment_counters is None:
+                rendered = rule.pattern.format(
+                    **context,
+                    date=datetime.now().strftime(rule.date_format),
+                    counter=rule.start,
+                )
+                reservation = IncrementReservation(
+                    workflow_id=session.workflow_id,
+                    sequence_key=key,
+                    value=rule.start,
+                    rendered=rendered,
+                    next_value=rule.start + 1,
+                )
+            else:
+                reservation = self._increment_counters.render(
+                    workflow_id=session.workflow_id,
+                    session_id=session.session_id,
+                    rule=rule,
+                    context=context,
+                )
+            values[key] = reservation
+            self._run_sessions.emit_event(
+                session,
+                RuntimeEventName.RUN_STEP_OBSERVED,
+                step_id=step.id,
+                detail=(
+                    f"increment {key} value={reservation.rendered} "
+                    f"next={reservation.next_value}"
+                ),
+            )
+        return step.model_copy(update={"value": reservation.rendered})
+
+    def _commit_increment_counters(
+        self,
+        session: RunSession,
+        reservations: list[IncrementReservation],
+    ) -> None:
+        if self._increment_counters is not None:
+            self._increment_counters.commit(session.session_id, reservations)
+
+    def _release_increment_counters(self, session: RunSession) -> None:
+        if self._increment_counters is not None:
+            self._increment_counters.release(session.session_id)
 
     def _run_wait_step(
         self,

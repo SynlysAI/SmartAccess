@@ -1,6 +1,6 @@
 metadata:
   workflow_id: wf_battery_cycle_v2
-  anchor_profile: potentiostat_win_01
+  anchor_profile: 氟基-2236实验室-元能极片电阻仪-01
   author: smartaccess
   lifecycle_state: Published
   template_id: tpl_battery_cycle_standard
@@ -15,6 +15,23 @@ steps:
     anchor_id: voltage_input
     action: type
     value: "4.20"
+    input_mode: free
+    match_mode: none
+    wait_seconds: 0.5
+  - id: input_sample_id
+    anchor_id: voltage_input
+    action: type
+    input_mode: incrementing
+    increment_rule:
+      # This row has its own template, edited from the workflow table value cell.
+      pattern: "{device_id}-{author}-{date}-{counter:03d}"
+      start: 1
+      width: 3
+      sequence_key: sample_name
+      date_format: "%Y%m%d"
+      min_value: 1
+      max_value: 100
+      cycle: true
     match_mode: none
     wait_seconds: 0.5
   - id: start_run
