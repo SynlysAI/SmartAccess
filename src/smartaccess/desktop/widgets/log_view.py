@@ -34,6 +34,9 @@ class LogView(QTextEdit):
     def _entry_html(entry: MonitorLogEntry) -> str:
         """Render one log entry as HTML."""
 
+        boundary = _boundary_html(entry)
+        if boundary:
+            return boundary
         color = {
             "ERROR": theme.DANGER,
             "WARN": theme.WARNING,
@@ -51,6 +54,42 @@ class LogView(QTextEdit):
             "</div>"
             "</div>"
         )
+
+
+def _boundary_html(entry: MonitorLogEntry) -> str:
+    """Render run START/END events as visual separators with context."""
+
+    if not (entry.message.startswith("START / ") or entry.message.startswith("END ")):
+        return ""
+    color = theme.SUCCESS if entry.message.startswith("START / ") else theme.PRIMARY
+    if entry.level == "ERROR":
+        color = theme.DANGER
+    separator = "=" * 30
+    parts = [part.strip() for part in entry.message.split(" / ") if part.strip()]
+    title = parts[0] if parts else entry.message
+    context = parts[1:]
+    context_html = "".join(
+        f"<div style=\"line-height:1.35;margin:1px 0;overflow-wrap:anywhere;"
+        f"word-break:break-all;\">{rich_text.text(item)}</div>"
+        for item in context
+    )
+    return (
+        "<br><br>"
+        f"<div style=\"background-color:{theme.SURFACE_ALT};border:1px solid {color};"
+        f"border-left:4px solid {color};border-radius:6px;padding:7px 10px;"
+        f"margin:0 0 8px 0;color:{theme.TEXT};\">"
+        f"<div style=\"font-family:Consolas,'Microsoft YaHei',monospace;"
+        f"color:{color};font-weight:700;\">{rich_text.text(separator)}</div>"
+        f"<div style=\"line-height:1.3;margin:3px 0;font-weight:700;color:{color};\">"
+        f"{rich_text.text(title)} · 运行上下文 · {rich_text.text(entry.timestamp)} "
+        f"[{rich_text.text(entry.level)}]</div>"
+        f"{context_html}"
+        f"<div style=\"font-family:Consolas,'Microsoft YaHei',monospace;"
+        f"color:{color};font-weight:700;margin-top:3px;\">"
+        f"{rich_text.text(separator)}</div>"
+        "</div>"
+        "<br>"
+    )
 
 
 def _message_html(message: str) -> str:

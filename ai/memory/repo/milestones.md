@@ -2,7 +2,7 @@
 
 - `scope`: SmartAccess 产品与架构基线阶段目标。
 - `source_of_truth`: `docs/PRD.zh-CN.md`
-- `last_reviewed`: 2026-06-15
+- `last_reviewed`: 2026-06-19
 - `related_contracts`: `anchors.yaml`, `workflow.yaml`, `run_trace.jsonl`, `eval_case.yaml`
 
 ## 阶段目标
@@ -43,6 +43,14 @@
 - 多行说明/审计/日志区域开始使用富文本层级，至少区分标题、字段名、正文和错误/警告状态。
 - OCR mismatch 的 `run.failed` 事件携带当前 OCR 规则与识别结果，运行日志可直接高亮失败原因，不需要打开 trace 才能定位。
 - 运行监控摘要和日志以可读性优先：摘要字段分块换行，日志按当前宽度自动换行，不再依赖横向滚动查看长 OCR 调试信息。
+
+### VER5：设备 ID、输入模式与运行日志边界（2026-06-19）
+
+- 新建设备 ID 收敛为 `体系-实验室-产品型号-设备编号` 四段主键规则，作为 `anchors.yaml` 的 `profile_id` 和 workflow 的 `anchor_profile` 引用。
+- 历史旧锚点文件保持加载兼容；严格校验只作用于新建设备接入 UI 和后端创建路径。
+- `type` 步骤新增 `free` 自由输入和 `incrementing` 运行内递增输入；递增值在 run session 内从 `001` 开始，下一次运行重新计数。
+- `RunSession` 增加设备 ID、作者和工作流名称上下文；运行日志在开始与结束事件输出 START/END 边界。
+- trace 的 `action.value` 记录运行时真实输入值，原始 workflow 不被运行时回写修改。
 
 ### MVP 阶段
 

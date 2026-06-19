@@ -255,10 +255,18 @@ class SmartAccessAiGenerator:
             "The JSON must match this simplified WorkflowContract shape:\n"
             '{"metadata":{"workflow_id":"...","author":"ai-assistant",'
             '"anchor_profile":"...","experiment_type":"...",'
-            '"lifecycle_state":"Draft"},"preconditions":[],"steps":[{"id":"step_1",'
+            '"lifecycle_state":"Draft"},'
+            '"preconditions":[{"description":"..."}],'
+            '"steps":[{"id":"step_1",'
             '"action":"click","view_id":"main","anchor_id":"anchor_id","value":null,'
-            '"match_mode":"none","wait_seconds":1.0}],'
+            '"match_mode":"none","wait_seconds":1.0},'
+            '{"id":"step_2","action":"type","view_id":"main",'
+            '"anchor_id":"anchor_id","value":null,"input_mode":"incrementing",'
+            '"increment_rule":{"pattern":"{device_id}-{date}-{counter:03d}",'
+            '"sequence_key":"sample_id","date_format":"%Y%m%d",'
+            '"start":1,"width":3},"match_mode":"none"}],'
             '"retry_policy":{"max_attempts":2}}\n'
+            "preconditions must be an array of objects, never an array of strings.\n"
             "match_mode must be one of contains, equals, regex, not_empty, none; "
             "never use exact.\n"
             "Allowed actions: click, type, hotkey, press_enter, wait.\n"
@@ -436,6 +444,9 @@ class SmartAccessAiGenerator:
 
         workflow_data.pop("roi_bindings", None)
         workflow_data.pop("outputs", None)
+        workflow_data["preconditions"] = SmartAccessAiGenerator._normalize_preconditions(
+            workflow_data.get("preconditions")
+        )
         for step in workflow_data.get("steps", []) or []:
             if "anchor_id" not in step and step.get("target"):
                 step["anchor_id"] = step.get("target")
@@ -455,6 +466,26 @@ class SmartAccessAiGenerator:
                 if step.get(field) is not None:
                     step[field] = SmartAccessAiGenerator._seconds(step[field])
         return workflow_data
+
+    @staticmethod
+    def _normalize_preconditions(raw: Any) -> list[dict[str, Any]]:
+        """Return audit-friendly preconditions as contract objects."""
+
+        if raw is None:
+            return []
+        if not isinstance(raw, list):
+            raw = [raw]
+        preconditions: list[dict[str, Any]] = []
+        for item in raw:
+            if isinstance(item, dict):
+                preconditions.append(item)
+                continue
+            if item is None:
+                continue
+            text = str(item).strip()
+            if text:
+                preconditions.append({"description": text})
+        return preconditions
 
     @staticmethod
     def _normalize_anchor_profile(

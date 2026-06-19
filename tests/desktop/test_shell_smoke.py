@@ -27,6 +27,7 @@ from smartaccess.shared.contracts.workflow import (  # noqa: E402
 )
 
 _APP: QApplication | None = None
+DEVICE_ID = "氟基-2236实验室-元能极片电阻仪-01"
 
 
 def _app() -> QApplication:
@@ -91,7 +92,7 @@ def _png_bytes(width: int = 8, height: int = 6) -> bytes:
 def _facade(tmp_path: Path):
     facade = _empty_facade(tmp_path)
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         anchors=[
             {
@@ -122,7 +123,7 @@ def _facade(tmp_path: Path):
             metadata=WorkflowMetadata(
                 workflow_id="wf_test",
                 author="test",
-                anchor_profile="d1",
+                anchor_profile=DEVICE_ID,
                 experiment_type="smoke_test",
                 lifecycle_state="Draft",
             ),
@@ -142,7 +143,7 @@ def _facade(tmp_path: Path):
     )
     facade.generate_workflow(
         "打开方法编辑器，启动运行，并等待状态变化。",
-        {"workflow_id": "wf_generated", "anchor_profile": "d1"},
+        {"workflow_id": "wf_generated", "anchor_profile": DEVICE_ID},
     )
     return facade
 
@@ -218,7 +219,7 @@ def test_workflow_page_shows_ai_evidence_and_saves_without_outputs(tmp_path: Pat
     assert saved.roi_bindings == {}
     assert saved.outputs == []
     serialized = saved.model_dump(mode="json", exclude_none=True)
-    assert serialized["metadata"]["anchor_profile"] == "d1"
+    assert serialized["metadata"]["anchor_profile"] == DEVICE_ID
     assert "instrument_profile" not in serialized["metadata"]
     assert all("anchor_id" in step and "target" not in step for step in serialized["steps"])
 
@@ -265,7 +266,7 @@ def test_workflow_page_step_table_adapts_to_content_and_row_count(tmp_path: Path
         metadata=WorkflowMetadata(
             workflow_id="wf_long_step_table",
             author="test",
-            anchor_profile="d1",
+            anchor_profile=DEVICE_ID,
             experiment_type="smoke_test",
             lifecycle_state="Draft",
         ),
@@ -450,7 +451,7 @@ def test_journey_projection_empty_workspace(tmp_path: Path) -> None:
 def test_journey_projection_only_device(tmp_path: Path) -> None:
     facade = _empty_facade(tmp_path)
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         anchors=[],
         actions=["click"],
@@ -464,7 +465,7 @@ def test_journey_projection_only_device(tmp_path: Path) -> None:
 def test_journey_projection_blocked_workflow(tmp_path: Path) -> None:
     facade = _empty_facade(tmp_path)
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="ElectroChem Console",
         anchors=[],
         actions=["click"],
@@ -475,7 +476,7 @@ def test_journey_projection_blocked_workflow(tmp_path: Path) -> None:
             metadata=WorkflowMetadata(
                 workflow_id="wf_blocked",
                 author="test",
-                anchor_profile="d1",
+                anchor_profile=DEVICE_ID,
                 experiment_type="smoke_test",
                 lifecycle_state="Draft",
             ),

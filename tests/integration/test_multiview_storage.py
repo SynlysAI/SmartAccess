@@ -5,6 +5,8 @@ from pathlib import Path
 from smartaccess.bootstrap import build_runtime_facade
 from smartaccess.shared.config.settings import AppSettings
 
+DEVICE_ID = "氟基-2236实验室-元能极片电阻仪-01"
+
 
 def _anchor(anchor_id: str) -> dict:
     return {
@@ -21,7 +23,7 @@ def test_create_calibration_persists_multiview_contract_and_view_captures(tmp_pa
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
 
     profile = facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="Main",
         capture_width=800,
         capture_height=600,
@@ -51,14 +53,14 @@ def test_create_calibration_persists_multiview_contract_and_view_captures(tmp_pa
         b"dialog-capture",
         view_id="dialog_confirm",
     )
-    reloaded = facade.get_instrument("d1")
+    reloaded = facade.get_instrument(DEVICE_ID)
 
     assert reloaded is not None
     assert sorted(reloaded.view_map()) == ["dialog_confirm", "main"]
     assert reloaded.anchor_for_view("dialog_confirm", "ok") is not None
-    assert facade.load_instrument_capture("d1") == b"main-capture"
+    assert facade.load_instrument_capture(DEVICE_ID) == b"main-capture"
     assert (
-        facade.load_instrument_capture("d1", view_id="dialog_confirm")
+        facade.load_instrument_capture(DEVICE_ID, view_id="dialog_confirm")
         == b"dialog-capture"
     )
-    assert (tmp_path / "anchors" / "d1" / "views" / "dialog_confirm" / "capture.png").exists()
+    assert (tmp_path / "anchors" / DEVICE_ID / "views" / "dialog_confirm" / "capture.png").exists()

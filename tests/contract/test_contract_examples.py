@@ -14,6 +14,7 @@ from smartaccess.shared.contracts import (
     load_yaml_contract,
     validate_workflow_against_anchors,
 )
+from smartaccess.shared.contracts.validation import validate_device_id
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -40,7 +41,7 @@ def test_load_core_contract_examples() -> None:
         RunTraceRecord,
     )
 
-    assert anchors.profile_id == "potentiostat_win_01"
+    assert anchors.profile_id == "氟基-2236实验室-元能极片电阻仪-01"
     assert workflow.metadata.anchor_profile == anchors.profile_id
     assert workflow.metadata.template_id == "tpl_battery_cycle_standard"
     assert platform_adapter.endpoint_map.fetch_template.endswith("{template_version}")
@@ -67,6 +68,72 @@ def test_package_exports_platform_and_eval_contracts() -> None:
 
     assert platform_adapter.endpoint_map.fetch_template == "/templates/{template_version}"
     assert eval_case.scenario.id == "case_01"
+
+
+def test_increment_rule_extended_fields_are_backward_compatible() -> None:
+    old_style = WorkflowContract.model_validate(
+        {
+            "metadata": {
+                "workflow_id": "wf_old_increment",
+                "anchor_profile": "device_1",
+                "author": "tester",
+                "lifecycle_state": "Draft",
+            },
+            "steps": [
+                {
+                    "id": "sample",
+                    "anchor_id": "input",
+                    "action": "type",
+                    "input_mode": "incrementing",
+                    "increment_rule": {},
+                }
+            ],
+        }
+    )
+    rule = old_style.steps[0].increment_rule
+
+    assert rule is not None
+    assert rule.sequence_key == "default"
+    assert rule.date_format == "%Y%m%d"
+    assert rule.min_value is None
+    assert rule.max_value is None
+    assert rule.cycle is False
+
+    new_style = WorkflowContract.model_validate(
+        {
+            "metadata": old_style.metadata.model_dump(mode="json"),
+            "steps": [
+                {
+                    "id": "sample",
+                    "anchor_id": "input",
+                    "action": "type",
+                    "input_mode": "incrementing",
+                    "increment_rule": {
+                        "pattern": "{date}-{counter:02d}",
+                        "sequence_key": "sample_name",
+                        "date_format": "%Y-%m-%d",
+                        "start": 0,
+                        "width": 2,
+                        "min_value": 0,
+                        "max_value": 100,
+                        "cycle": True,
+                    },
+                }
+            ],
+        }
+    )
+
+    dumped = new_style.model_dump(mode="json", exclude_none=True)
+    assert dumped["steps"][0]["increment_rule"]["sequence_key"] == "sample_name"
+    assert dumped["steps"][0]["increment_rule"]["date_format"] == "%Y-%m-%d"
+    assert dumped["steps"][0]["increment_rule"]["cycle"] is True
+
+
+def test_new_device_id_validation_rule() -> None:
+    assert validate_device_id("氟基-2236实验室-元能极片电阻仪-01") == []
+    assert validate_device_id("d1")
+    assert validate_device_id("氟基-2236实验室-元能极片电阻仪")
+    assert validate_device_id('氟基-2236实验室-元能/极片电阻仪-01')
 
 
 def test_load_eval_harness_cases() -> None:

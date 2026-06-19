@@ -10,11 +10,13 @@ from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowMetadata, WorkflowStep
 from smartaccess.shared.events.runtime import RuntimeEventName
 
+DEVICE_ID = "氟基-2236实验室-元能极片电阻仪-01"
+
 
 def _facade(tmp_path: Path, *, title: str = "ElectroChem Console"):
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains=title,
         capture_width=800,
         capture_height=600,
@@ -43,7 +45,7 @@ def _workflow(step: WorkflowStep, workflow_id: str = "wf_test") -> WorkflowContr
         metadata=WorkflowMetadata(
             workflow_id=workflow_id,
             author="test",
-            anchor_profile="d1",
+            anchor_profile=DEVICE_ID,
             lifecycle_state="Draft",
         ),
         steps=[step],
@@ -126,9 +128,9 @@ def test_window_missing_event_payload_identifies_device_and_window(tmp_path: Pat
     assert session.status == RunSessionStatus.FAILED
     assert blocked
     assert blocked[-1]["incident_type"] == "WindowMissing"
-    assert blocked[-1]["anchor_profile"] == "d1"
+    assert blocked[-1]["anchor_profile"] == DEVICE_ID
     assert blocked[-1]["title_contains"] == "Missing Application"
-    assert failed[-1]["anchor_profile"] == "d1"
+    assert failed[-1]["anchor_profile"] == DEVICE_ID
     assert failed[-1]["title_contains"] == "Missing Application"
 
 

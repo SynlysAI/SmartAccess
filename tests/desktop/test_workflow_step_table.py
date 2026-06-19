@@ -4,17 +4,26 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication, QComboBox  # noqa: E402
+from PyQt6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QComboBox,
+    QDialogButtonBox,
+    QLineEdit,
+    QPushButton,
+)
 
 from smartaccess.bootstrap import build_runtime_facade  # noqa: E402
 from smartaccess.desktop.pages.workflow_page import WorkflowPage  # noqa: E402
 from smartaccess.desktop.widgets.workflow_step_table import (  # noqa: E402
+    IncrementRuleDialog,
+    InputValueEditor,
     StepRow,
     WorkflowStepTable,
 )
 from smartaccess.shared.config.settings import AppSettings  # noqa: E402
 
 _APP: QApplication | None = None
+DEVICE_ID = "氟基-2236实验室-元能极片电阻仪-01"
 
 
 def _app() -> QApplication:
@@ -125,11 +134,160 @@ def test_insert_wait_ocr_and_manual_confirmation_steps() -> None:
     assert rows[1].requires_confirmation is True
 
 
+def test_type_step_input_mode_round_trips_and_wait_disables_mode() -> None:
+    _app()
+    table = WorkflowStepTable()
+    table.set_steps(
+        [
+            StepRow(
+                step_id="sample_id",
+                action="type",
+                anchor_id="input",
+                input_mode="incrementing",
+            ),
+            StepRow(step_id="wait_1", action="wait", wait_seconds=1.0),
+        ],
+        ["input"],
+    )
+
+    type_row, wait_row = table.rows()
+    mode = table.cellWidget(1, 5)
+
+    assert type_row.input_mode == "incrementing"
+    assert type_row.increment_rule == {
+        "pattern": "{device_id}-{author}-{date}-{counter:03d}",
+        "start": 1,
+        "width": 3,
+        "sequence_key": "default",
+        "date_format": "%Y%m%d",
+        "min_value": None,
+        "max_value": None,
+        "cycle": False,
+    }
+    assert wait_row.input_mode == "free"
+    assert mode is not None
+    assert mode.isEnabled() is False
+
+
+def test_increment_rule_round_trips_without_resetting_to_default() -> None:
+    _app()
+    custom_rule = {
+        "pattern": "{workflow_id}-{counter:02d}",
+        "start": 0,
+        "width": 2,
+        "sequence_key": "sample_name",
+        "date_format": "%Y-%m-%d",
+        "min_value": 0,
+        "max_value": 100,
+        "cycle": True,
+    }
+    table = WorkflowStepTable()
+    table.set_steps(
+        [
+            StepRow(
+                step_id="sample_id",
+                action="type",
+                anchor_id="input",
+                input_mode="incrementing",
+                increment_rule=custom_rule,
+            )
+        ],
+        ["input"],
+    )
+
+    row = table.rows()[0]
+
+    assert row.value is None
+    assert row.input_mode == "incrementing"
+    assert row.increment_rule == custom_rule
+
+
+def test_value_cell_switches_between_free_and_incrementing_modes() -> None:
+    _app()
+    table = WorkflowStepTable()
+    table.set_steps(
+        [StepRow(step_id="sample_id", action="type", anchor_id="input", value="abc")],
+        ["input"],
+    )
+    mode = table.cellWidget(0, 5)
+    value = table.cellWidget(0, 4)
+    assert isinstance(mode, QComboBox)
+    assert isinstance(value, InputValueEditor)
+
+    assert table.rows()[0].value == "abc"
+    mode.setCurrentIndex(mode.findData("incrementing"))
+
+    row = table.rows()[0]
+    assert row.value is None
+    assert row.input_mode == "incrementing"
+    assert row.increment_rule == {
+        "pattern": "{device_id}-{author}-{date}-{counter:03d}",
+        "start": 1,
+        "width": 3,
+        "sequence_key": "default",
+        "date_format": "%Y%m%d",
+        "min_value": None,
+        "max_value": None,
+        "cycle": False,
+    }
+
+
+def test_increment_rule_dialog_updates_width_and_validates_pattern() -> None:
+    app = _app()
+    dialog = IncrementRuleDialog(
+        {
+            "pattern": "{workflow_id}-{counter:03d}",
+            "start": 1,
+            "width": 3,
+            "sequence_key": "sample_name",
+            "date_format": "%Y-%m-%d",
+            "max_value": 10,
+            "cycle": True,
+        },
+        {"workflow_id": "wf_demo"},
+    )
+    pattern = dialog._pattern
+
+    dialog._width.setValue(4)
+    app.processEvents()
+
+    assert pattern.text() == "{workflow_id}-{counter:04d}"
+    assert dialog.rule()["width"] == 4
+    assert dialog.rule()["sequence_key"] == "sample_name"
+    assert dialog.rule()["date_format"] == "%Y-%m-%d"
+    assert dialog.rule()["max_value"] == 10
+    assert dialog.rule()["cycle"] is True
+
+    pattern.setText("{workflow_id}")
+    app.processEvents()
+    ok = dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
+    assert ok is not None
+    assert ok.isEnabled() is False
+
+
+def test_increment_value_editor_config_button_is_visible_for_incrementing() -> None:
+    _app()
+    editor = InputValueEditor(input_mode="incrementing")
+    buttons = editor.findChildren(QPushButton)
+
+    assert any(button.text() for button in buttons)
+    assert editor.increment_rule() == {
+        "pattern": "{device_id}-{author}-{date}-{counter:03d}",
+        "start": 1,
+        "width": 3,
+        "sequence_key": "default",
+        "date_format": "%Y%m%d",
+        "min_value": None,
+        "max_value": None,
+        "cycle": False,
+    }
+
+
 def test_workflow_page_passes_view_anchor_mapping(tmp_path) -> None:
     _app()
     facade = build_runtime_facade(AppSettings(workspace_dir=tmp_path))
     facade.create_calibration(
-        device_id="d1",
+        device_id=DEVICE_ID,
         title_contains="Main",
         capture_width=800,
         capture_height=600,

@@ -23,7 +23,10 @@ from smartaccess.runtime.application.migration_service import (
     MigrationService,
 )
 from smartaccess.runtime.application.platform_sync_service import PlatformSyncService
-from smartaccess.runtime.application.run_session_service import RunSessionService
+from smartaccess.runtime.application.run_session_service import (
+    IncrementCounterService,
+    RunSessionService,
+)
 from smartaccess.runtime.application.template_service import (
     TemplateRecord,
     TemplateStats,
@@ -41,7 +44,7 @@ from smartaccess.runtime.domain.run_session import RunSession, RunStep
 from smartaccess.runtime.orchestration import Orchestrator
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorsContract
-from smartaccess.shared.contracts.workflow import WorkflowContract
+from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowIncrementRule
 from smartaccess.shared.events.bus import EventBus, Subscriber
 from smartaccess.shared.logging import get_logger
 
@@ -76,6 +79,7 @@ class RuntimeFacade:
         run_sessions: RunSessionService,
         incidents: IncidentService,
         platform_sync: PlatformSyncService,
+        increment_counters: IncrementCounterService | None = None,
         orchestrator: Orchestrator | None = None,
         migration: MigrationService | None = None,
         ai_generator: InstrumentProfileDraftGenerator | None = None,
@@ -114,6 +118,7 @@ class RuntimeFacade:
         self._run_sessions = run_sessions
         self._incidents = incidents
         self._platform_sync = platform_sync
+        self._increment_counters = increment_counters
         self._orchestrator = orchestrator
         self._migration = migration
         self._ai_generator = ai_generator
@@ -151,6 +156,22 @@ class RuntimeFacade:
         """返回应用配置。"""
 
         return self._settings
+
+    def preview_increment_value(
+        self,
+        workflow_id: str,
+        rule: dict[str, Any] | WorkflowIncrementRule,
+    ) -> int:
+        """Return the next persisted increment value for a workflow rule."""
+
+        normalized = (
+            rule
+            if isinstance(rule, WorkflowIncrementRule)
+            else WorkflowIncrementRule.model_validate(rule)
+        )
+        if self._increment_counters is None:
+            return normalized.start
+        return self._increment_counters.preview_next(workflow_id, normalized)
 
     def discover_windows(self) -> list[WindowInfo]:
         """扫描可接入窗口。"""
@@ -616,6 +637,9 @@ class RuntimeFacade:
                 RunStep(step_id=step.id, action=step.action)
                 for step in workflow.steps
             ],
+            device_id=workflow.metadata.anchor_profile,
+            author=workflow.metadata.author,
+            workflow_name=workflow.metadata.workflow_id,
             template_id=workflow.metadata.template_id,
             template_version=workflow.metadata.template_version,
         )
