@@ -32,11 +32,11 @@ class SpecLabOSPlatformClient:
         self._endpoints = {
             "health": "/health",
             "fetch_task": "/smartaccess/tasks/next",
-            "fetch_template": "/smartaccess/templates/{template_id}/versions/{template_version}",
-            "list_templates": "/smartaccess/templates",
-            "publish_template": "/smartaccess/templates/publish",
-            "delete_template": "/smartaccess/templates/{template_id}/versions/{template_version}",
-            "upload_status": "/smartaccess/status",
+            "fetch_template": "/api/smartaccess/templates/{template_id}/versions/{template_version}",
+            "list_templates": "/api/smartaccess/templates",
+            "publish_template": "/api/smartaccess/templates/publish",
+            "delete_template": "/api/smartaccess/templates/{template_id}/versions/{template_version}",
+            "upload_status": "/api/smartaccess/runs/{run_id}/events",
             "upload_logs": "/smartaccess/logs",
             "upload_results": "/smartaccess/results",
             **(endpoints or {}),
@@ -74,7 +74,26 @@ class SpecLabOSPlatformClient:
         return []
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", self._endpoints["publish_template"], payload)
+        workflow = dict(payload.get("workflow") or {})
+        metadata = workflow.get("metadata", {}) if isinstance(workflow, dict) else {}
+        normalized = {
+            "template_id": payload["template_id"],
+            "template_version": payload["template_version"],
+            "workflow_id": str(
+                metadata.get("workflow_id") or payload.get("workflow_id") or ""
+            ),
+            "name": str(metadata.get("workflow_id") or payload["template_id"]),
+            "description": str(metadata.get("description") or ""),
+            "anchor_profile": str(
+                payload.get("anchor_profile") or metadata.get("anchor_profile") or ""
+            ),
+            "source_device_id": str(
+                payload.get("source_device_id") or payload.get("anchor_profile") or ""
+            ),
+            "published_by": "smartaccess",
+            "workflow": workflow,
+        }
+        return self._request("POST", self._endpoints["publish_template"], normalized)
 
     def delete_template(self, template_id: str, template_version: str) -> bool:
         path = self._endpoints["delete_template"].format(
@@ -90,7 +109,12 @@ class SpecLabOSPlatformClient:
         return True
 
     def upload_status(self, payload: dict[str, Any]) -> bool:
-        self._request("POST", self._endpoints["upload_status"], payload)
+        run_id = quote(
+            str(payload.get("run_id") or payload.get("session_id") or ""),
+            safe="",
+        )
+        path = self._endpoints["upload_status"].format(run_id=run_id)
+        self._request("POST", path, payload)
         return True
 
     def upload_logs(self, payload: dict[str, Any]) -> bool:
