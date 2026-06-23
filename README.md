@@ -207,6 +207,19 @@ copy .envexample .env
 - 运行时会自动带上浏览器风格的 `User-Agent`、`Origin`、`Referer` 请求头，并把错误压缩成可操作提示。
 - 如果仍被拦截，优先调整 `SMARTACCESS_AI_USER_AGENT`，或者让模型服务提供方放行该 API 客户端。
 
+### SmartAccess 与 SpecLabOS 联动
+
+1. 在 `.env` 中配置 `SMARTACCESS_PLATFORM_PROVIDER=real`、`SPECLABOS_BASE_URL` 和 `SPECLABOS_API_KEY`。
+2. 在 SmartAccess workflow 的 `metadata` 中填写 `template_id` 与 `template_version`，用于平台侧保存模板版本。
+3. 在“模板/平台”页点击发布，SmartAccess 会调用 SpecLabOS 的 `/api/smartaccess/templates/publish`，并保留本地模板副本。
+4. 配置 `SMARTACCESS_DEVICE_ID` 和 `SMARTACCESS_RABBITMQ_*` 后，启动远程任务 worker：
+
+```powershell
+smartaccess-worker
+```
+
+worker 会消费 SpecLabOS 下发给 `SMARTACCESS_DEVICE_ID` 的任务，启动本地 workflow，并通过 `/api/smartaccess/runs/{run_id}/events` 回传接受、拒绝和运行事件。第一版回传保存本地 trace 摘要和截图路径，不上传截图二进制。
+
 ## 新增一个仪器接入的最小步骤
 
 1. 在 `docs/contracts/` 明确该仪器的 `anchors.yaml`、平台字段映射和运行 trace 读取方式。
