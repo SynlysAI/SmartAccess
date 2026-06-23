@@ -71,12 +71,13 @@ class TemplatePage(QWidget):
         title.setObjectName("PageTitle")
         row.addWidget(title)
         row.addStretch(1)
+        self._anchor_combo = QComboBox()
+        self._anchor_combo.setMinimumWidth(180)
+        self._anchor_combo.currentIndexChanged.connect(self._reload_workflows)
+        row.addWidget(self._anchor_combo)
         self._workflow_combo = QComboBox()
         self._workflow_combo.setMinimumWidth(280)
         row.addWidget(self._workflow_combo)
-        self._anchor_combo = QComboBox()
-        self._anchor_combo.setMinimumWidth(180)
-        row.addWidget(self._anchor_combo)
         publish_btn = QPushButton("发布")
         publish_btn.clicked.connect(self._publish)
         row.addWidget(publish_btn)
@@ -123,11 +124,17 @@ class TemplatePage(QWidget):
         return form
 
     def _reload_workflows(self) -> None:
-        """刷新工作流下拉框。"""
+        """刷新工作流下拉框，按当前选中的设备过滤。
+
+        未选设备（占位项 data 为空）时展示全部工作流。
+        """
 
         current = self._workflow_combo.currentData()
+        anchor_profile = self._anchor_combo.currentData()
         self._workflow_combo.clear()
         for workflow in self._vm.workflows():
+            if anchor_profile and workflow.metadata.anchor_profile != anchor_profile:
+                continue
             workflow_id = workflow.metadata.workflow_id
             self._workflow_combo.addItem(workflow_id, workflow_id)
         index = self._workflow_combo.findData(current)
@@ -138,6 +145,7 @@ class TemplatePage(QWidget):
         """刷新设备锚点配置下拉框。"""
 
         current = self._anchor_combo.currentData()
+        self._anchor_combo.blockSignals(True)
         self._anchor_combo.clear()
         self._anchor_combo.addItem("选择设备", "")
         for profile_id in self._vm.instruments():
@@ -145,6 +153,7 @@ class TemplatePage(QWidget):
         index = self._anchor_combo.findData(current)
         if index >= 0:
             self._anchor_combo.setCurrentIndex(index)
+        self._anchor_combo.blockSignals(False)
 
     def _refresh(self) -> None:
         """刷新模板表格。"""
