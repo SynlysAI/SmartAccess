@@ -15,7 +15,7 @@ _EVENT_MAPPING: dict[RuntimeEventName, tuple[str, str]] = {
     RuntimeEventName.RUN_STARTED: ("run.started", "running"),
     RuntimeEventName.RUN_STEP_STARTED: ("step.started", "running"),
     RuntimeEventName.RUN_STEP_OBSERVED: ("step.updated", "running"),
-    RuntimeEventName.RUN_STEP_SUCCEEDED: ("step.completed", "running"),
+    RuntimeEventName.RUN_STEP_SUCCEEDED: ("step.completed", "success"),
     RuntimeEventName.RUN_BLOCKED: ("run.blocked", "blocked"),
     RuntimeEventName.RUN_RECOVERED: ("run.recovered", "running"),
     RuntimeEventName.RUN_COMPLETED: ("run.completed", "success"),
@@ -159,18 +159,6 @@ class RemoteTaskWorker:
             if step_id
             else None
         )
-        self._uploader.upload_event(
-            run_id,
-            event_type,
-            status,
-            {
-                "step_id": step_id,
-                "step_index": step_index,
-                "detail": event.payload.get("detail", ""),
-                "error": event.payload.get("error", ""),
-                "trace": event.payload,
-            },
-        )
 
         label = _LOG_EVENT_LABELS.get(event.name, event.name.value)
         extra_parts: list[str] = []
@@ -181,8 +169,8 @@ class RemoteTaskWorker:
         if status:
             extra_parts.append(f"status={status}")
 
-        payload_detail = event.payload.get("detail", "")
         obs_info = ""
+        payload_detail = event.payload.get("detail", "")
         if event.name == RuntimeEventName.RUN_STEP_OBSERVED:
             actual = event.payload.get("actual_text", "")
             expected = event.payload.get("expected_text", "")
@@ -205,3 +193,24 @@ class RemoteTaskWorker:
             " ".join(extra_parts) if extra_parts else "",
             obs_info,
         )
+
+        try:
+            self._uploader.upload_event(
+                run_id,
+                event_type,
+                status,
+                {
+                    "step_id": step_id,
+                    "step_index": step_index,
+                    "detail": payload_detail,
+                    "error": event.payload.get("error", ""),
+                    "trace": event.payload,
+                },
+            )
+        except Exception:  # noqa: BLE001 - 上传失败不应阻断本地运行
+            self._logger.exception(
+                "[远程任务] 事件上传失败 | run_id=%s event_type=%s step=%s",
+                run_id,
+                event_type,
+                step_id or "-",
+            )
