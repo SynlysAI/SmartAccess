@@ -278,10 +278,13 @@ def test_run_boundary_log_renders_context_with_separator() -> None:
     plain = view.toPlainText()
     html = view.toHtml()
     assert "==============================" in plain
-    assert "\n\n" in plain
+    assert plain.startswith("\n")
+    assert not plain.startswith("\n\n\n")
     assert "运行上下文" in plain
     assert "device_id=氟基-2236实验室-元能极片电阻仪-01" in plain
     assert "background-color" in html
+    assert "<br />" in html or "<br>" in html
+    assert "<br><br>" not in html
 
 
 def test_log_view_renders_error_and_ocr_fields_as_html() -> None:

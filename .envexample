@@ -1,20 +1,19 @@
 # SmartAccess local configuration example.
 # Copy to .env for local development; do not commit real secrets.
 
+# ---- 基础配置 ----
 SMARTACCESS_WORKSPACE_DIR=workspace
 SMARTACCESS_LOG_LEVEL=INFO
+SMARTACCESS_DEVICE_ID=lab-pc-01
 
-# Edge API exposed to SpecLabOS / process hosts.
-SMARTACCESS_EDGE_API_HOST=127.0.0.1
-SMARTACCESS_EDGE_API_PORT=7000
-
-# Provider modes.
+# ---- Provider 模式 ----
 # Desktop startup currently wires automation=real and vision=local.
 SMARTACCESS_AUTOMATION_PROVIDER=stub
 SMARTACCESS_VISION_PROVIDER=stub
 SMARTACCESS_PLATFORM_PROVIDER=stub
+SMARTACCESS_PROCESS_EXECUTOR_PROVIDER=stub
 
-# AI model config (flat keys, not multi-profile).
+# ---- AI 模型配置 ----
 SMARTACCESS_AI_PROVIDER=template
 SMARTACCESS_AI_BASE_URL=https://fufei.mossx.ai/v1
 SMARTACCESS_AI_MODEL=GPT-5.4
@@ -22,30 +21,32 @@ SMARTACCESS_AI_API_KEY=
 SMARTACCESS_AI_TIMEOUT_SECONDS=30
 SMARTACCESS_AI_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36
 
-# DeepSeek fallback config (used when SMARTACCESS_AI_PROVIDER=deepseek).
+# DeepSeek fallback (used when SMARTACCESS_AI_PROVIDER=deepseek).
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_TIMEOUT_SECONDS=30
 
-# Vision API config (used when SMARTACCESS_VISION_PROVIDER=api).
+# ---- Vision API（SMARTACCESS_VISION_PROVIDER=api 时生效） ----
 SMARTACCESS_VISION_API_URL=http://100.84.59.58:8090
 
-# Downstream UDP process executor target used by smartaccess-edge.
-SMARTACCESS_UDP_HOST=127.0.0.1
-SMARTACCESS_UDP_PORT=8889
-SMARTACCESS_UDP_TIMEOUT_SECONDS=6
-SMARTACCESS_PROCESS_EXECUTOR_PROVIDER=stub
-
-# Optional SpecLabOS platform adapter.
+# ---- SpecLabOS 平台联动 ----
 SPECLABOS_BASE_URL=http://127.0.0.1:8000
 SPECLABOS_API_KEY=dev-smartaccess-token
 SPECLABOS_TIMEOUT_SECONDS=20
 
-# Remote task worker, used for SpecLabOS RabbitMQ task dispatch.
-SMARTACCESS_DEVICE_ID=lab-pc-01
+# ---- 远程任务监听（桌面端 daemon 线程，RabbitMQ） ----
 SMARTACCESS_RABBITMQ_ENABLED=true
 SMARTACCESS_RABBITMQ_HOST=127.0.0.1
 SMARTACCESS_RABBITMQ_PORT=5672
 SMARTACCESS_RABBITMQ_USERNAME=admin
 SMARTACCESS_RABBITMQ_PASSWORD=password123
+
+# ---- smartaccess-edge 独立 API 服务 ----
+SMARTACCESS_EDGE_API_HOST=127.0.0.1
+SMARTACCESS_EDGE_API_PORT=7000
+
+# UDP 执行器（smartaccess-edge 下发下游流程主机时使用）
+SMARTACCESS_UDP_HOST=127.0.0.1
+SMARTACCESS_UDP_PORT=8889
+SMARTACCESS_UDP_TIMEOUT_SECONDS=6

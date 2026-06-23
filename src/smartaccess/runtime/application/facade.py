@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import threading
+import time
 from typing import Any
 
 from smartaccess.runtime.application.ports import (
@@ -647,6 +648,8 @@ class RuntimeFacade:
         def _run() -> None:
             """后台执行工作流。"""
 
+            # 启动前固定等待 1 秒，避免目标窗口弹出时与用户当前鼠标键盘操作冲突造成误触
+            time.sleep(1.0)
             self._orchestrator.run(
                 workflow=workflow,
                 profile=profile,

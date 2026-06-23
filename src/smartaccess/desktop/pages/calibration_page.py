@@ -138,10 +138,6 @@ class CalibrationPage(QWidget):
         self._title_contains = QLineEdit()
         self._title_contains.setPlaceholderText("窗口标题关键字")
         form.addRow("设备 ID", self._device_id)
-        self._device_id_hint = QLabel()
-        self._device_id_hint.setObjectName("DeviceIdHint")
-        self._device_id_hint.setWordWrap(True)
-        form.addRow("", self._device_id_hint)
         form.addRow("窗口标题", self._title_contains)
         layout.addLayout(form)
         self._update_device_id_hint()
@@ -652,7 +648,11 @@ class CalibrationPage(QWidget):
         return device_id, title
 
     def _update_device_id_hint(self, value: str | None = None) -> None:
-        """Refresh the inline device ID validation hint."""
+        """刷新设备 ID 输入框的气泡校验提示。
+
+        Args:
+            value: 当前设备 ID 文本；为 None 时从输入框读取。
+        """
 
         device_id = (value if value is not None else self._device_id.text()).strip()
         if not device_id:
@@ -668,13 +668,17 @@ class CalibrationPage(QWidget):
         self._set_device_id_state("valid", "格式正确，可用于设备配置保存和工作流绑定。")
 
     def _set_device_id_state(self, state: str, text: str) -> None:
-        """Apply validation state to the device ID field and hint."""
+        """把校验状态应用到设备 ID 输入框边框与气泡提示。
 
-        self._device_id_hint.setText(text)
-        for widget in (self._device_id, self._device_id_hint):
-            widget.setProperty("validationState", state)
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
+        Args:
+            state: 校验状态（neutral/valid/invalid），决定输入框边框颜色。
+            text: 气泡提示文本，鼠标悬停时显示。
+        """
+
+        self._device_id.setToolTip(text)
+        self._device_id.setProperty("validationState", state)
+        self._device_id.style().unpolish(self._device_id)
+        self._device_id.style().polish(self._device_id)
 
     def _refresh_views(self) -> None:
         """刷新设备视图列表。"""
