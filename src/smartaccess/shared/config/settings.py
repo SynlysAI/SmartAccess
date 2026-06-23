@@ -44,6 +44,12 @@ class AppSettings(BaseModel):
     udp_port: int = Field(default=8889, ge=1, le=65535)
     udp_timeout_seconds: float = Field(default=6.0, gt=0)
     process_executor_provider: str = Field(default="stub")
+    device_id: str = Field(default="")
+    rabbitmq_host: str = Field(default="127.0.0.1")
+    rabbitmq_port: int = Field(default=5672, ge=1, le=65535)
+    rabbitmq_username: str = Field(default="guest")
+    rabbitmq_password: str = Field(default="guest")
+    rabbitmq_enabled: bool = Field(default=False)
 
     @classmethod
     def from_env(cls) -> "AppSettings":
@@ -122,6 +128,21 @@ class AppSettings(BaseModel):
             process_executor_provider=(
                 _get("SMARTACCESS_PROCESS_EXECUTOR_PROVIDER", "stub") or "stub"
             ),
+            device_id=_get("SMARTACCESS_DEVICE_ID", "") or "",
+            rabbitmq_host=(
+                _get("SMARTACCESS_RABBITMQ_HOST", "127.0.0.1") or "127.0.0.1"
+            ),
+            rabbitmq_port=int(_get("SMARTACCESS_RABBITMQ_PORT", "5672") or "5672"),
+            rabbitmq_username=(
+                _get("SMARTACCESS_RABBITMQ_USERNAME", "guest") or "guest"
+            ),
+            rabbitmq_password=(
+                _get("SMARTACCESS_RABBITMQ_PASSWORD", "guest") or "guest"
+            ),
+            rabbitmq_enabled=(
+                _get("SMARTACCESS_RABBITMQ_ENABLED", "false") or "false"
+            ).lower()
+            == "true",
         )
 
     @staticmethod
@@ -190,3 +211,4 @@ class AppSettings(BaseModel):
         """SpecLabOS 平台配置是否可用。"""
 
         return bool(self.speclabos_base_url)
+

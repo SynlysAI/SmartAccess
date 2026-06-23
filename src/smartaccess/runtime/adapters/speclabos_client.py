@@ -1,4 +1,4 @@
-﻿"""SpecLabOS HTTP platform client.
+"""SpecLabOS HTTP platform client.
 
 The client intentionally uses urllib from the standard library so SmartAccess can
 call a FastAPI-compatible SpecLabOS service without adding a hard dependency.
@@ -116,6 +116,19 @@ class SpecLabOSPlatformClient:
         path = self._endpoints["upload_status"].format(run_id=run_id)
         self._request("POST", path, payload)
         return True
+
+    def upload_run_event(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """上传 SmartAccess 运行事件。
+
+        Args:
+            run_id: SpecLabOS 运行 ID。
+            payload: 事件载荷。
+
+        Returns:
+            平台响应。
+        """
+        path = f"/api/smartaccess/runs/{quote(run_id, safe='')}/events"
+        return self._request("POST", path, payload)
 
     def upload_logs(self, payload: dict[str, Any]) -> bool:
         self._request("POST", self._endpoints["upload_logs"], payload)

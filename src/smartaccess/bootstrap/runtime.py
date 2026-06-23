@@ -113,6 +113,44 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
     )
 
 
+
+def build_remote_task_worker(settings: AppSettings):
+    """创建 SmartAccess 远程任务 worker。
+
+    Args:
+        settings: 应用配置。
+
+    Returns:
+        远程任务 worker。
+    """
+    from smartaccess.runtime.application.platform_event_uploader import (
+        PlatformEventUploader,
+    )
+    from smartaccess.runtime.application.remote_task_worker import RemoteTaskWorker
+
+    facade = build_runtime_facade(settings)
+    return RemoteTaskWorker(
+        device_id=settings.device_id or str(settings.workspace_dir),
+        facade=facade,
+        uploader=PlatformEventUploader(facade.providers()["platform"]),
+    )
+
+
+def run_remote_task_worker(settings: AppSettings | None = None) -> None:
+    """启动 SmartAccess 远程任务 worker。
+
+    Args:
+        settings: 应用配置；为空时从环境变量读取。
+    """
+
+    settings = settings or AppSettings.from_env()
+    build_remote_task_worker(settings)
+    get_logger().info(
+        "SmartAccess 远程任务 worker 已构造: device_id=%s, rabbitmq_enabled=%s",
+        settings.device_id or str(settings.workspace_dir),
+        settings.rabbitmq_enabled,
+    )
+
 def build_experiment_service(
     settings: AppSettings | None = None,
     *,
