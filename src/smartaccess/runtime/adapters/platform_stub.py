@@ -75,6 +75,20 @@ class StubPlatformClient:
         del self._templates[key]
         return True
 
+    def upload_run_event(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """上传 SmartAccess 运行事件。
+
+        Args:
+            run_id: SpecLabOS 运行 ID。
+            payload: 事件载荷。
+
+        Returns:
+            平台响应。
+        """
+        self._raise_if_offline("upload_run_event")
+        self.uploads.append(("run_event", dict(payload)))
+        return {"ok": True, "run_id": run_id, **payload}
+
     def upload_status(self, payload: dict[str, Any]) -> bool:
         """上传状态。"""
 

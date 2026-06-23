@@ -31,7 +31,6 @@ dev = [
 [project.scripts]
 smartaccess-desktop = "smartaccess.bootstrap:run_desktop"
 smartaccess-edge = "smartaccess.bootstrap:serve_edge_api"
-smartaccess-worker = "smartaccess.bootstrap:run_remote_task_worker"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smartaccess"]

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
+import pika
+
 from smartaccess.runtime.adapters import (
     ApiVisionProvider,
     EchoInstructionGenerator,
@@ -37,7 +41,7 @@ from smartaccess.runtime.orchestration import (
 )
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.events.bus import EventBus
-from smartaccess.shared.logging import get_logger
+from smartaccess.shared.logging import configure_logging, get_logger
 
 
 def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
@@ -74,6 +78,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         platform=platform,
         workspace_dir=settings.workspace_dir,
         event_bus=event_bus,
+        source_device_id=settings.device_id,
     )
     migration = MigrationService(workspace_dir=settings.workspace_dir)
     workspace = WorkspaceService(
@@ -114,11 +119,12 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
 
 
 
-def build_remote_task_worker(settings: AppSettings):
+def build_remote_task_worker(settings: AppSettings, *, facade=None):
     """创建 SmartAccess 远程任务 worker。
 
     Args:
         settings: 应用配置。
+        facade: 可选已有的运行时门面；为空时构建新实例。
 
     Returns:
         远程任务 worker。
@@ -128,7 +134,8 @@ def build_remote_task_worker(settings: AppSettings):
     )
     from smartaccess.runtime.application.remote_task_worker import RemoteTaskWorker
 
-    facade = build_runtime_facade(settings)
+    if facade is None:
+        facade = build_runtime_facade(settings)
     return RemoteTaskWorker(
         device_id=settings.device_id or str(settings.workspace_dir),
         facade=facade,
@@ -136,20 +143,98 @@ def build_remote_task_worker(settings: AppSettings):
     )
 
 
-def run_remote_task_worker(settings: AppSettings | None = None) -> None:
-    """启动 SmartAccess 远程任务 worker。
+def _run_mq_consumer(settings: AppSettings, worker, device_id: str) -> None:
+    """连接 RabbitMQ 并阻塞消费远程任务消息。
 
     Args:
-        settings: 应用配置；为空时从环境变量读取。
+        settings: 应用配置。
+        worker: 远程任务 worker。
+        device_id: 当前设备 ID。
     """
+    logger = get_logger()
+    credentials = pika.PlainCredentials(
+        settings.rabbitmq_username,
+        settings.rabbitmq_password,
+    )
+    connection = pika.BlockingConnection(
+        pika.ConnectionParameters(
+            host=settings.rabbitmq_host,
+            port=settings.rabbitmq_port,
+            credentials=credentials,
+        )
+    )
+    channel = connection.channel()
+    exchange = "smartaccess.commands"
+    queue_name = f"smartaccess.device.{device_id}.commands"
+    routing_key = f"device.{device_id}.run.requested"
+    channel.exchange_declare(exchange=exchange, exchange_type="topic", durable=True)
+    channel.queue_declare(queue=queue_name, durable=True)
+    channel.queue_bind(exchange=exchange, queue=queue_name, routing_key=routing_key)
+    channel.basic_qos(prefetch_count=1)
 
-    settings = settings or AppSettings.from_env()
-    build_remote_task_worker(settings)
-    get_logger().info(
-        "SmartAccess 远程任务 worker 已构造: device_id=%s, rabbitmq_enabled=%s",
-        settings.device_id or str(settings.workspace_dir),
+    def _on_message(ch, method, properties, body) -> None:
+        """处理 RabbitMQ 下发的 SmartAccess 任务消息。"""
+        try:
+            result = worker.handle_body(body)
+            logger.info("SmartAccess 远程任务处理完成: result=%s", result)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+        except json.JSONDecodeError:
+            logger.exception("SmartAccess 远程任务消息不是合法 JSON，已丢弃")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        except Exception:  # noqa: BLE001 - 防止消费循环退出
+            logger.exception("SmartAccess 远程任务处理失败，消息不重入队")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    channel.basic_consume(queue=queue_name, on_message_callback=_on_message)
+    logger.info(
+        "SmartAccess 远程任务监听中: queue=%s routing_key=%s",
+        queue_name,
+        routing_key,
+    )
+    try:
+        channel.start_consuming()
+    except KeyboardInterrupt:
+        logger.info("SmartAccess worker 收到停止信号")
+    except Exception:  # noqa: BLE001 - pika 连接异常
+        logger.exception("SmartAccess 远程任务监听连接异常")
+    finally:
+        if connection.is_open:
+            connection.close()
+
+
+def start_remote_task_listener(settings: AppSettings, *, facade=None) -> None:
+    """在后台线程启动 SmartAccess 远程任务监听。
+
+    复用已有 facade（通常来自桌面端进程），不创建新的 provider 实例。
+    保证窗口激活、坐标计算与桌面端手动执行完全一致。
+
+    Args:
+        settings: 应用配置。
+        facade: 已有的运行时门面；为空时构建新实例。
+    """
+    import threading
+
+    worker = build_remote_task_worker(settings, facade=facade)
+    device_id = settings.device_id or str(settings.workspace_dir)
+    logger = get_logger()
+    logger.info(
+        "SmartAccess 远程任务监听启动: device_id=%s, rabbitmq_enabled=%s",
+        device_id,
         settings.rabbitmq_enabled,
     )
+    if not settings.rabbitmq_enabled:
+        logger.warning("RabbitMQ 未启用，跳过远程任务监听")
+        return
+
+    thread = threading.Thread(
+        target=_run_mq_consumer,
+        args=(settings, worker, device_id),
+        name="smartaccess-mq-listener",
+        daemon=True,
+    )
+    thread.start()
+    logger.info("SmartAccess 远程任务监听线程已启动")
+
 
 def build_experiment_service(
     settings: AppSettings | None = None,

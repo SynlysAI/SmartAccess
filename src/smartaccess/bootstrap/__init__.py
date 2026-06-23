@@ -5,10 +5,9 @@ from __future__ import annotations
 from smartaccess.bootstrap.runtime import (
     build_edge_app,
     build_experiment_service,
-    build_remote_task_worker,
     build_runtime_facade,
-    run_remote_task_worker,
     serve_edge_api,
+    start_remote_task_listener,
 )
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.logging import configure_logging
@@ -27,6 +26,8 @@ def run_desktop(settings: AppSettings | None = None) -> int:
     settings = settings or AppSettings.from_env()
     configure_logging(settings)
     facade = build_runtime_facade(settings)
+
+    start_remote_task_listener(settings, facade=facade)
 
     from smartaccess.desktop.shell.app import run_app
 
