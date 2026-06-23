@@ -74,18 +74,18 @@ def _boundary_html(entry: MonitorLogEntry) -> str:
         for item in context
     )
     return (
-        "<br><br>"
+        "<br>"
         f"<div style=\"background-color:{theme.SURFACE_ALT};border:1px solid {color};"
-        f"border-left:4px solid {color};border-radius:6px;padding:7px 10px;"
-        f"margin:0 0 8px 0;color:{theme.TEXT};\">"
+        f"border-left:4px solid {color};border-radius:6px;padding:5px 9px;"
+        f"margin:3px 0 5px 0;color:{theme.TEXT};\">"
         f"<div style=\"font-family:Consolas,'Microsoft YaHei',monospace;"
         f"color:{color};font-weight:700;\">{rich_text.text(separator)}</div>"
-        f"<div style=\"line-height:1.3;margin:3px 0;font-weight:700;color:{color};\">"
+        f"<div style=\"line-height:1.25;margin:1px 0 2px 0;font-weight:700;color:{color};\">"
         f"{rich_text.text(title)} · 运行上下文 · {rich_text.text(entry.timestamp)} "
         f"[{rich_text.text(entry.level)}]</div>"
         f"{context_html}"
         f"<div style=\"font-family:Consolas,'Microsoft YaHei',monospace;"
-        f"color:{color};font-weight:700;margin-top:3px;\">"
+        f"color:{color};font-weight:700;margin-top:2px;\">"
         f"{rich_text.text(separator)}</div>"
         "</div>"
         "<br>"
