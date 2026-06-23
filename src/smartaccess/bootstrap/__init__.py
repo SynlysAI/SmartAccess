@@ -5,7 +5,9 @@ from __future__ import annotations
 from smartaccess.bootstrap.runtime import (
     build_edge_app,
     build_experiment_service,
+    build_remote_task_worker,
     build_runtime_facade,
+    run_remote_task_worker,
     serve_edge_api,
 )
 from smartaccess.shared.config.settings import AppSettings
@@ -29,3 +31,4 @@ def run_desktop(settings: AppSettings | None = None) -> int:
     from smartaccess.desktop.shell.app import run_app
 
     return run_app(settings, facade)
+
