@@ -62,6 +62,7 @@ class CalibrationPage(QWidget):
         self._latest_capture_metadata: dict[str, object] = {}
         self._current_view_id = DEFAULT_VIEW_ID
         self._ai_target_view_id: str | None = None
+        self._last_ai_prompt = ""
         self._view_states: dict[str, dict] = {
             DEFAULT_VIEW_ID: {
                 "title": "",
@@ -549,6 +550,7 @@ class CalibrationPage(QWidget):
             title="AI辅助接入",
             label="描述这个软件界面里需要控制和识别的按钮、输入框、状态区域。",
             ai_label=self._vm.ai_label(),
+            initial_text=self._last_ai_prompt,
             parent=self,
         )
         if dialog.exec() != AiPromptDialog.DialogCode.Accepted:
@@ -557,6 +559,7 @@ class CalibrationPage(QWidget):
         if not prompt.strip():
             return
         prompt = prompt.strip()
+        self._last_ai_prompt = prompt
         device_id, title = fields
         width, height = self._canvas.source_size()
         context = {
