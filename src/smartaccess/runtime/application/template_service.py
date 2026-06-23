@@ -53,6 +53,7 @@ class TemplateService:
         platform: PlatformClient,
         workspace_dir: Path,
         event_bus: EventBus,
+        source_device_id: str = "",
     ) -> None:
         """初始化模板服务。
 
@@ -60,11 +61,13 @@ class TemplateService:
             platform: 平台客户端。
             workspace_dir: 工作区目录。
             event_bus: 运行时事件总线。
+            source_device_id: 当前 SmartAccess 执行端电脑 ID。
         """
 
         self._platform = platform
         self._workspace_dir = Path(workspace_dir)
         self._event_bus = event_bus
+        self._source_device_id = source_device_id
         self._records: dict[str, list[TemplateRecord]] = {}
         self._last_cloud_count = 0
         self._cloud_available = False
@@ -176,6 +179,7 @@ class TemplateService:
                     "template_id": identity.template_id,
                     "template_version": identity.template_version,
                     "anchor_profile": meta.anchor_profile,
+                    "source_device_id": self._source_device_id,
                     "workflow": workflow.model_dump(mode="json", exclude_none=True),
                 }
             )

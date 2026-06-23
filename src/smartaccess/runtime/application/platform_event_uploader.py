@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from smartaccess.runtime.application.ports import PlatformClient
+
 
 class PlatformEventUploader:
     """把 SmartAccess 本地运行事件上传到 SpecLabOS。"""
 
-    def __init__(self, platform) -> None:
+    def __init__(self, platform: PlatformClient) -> None:
         """初始化上传器。
 
         Args:
@@ -31,10 +33,7 @@ class PlatformEventUploader:
             status: 运行状态。
             payload: 事件载荷。
         """
-        method = getattr(self._platform, "upload_run_event", None)
-        if not callable(method):
-            return
-        method(
+        self._platform.upload_run_event(
             run_id,
             {
                 "event_id": payload.get("event_id") or f"evt_{uuid4().hex}",

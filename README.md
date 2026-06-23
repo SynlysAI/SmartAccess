@@ -220,6 +220,8 @@ smartaccess-worker
 
 worker 会消费 SpecLabOS 下发给 `SMARTACCESS_DEVICE_ID` 的任务，启动本地 workflow，并通过 `/api/smartaccess/runs/{run_id}/events` 回传接受、拒绝和运行事件。第一版回传保存本地 trace 摘要和截图路径，不上传截图二进制。
 
+`SMARTACCESS_DEVICE_ID` 表示当前安装 SmartAccess 的执行端电脑 ID，例如 `lab-pc-01`；它决定哪台 SmartAccess worker 消费平台任务。`vpn软件`、`weixin` 这类值属于目标设备/目标软件或锚点配置，不应作为 `SMARTACCESS_DEVICE_ID`。
+
 ## 新增一个仪器接入的最小步骤
 
 1. 在 `docs/contracts/` 明确该仪器的 `anchors.yaml`、平台字段映射和运行 trace 读取方式。

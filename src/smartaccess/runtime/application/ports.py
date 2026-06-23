@@ -178,6 +178,17 @@ class PlatformClient(Protocol):
     def upload_logs(self, payload: dict[str, Any]) -> bool:
         """上传运行日志。"""
 
+    def upload_run_event(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """上传 SmartAccess 运行事件。
+
+        Args:
+            run_id: SpecLabOS 运行 ID。
+            payload: 事件载荷。
+
+        Returns:
+            平台响应。
+        """
+
     def upload_results(self, payload: dict[str, Any]) -> bool:
         """上传运行结果。"""
 
