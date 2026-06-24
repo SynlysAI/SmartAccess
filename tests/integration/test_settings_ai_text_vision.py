@@ -101,6 +101,11 @@ def test_from_env_falls_back_to_legacy_single_group_vars(
     ):
         monkeypatch.delenv(key, raising=False)
 
+    # 屏蔽 .env 文件，防止真实配置干扰 fallback 路径测试
+    monkeypatch.setattr(
+        AppSettings, "_read_env_file", staticmethod(lambda path=None: {})
+    )
+
     monkeypatch.setenv("SMARTACCESS_AI_PROVIDER", "codex")
     monkeypatch.setenv("SMARTACCESS_AI_BASE_URL", "https://legacy.example/v1")
     monkeypatch.setenv("SMARTACCESS_AI_MODEL", "legacy-model")
