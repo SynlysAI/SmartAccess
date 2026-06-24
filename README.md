@@ -141,7 +141,11 @@ SmartAccess 采用“AI 认知 + 工程落地”的双层结构化架构，不�
 
 ![SmartAccess 与 SpecLabOS 集成](resource/smartaccess-speclabos-integration.png)
 
-### 7. 设备记忆与复用图
+### 7. SmartAccess 与 SpecLabOS 联动技术路线图
+
+![SmartAccess 与 SpecLabOS 联动技术路线](resource/smartaccess-speclabos-technical-route.png)
+
+### 8. 设备记忆与复用图
 
 ![SmartAccess 设备使用记忆驱动复用](resource/smartaccess-device-memory-reuse.png)
 
