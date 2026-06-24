@@ -27,6 +27,7 @@ ACTION_OPTIONS = [
     ("type", "输入"),
     ("hotkey", "快捷键"),
     ("press_enter", "回车"),
+    ("ocr", "OCR识别"),
 ]
 
 

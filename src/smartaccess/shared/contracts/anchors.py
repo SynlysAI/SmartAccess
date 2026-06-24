@@ -13,12 +13,14 @@ SIMPLIFIED_ACTIONS: tuple[str, ...] = (
     "type",
     "hotkey",
     "press_enter",
+    "ocr",
 )
 ACTION_SUPPORT_SETS: dict[str, list[str]] = {
     "click": ["click"],
     "type": ["click", "type", "hotkey", "press_enter"],
     "hotkey": ["click", "hotkey"],
     "press_enter": ["click", "press_enter"],
+    "ocr": ["ocr"],
 }
 LEGACY_ANCHOR_TYPES = {
     "action_target",

@@ -81,6 +81,7 @@ class MonitoringPage(QWidget):
         title.setObjectName("PageTitle")
         row.addWidget(title)
         row.addStretch(1)
+        row.addWidget(QLabel("工作流:"))
         self._workflow_combo = QComboBox()
         self._workflow_combo.setMinimumWidth(260)
         self._workflow_combo.currentIndexChanged.connect(self._refresh_workflow_info)

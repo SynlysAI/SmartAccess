@@ -405,6 +405,8 @@ class CalibrationPage(QWidget):
         row_data = self._table.row_model(row)
         if row_data is None:
             return
+        if row_data.action == "ocr":
+            return
         if checked:
             observe_name = row_data.observe_roi or f"{row_data.anchor_id}_observe"
             if observe_name not in self._canvas.roi_names():
@@ -982,7 +984,9 @@ class CalibrationPage(QWidget):
             if rect is None or norm is None:
                 raise ValueError(f"锚点 {row.anchor_id} 缺少动作 ROI")
             observe_region = None
-            if row.ocr_enabled:
+            if row.action == "ocr":
+                observe_region = {"pixel": rect, "normalized": norm}
+            elif row.ocr_enabled:
                 observe_rect = self._canvas.roi_rect(row.observe_roi)
                 observe_norm = self._canvas.normalized_roi_rect(row.observe_roi)
                 if observe_rect is None or observe_norm is None:
@@ -1286,6 +1290,8 @@ class CalibrationPage(QWidget):
             return ["click", "hotkey"]
         if action == "press_enter":
             return ["click", "press_enter"]
+        if action == "ocr":
+            return ["ocr"]
         return ["click"]
 
     @staticmethod
@@ -1298,4 +1304,6 @@ class CalibrationPage(QWidget):
             return "hotkey"
         if "press_enter" in actions:
             return "press_enter"
+        if "ocr" in actions:
+            return "ocr"
         return "click"
