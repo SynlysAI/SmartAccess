@@ -98,8 +98,8 @@ class TemplateService:
                     else TemplateVersionStatus.DRAFT
                 ),
                 anchor_profile=meta.anchor_profile or "",
-                source="local",
-                published_at="",
+                source="smartaccess" if getattr(meta, "published_at", None) else "local",
+                published_at=getattr(meta, "published_at", None) or "",
                 workflow_id=meta.workflow_id,
             )
             self._upsert(record)
@@ -175,6 +175,8 @@ class TemplateService:
             raise ValueError("发布前必须填写 template_id 与 template_version")
         identity = TemplateIdentity(meta.template_id, meta.template_version)
         self._logger.info("发布模板: %s@%s", identity.template_id, identity.template_version)
+        published_at = datetime.now().astimezone().isoformat()
+        meta.published_at = published_at
         dump_yaml_contract(workflow, self._template_path(identity))
         error = ""
         status = TemplateVersionStatus.PUBLISHED
@@ -199,7 +201,7 @@ class TemplateService:
             status=status,
             anchor_profile=meta.anchor_profile or "",
             source=source,
-            published_at=datetime.now().astimezone().isoformat(),
+            published_at=published_at,
             workflow_id=meta.workflow_id,
             error=error,
         )
