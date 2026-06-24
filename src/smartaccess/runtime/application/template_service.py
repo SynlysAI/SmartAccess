@@ -177,6 +177,7 @@ class TemplateService:
         self._logger.info("发布模板: %s@%s", identity.template_id, identity.template_version)
         published_at = datetime.now().astimezone().isoformat()
         meta.published_at = published_at
+        meta.lifecycle_state = "Published"
         dump_yaml_contract(workflow, self._template_path(identity))
         error = ""
         status = TemplateVersionStatus.PUBLISHED
