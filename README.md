@@ -191,11 +191,11 @@ copy .envexample .env
 - `SMARTACCESS_WORKSPACE_DIR`：运行时工作区，默认 `workspace`。
 - `SMARTACCESS_VISION_PROVIDER`：桌面真实 OCR 使用 `local`，测试可用 `stub`。
 - `SMARTACCESS_UDP_HOST` / `SMARTACCESS_UDP_PORT`：Edge API 下发 UDP 执行信号的目标。
-- `SMARTACCESS_AI_PROFILES` / `SMARTACCESS_AI_ACTIVE_PROFILE`：OpenAI-compatible 多模型档案列表与默认档案。
-- `SMARTACCESS_AI_PROFILE_{ID}_PROVIDER` / `SMARTACCESS_AI_PROFILE_{ID}_BASE_URL` / `SMARTACCESS_AI_PROFILE_{ID}_MODEL` / `SMARTACCESS_AI_PROFILE_{ID}_API_KEY`：单个模型档案配置。
-- `SMARTACCESS_AI_PROFILE_{ID}_TIMEOUT_SECONDS`：单个模型档案的请求超时，单位秒。
-- `SMARTACCESS_AI_PROFILE_{ID}_WIRE_API`：模型网关接口类型，Codex/Responses 网关使用 `responses`，DeepSeek 等 Chat Completions 兼容网关使用 `chat_completions`。
-- `SMARTACCESS_AI_USER_AGENT`：AI 请求头中的 `User-Agent`，用于兼容部分网关或 Cloudflare 策略。
+- `SMARTACCESS_AI_TEXT_PROVIDER` / `SMARTACCESS_AI_TEXT_BASE_URL` / `SMARTACCESS_AI_TEXT_MODEL` / `SMARTACCESS_AI_TEXT_API_KEY` / `SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS`：文字 LLM 配置，用于 **AI 生成工作流**（不需要图片识别）。
+- `SMARTACCESS_AI_VISION_PROVIDER` / `SMARTACCESS_AI_VISION_BASE_URL` / `SMARTACCESS_AI_VISION_MODEL` / `SMARTACCESS_AI_VISION_API_KEY` / `SMARTACCESS_AI_VISION_TIMEOUT_SECONDS`：多模态模型配置，用于 **AI 辅助接入**（需要识别截图）。目前仅 `provider=codex` 通过 Responses 接口支持图片，其他 provider 走 Chat Completions 仅文字。
+- `SMARTACCESS_AI_USER_AGENT`：AI 请求头中的 `User-Agent`，用于兼容部分网关或 Cloudflare 策略；TEXT 与 VISION 共享。
+- 向后兼容：若未配上述 TEXT/VISION 变量，但配了旧的 `SMARTACCESS_AI_PROVIDER` / `SMARTACCESS_AI_BASE_URL` / `SMARTACCESS_AI_MODEL` / `SMARTACCESS_AI_API_KEY` / `SMARTACCESS_AI_TIMEOUT_SECONDS` 单组写法，TEXT 与 VISION 都回退到此组；进一步若旧单组也未配，再回退到早期 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` / `DEEPSEEK_TIMEOUT_SECONDS`。
+- `provider=template` 时对应用途的 AI 功能禁用（不发起外部请求）。
 
 ### AI 配置与接入
 
