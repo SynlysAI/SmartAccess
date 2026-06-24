@@ -25,6 +25,12 @@ def run_desktop(settings: AppSettings | None = None) -> int:
 
     settings = settings or AppSettings.from_env()
     configure_logging(settings)
+
+    from smartaccess.desktop.shell.app import show_login_dialog
+
+    if not show_login_dialog(settings):
+        return 0
+
     facade = build_runtime_facade(settings)
 
     start_remote_task_listener(settings, facade=facade)
@@ -32,4 +38,3 @@ def run_desktop(settings: AppSettings | None = None) -> int:
     from smartaccess.desktop.shell.app import run_app
 
     return run_app(settings, facade)
-

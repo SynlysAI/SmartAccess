@@ -8,9 +8,6 @@ from pathlib import Path
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
-from smartaccess.desktop.shell.main_window import MainWindow
-from smartaccess.desktop.shell.theme import apply_theme
-from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.logging import get_logger
 
@@ -44,7 +41,243 @@ def _set_windows_app_id() -> None:
         return
 
 
-def run_app(settings: AppSettings, facade: RuntimeFacade | None = None) -> int:
+def _http_post_json(url: str, payload: dict, timeout: float = 20.0) -> dict:
+    """发送 JSON POST 请求。
+
+    Args:
+        url: 请求地址。
+        payload: JSON 请求体。
+        timeout: 超时秒数。
+
+    Returns:
+        JSON 响应字典。
+    """
+
+    import json
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = Request(
+        url,
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            return json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code}: {detail[:300]}")
+    except URLError as exc:
+        raise RuntimeError(f"无法连接: {exc.reason}")
+
+
+def show_login_dialog(settings: AppSettings) -> bool:
+    """显示 SpecLabOS 统一门户登录框。
+
+    Args:
+        settings: 应用配置。
+
+    Returns:
+        登录成功返回 True。
+    """
+
+    if not settings.speclabos_base_url:
+        get_logger().info("未配置 SPECLABOS_BASE_URL，跳过统一门户登录")
+        return True
+
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import (
+        QDialog,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
+        QMessageBox,
+        QPushButton,
+        QVBoxLayout,
+        QWidget,
+    )
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    _set_windows_app_id()
+    app.setApplicationDisplayName("SmartAccess")
+    icon = _load_app_icon()
+    if icon is not None:
+        app.setWindowIcon(icon)
+
+    from smartaccess.desktop.shell.theme import apply_theme
+    apply_theme(app)
+
+    dialog = QDialog()
+    dialog.setWindowTitle("SmartAccess 登录")
+    dialog.setModal(True)
+    dialog.setMinimumWidth(420)
+    dialog.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+    if icon is not None:
+        dialog.setWindowIcon(icon)
+
+    username_edit = QLineEdit()
+    username_edit.setPlaceholderText("请输入统一门户用户名")
+    username_edit.setClearButtonEnabled(True)
+
+    password_edit = QLineEdit()
+    password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+    password_edit.setPlaceholderText("请输入密码")
+
+    status_label = QLabel("")
+    status_label.setObjectName("PageHint")
+    status_label.setWordWrap(True)
+
+    login_btn = QPushButton("登录")
+    login_btn.setDefault(True)
+
+    # ---- 构建 UI ----
+    root = QVBoxLayout(dialog)
+    root.setContentsMargins(28, 28, 28, 28)
+    root.setSpacing(18)
+
+    # 头部
+    header = QWidget()
+    header_layout = QVBoxLayout(header)
+    header_layout.setContentsMargins(0, 0, 0, 0)
+    header_layout.setSpacing(6)
+    title_label = QLabel("SmartAccess")
+    title_label.setObjectName("AppTitle")
+    header_layout.addWidget(title_label)
+    header_layout.addWidget(QLabel("实验室桌面执行端"))
+    root.addWidget(header)
+
+    # 卡片
+    card = QFrame()
+    card.setObjectName("Card")
+    form = QVBoxLayout(card)
+    form.setContentsMargins(22, 20, 22, 22)
+    form.setSpacing(12)
+    tip = QLabel("使用 SpecLabOS 统一门户账号登录 SmartAccess")
+    tip.setObjectName("PageHint")
+    tip.setWordWrap(True)
+    form.addWidget(tip)
+
+    def _field(label_text: str, editor: QLineEdit) -> QWidget:
+        """构建表单字段。"""
+        field = QWidget()
+        layout = QVBoxLayout(field)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        lbl = QLabel(label_text)
+        lbl.setObjectName("SectionTitle")
+        layout.addWidget(lbl)
+        layout.addWidget(editor)
+        return field
+
+    form.addWidget(_field("用户名", username_edit))
+    form.addWidget(_field("密码", password_edit))
+
+    register_link = QLabel(
+        '<a href="https://speclabos.wumiaox.com/register"'
+        ' style="color: #5b8def; text-decoration: none;">没有账号？点击注册</a>'
+    )
+    register_link.setOpenExternalLinks(True)
+    register_link.setObjectName("PageHint")
+    form.addWidget(register_link)
+
+    form.addWidget(status_label)
+
+    # 按钮
+    actions = QHBoxLayout()
+    actions.addStretch(1)
+    cancel_btn = QPushButton("取消")
+    cancel_btn.setObjectName("Secondary")
+    cancel_btn.clicked.connect(dialog.reject)
+    actions.addWidget(cancel_btn)
+    actions.addWidget(login_btn)
+    form.addLayout(actions)
+
+    root.addWidget(card)
+    username_edit.setFocus()
+    password_edit.returnPressed.connect(login_btn.click)
+
+    # ---- 登录逻辑 ----
+    auth_result: dict | None = None
+
+    def _set_busy(busy: bool) -> None:
+        """切换登录中状态。"""
+        username_edit.setEnabled(not busy)
+        password_edit.setEnabled(not busy)
+        login_btn.setEnabled(not busy)
+        login_btn.setText("登录中..." if busy else "登录")
+        status_label.setText("正在连接 SpecLabOS 统一门户..." if busy else "")
+
+    def _do_login() -> None:
+        """执行登录请求。"""
+        nonlocal auth_result
+        username = username_edit.text().strip()
+        password = password_edit.text()
+        if not username:
+            QMessageBox.warning(dialog, "无法登录", "请输入用户名。")
+            username_edit.setFocus()
+            return
+        if not password:
+            QMessageBox.warning(dialog, "无法登录", "请输入密码。")
+            password_edit.setFocus()
+            return
+
+        _set_busy(True)
+        try:
+            base_url = (settings.speclabos_base_url or "").rstrip("/")
+            url = f"{base_url}/api/v1/auth/login"
+            resp = _http_post_json(
+                url,
+                {"username": username, "password": password},
+                timeout=settings.speclabos_timeout_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _set_busy(False)
+            QMessageBox.critical(dialog, "登录失败", str(exc))
+            return
+
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if not isinstance(data, dict):
+            _set_busy(False)
+            QMessageBox.critical(dialog, "登录失败", "登录响应格式不合法。")
+            return
+        token = str(data.get("token") or "").strip()
+        user_payload = data.get("user")
+        if not token or not isinstance(user_payload, dict):
+            _set_busy(False)
+            QMessageBox.critical(dialog, "登录失败", "登录响应缺少 token 或用户信息。")
+            return
+
+        auth_result = {
+            "token": token,
+            "username": str(user_payload.get("username") or username),
+            "role": str(user_payload.get("role") or ""),
+            "organization": str(user_payload.get("organization") or ""),
+        }
+        dialog.accept()
+
+    login_btn.clicked.connect(_do_login)
+    username_edit.returnPressed.connect(password_edit.setFocus)
+
+    if dialog.exec() != QDialog.DialogCode.Accepted or auth_result is None:
+        return False
+
+    settings.speclabos_api_key = auth_result["token"]
+    settings.speclabos_username = auth_result["username"]
+    settings.speclabos_user_role = auth_result["role"]
+    settings.speclabos_user_organization = auth_result["organization"]
+    settings.platform_provider = "real"
+    get_logger().info("用户 %s 登录成功", auth_result["username"])
+    return True
+
+
+def run_app(settings: AppSettings, facade: object | None = None) -> int:
     """启动 Qt 桌面应用。
 
     Args:
@@ -62,7 +295,10 @@ def run_app(settings: AppSettings, facade: RuntimeFacade | None = None) -> int:
     icon = _load_app_icon()
     if icon is not None:
         app.setWindowIcon(icon)
+    from smartaccess.desktop.shell.theme import apply_theme
     apply_theme(app)
+
+    from smartaccess.desktop.shell.main_window import MainWindow
     window = MainWindow(settings, facade=facade)
     if icon is not None:
         window.setWindowIcon(icon)

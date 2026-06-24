@@ -158,8 +158,27 @@ class MainWindow(QMainWindow):
         self._right_toggle.setFont(info_font)
 
         layout.addStretch(1)
+        user_text = self._user_text()
+        if user_text:
+            user_label = QLabel(user_text)
+            user_label.setObjectName("PageHint")
+            user_label.setToolTip(user_text)
+            layout.addWidget(user_label)
         layout.addWidget(self._right_toggle)
         return bar
+
+    def _user_text(self) -> str:
+        """生成顶部登录用户文本。
+
+        Returns:
+            登录用户展示文本；未登录时返回空字符串。
+        """
+
+        username = self._settings.speclabos_username.strip()
+        if not username:
+            return ""
+        role = self._settings.speclabos_user_role.strip()
+        return f"{username} · {role}" if role else username
 
     def _build_nav(self) -> QListWidget:
         """构建左侧导航。
@@ -270,6 +289,7 @@ class MainWindow(QMainWindow):
                 f"当前页面: {title}\n"
                 f"工作区: {self._settings.workspace_dir}\n"
                 f"执行端: {self._settings.device_id or '未配置'}\n"
+                f"登录用户: {self._settings.speclabos_username or '未登录'}\n"
                 "状态: 已启动\n"
                 "日志: 已启用"
             )
@@ -278,6 +298,7 @@ class MainWindow(QMainWindow):
             f"当前页面: {title}\n"
             f"工作区: {status.workspace_dir}\n"
             f"执行端: {self._settings.device_id or '未配置'}\n"
+            f"登录用户: {self._settings.speclabos_username or '未登录'}\n"
             f"自动化: {status.automation_provider}\n"
             f"视觉: {status.vision_provider}\n"
             f"平台: {status.platform_provider}\n"
