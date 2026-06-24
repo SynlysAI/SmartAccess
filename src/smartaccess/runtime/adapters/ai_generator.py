@@ -269,6 +269,7 @@ class SmartAccessAiGenerator:
             "preconditions must be an array of objects, never an array of strings.\n"
             "match_mode must be one of contains, equals, regex, not_empty, none; "
             "never use exact.\n"
+            "input_mode must be one of free, incrementing; never use replace or other values.\n"
             "Allowed actions: click, type, hotkey, press_enter, wait.\n"
             "For action=wait, omit anchor_id and set wait_seconds.\n"
             "For OCR checks, use expected_text, match_mode, and timeout_seconds on "
