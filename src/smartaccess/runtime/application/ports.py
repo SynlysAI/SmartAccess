@@ -163,7 +163,7 @@ class PlatformClient(Protocol):
     ) -> dict[str, Any]:
         """拉取指定模板版本。"""
 
-    def list_templates(self) -> list[dict[str, Any]]:
+    def list_templates(self, *, device_id: str | None = None) -> list[dict[str, Any]]:
         """列出云端模板。"""
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:

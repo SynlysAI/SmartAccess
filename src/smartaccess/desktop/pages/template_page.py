@@ -27,7 +27,7 @@ from smartaccess.runtime.application.template_service import TemplateRecord
 class TemplatePage(QWidget):
     """模板发布、搜索和平台同步页面。"""
 
-    HEADERS = ("模板", "版本", "状态", "设备", "来源", "发布时间", "错误")
+    HEADERS = ("模板", "版本", "工作流", "状态", "设备", "来源", "发布时间", "错误")
 
     def __init__(self, facade: RuntimeFacade, parent: QWidget | None = None) -> None:
         """初始化模板页面。"""
@@ -49,6 +49,7 @@ class TemplatePage(QWidget):
         self._table = QTableWidget(0, len(self.HEADERS))
         self._table.setHorizontalHeaderLabels(self.HEADERS)
         configure_data_table(self._table, row_height=38, stretch_last=True)
+        self._table.setColumnWidth(6, 200)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table_layout.addWidget(self._table)
         root.addWidget(table_card, 1)
@@ -81,15 +82,7 @@ class TemplatePage(QWidget):
         publish_btn = QPushButton("发布")
         publish_btn.clicked.connect(self._publish)
         row.addWidget(publish_btn)
-        update_btn = QPushButton("更新设备")
-        update_btn.setObjectName("Secondary")
-        update_btn.clicked.connect(self._update_anchor_profile)
-        row.addWidget(update_btn)
-        rollback_btn = QPushButton("回滚")
-        rollback_btn.setObjectName("Secondary")
-        rollback_btn.clicked.connect(self._rollback)
-        row.addWidget(rollback_btn)
-        refresh_btn = QPushButton("刷新云端")
+        refresh_btn = QPushButton("同步云端")
         refresh_btn.setObjectName("Secondary")
         refresh_btn.clicked.connect(self._refresh_cloud)
         row.addWidget(refresh_btn)
@@ -193,50 +186,6 @@ class TemplatePage(QWidget):
 
         self._vm.refresh_cloud()
 
-    def _update_anchor_profile(self) -> None:
-        """更新选中模板版本的设备锚点配置。"""
-
-        record = self._selected_record()
-        anchor_profile = self._anchor_combo.currentData()
-        if record is None:
-            QMessageBox.information(self, "更新设备", "请先选择模板版本")
-            return
-        if not anchor_profile:
-            QMessageBox.information(self, "更新设备", "请先选择设备")
-            return
-        try:
-            self._vm.update_anchor_profile(
-                record.identity.template_id,
-                record.identity.template_version,
-                str(anchor_profile),
-            )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "更新失败", str(exc))
-
-    def _rollback(self) -> None:
-        """回滚选中的模板版本。"""
-
-        record = self._selected_record()
-        if record is None:
-            QMessageBox.information(self, "回滚模板", "请先选择模板版本")
-            return
-        reply = QMessageBox.question(
-            self,
-            "回滚模板",
-            f"确认回滚到 {record.identity.template_id}@{record.identity.template_version}？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            self._vm.rollback(
-                record.identity.template_id,
-                record.identity.template_version,
-            )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "回滚失败", str(exc))
-
     def _sync_outbox(self) -> None:
         """同步平台补传队列。"""
 
@@ -249,20 +198,34 @@ class TemplatePage(QWidget):
         if record is None:
             QMessageBox.information(self, "删除模板", "请先选择模板版本")
             return
-        reply = QMessageBox.question(
-            self,
-            "删除模板",
-            f"确认删除 {record.identity.template_id}@{record.identity.template_version}？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        identity = f"{record.identity.template_id}@{record.identity.template_version}"
+        msg = QMessageBox(self)
+        msg.setWindowTitle("删除模板")
+        msg.setText(f"确认删除 {identity}？")
+        msg.setInformativeText("选择删除范围：")
+        local_btn = msg.addButton("仅删除本地", QMessageBox.ButtonRole.AcceptRole)
+        cloud_btn = msg.addButton("同时删除云端", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = msg.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(cancel_btn)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked == cancel_btn:
             return
-        self._vm.delete(
-            record.identity.template_id,
-            record.identity.template_version,
-            force=True,
-        )
+        try:
+            if clicked == cloud_btn:
+                self._vm.delete_cloud_first(
+                    record.identity.template_id,
+                    record.identity.template_version,
+                    force=True,
+                )
+            else:
+                self._vm.delete(
+                    record.identity.template_id,
+                    record.identity.template_version,
+                    force=True,
+                )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "删除失败", str(exc))
 
     def _selected_record(self) -> TemplateRecord | None:
         """返回当前选中的模板记录。"""
@@ -280,6 +243,7 @@ class TemplatePage(QWidget):
         return (
             record.identity.template_id,
             record.identity.template_version,
+            record.workflow_id,
             record.status.value,
             record.anchor_profile,
             record.source,

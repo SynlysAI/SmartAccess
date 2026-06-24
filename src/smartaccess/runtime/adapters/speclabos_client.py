@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urlencode, urljoin
 from urllib.request import Request, urlopen
 
 from smartaccess.runtime.application.ports import PlatformOffline, TemplateVersionMissing
@@ -64,8 +64,19 @@ class SpecLabOSPlatformClient:
                 raise TemplateVersionMissing(template_id, template_version) from exc
             raise
 
-    def list_templates(self) -> list[dict[str, Any]]:
-        payload = self._request("GET", self._endpoints["list_templates"])
+    def list_templates(
+        self,
+        *,
+        device_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """列出云端模板，按设备 ID 过滤。"""
+        path = self._endpoints["list_templates"]
+        params = {}
+        if device_id:
+            params["device_id"] = device_id
+        if params:
+            path = f"{path}?{urlencode(params)}"
+        payload = self._request("GET", path)
         if isinstance(payload, list):
             return payload
         if isinstance(payload, dict):
@@ -96,6 +107,8 @@ class SpecLabOSPlatformClient:
         return self._request("POST", self._endpoints["publish_template"], normalized)
 
     def delete_template(self, template_id: str, template_version: str) -> bool:
+        """删除云端模板版本。"""
+
         path = self._endpoints["delete_template"].format(
             template_id=quote(template_id, safe=""),
             template_version=quote(template_version, safe=""),
