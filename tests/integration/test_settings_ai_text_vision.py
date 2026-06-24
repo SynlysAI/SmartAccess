@@ -175,3 +175,65 @@ def test_from_env_falls_back_to_deepseek_vars(
     assert settings.ai_vision_model == "deepseek-chat"
     assert settings.ai_vision_timeout_seconds == 20.0
     assert settings.ai_vision_provider == "template"
+
+
+def test_build_runtime_facade_routes_text_and_vision_separately(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """build_runtime_facade 应把 text generator 装给 WorkflowService，
+    把 vision generator 装给 RuntimeFacade.ai_generator。"""
+
+    # 屏蔽 .env 文件干扰
+    monkeypatch.setattr(
+        AppSettings, "_read_env_file", staticmethod(lambda path=None: {})
+    )
+
+    for key in (
+        "SMARTACCESS_AI_PROVIDER",
+        "SMARTACCESS_AI_BASE_URL",
+        "SMARTACCESS_AI_MODEL",
+        "SMARTACCESS_AI_API_KEY",
+        "SMARTACCESS_AI_TIMEOUT_SECONDS",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "DEEPSEEK_MODEL",
+        "DEEPSEEK_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv("SMARTACCESS_AI_TEXT_PROVIDER", "deepseek")
+    monkeypatch.setenv("SMARTACCESS_AI_TEXT_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("SMARTACCESS_AI_TEXT_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("SMARTACCESS_AI_TEXT_API_KEY", "sk-text-key")
+    monkeypatch.setenv("SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS", "60")
+
+    monkeypatch.setenv("SMARTACCESS_AI_VISION_PROVIDER", "codex")
+    monkeypatch.setenv("SMARTACCESS_AI_VISION_BASE_URL", "https://code.ppchat.vip/v1")
+    monkeypatch.setenv("SMARTACCESS_AI_VISION_MODEL", "gpt-5.4")
+    monkeypatch.setenv("SMARTACCESS_AI_VISION_API_KEY", "sk-vision-key")
+    monkeypatch.setenv("SMARTACCESS_AI_VISION_TIMEOUT_SECONDS", "90")
+
+    monkeypatch.setenv("SMARTACCESS_WORKSPACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SMARTACCESS_AUTOMATION_PROVIDER", "stub")
+    monkeypatch.setenv("SMARTACCESS_VISION_PROVIDER", "stub")
+    monkeypatch.setenv("SMARTACCESS_PLATFORM_PROVIDER", "stub")
+    monkeypatch.setenv("SMARTACCESS_RABBITMQ_ENABLED", "false")
+
+    from smartaccess.bootstrap.runtime import build_runtime_facade
+
+    settings = AppSettings.from_env()
+    facade = build_runtime_facade(settings)
+
+    # WorkflowService 内部装的 draft_generator 应该是 text provider
+    workflows_service = facade.providers()["workflows"]
+    text_gen = workflows_service._draft_generator
+    assert text_gen is not None
+    assert text_gen._provider == "deepseek"
+    assert text_gen._model == "deepseek-v4-pro"
+
+    # facade 的 ai_generator 应该是 vision provider
+    vision_gen = facade._ai_generator
+    assert vision_gen is not None
+    assert vision_gen._provider == "codex"
+    assert vision_gen._model == "gpt-5.4"
