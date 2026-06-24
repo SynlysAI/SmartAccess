@@ -273,6 +273,27 @@ class RoiCanvas(QGraphicsView):
         self.roi_changed.emit(name)
         return name
 
+    def rename_roi(self, old_name: str, new_name: str) -> bool:
+        """重命名 ROI。
+
+        Args:
+            old_name: 当前 ROI 名称。
+            new_name: 新 ROI 名称。
+
+        Returns:
+            是否重命名成功。
+        """
+
+        if old_name not in self._rois or new_name in self._rois:
+            return False
+        item = self._rois.pop(old_name)
+        item.name = new_name
+        item._label.setText(new_name)
+        item._position_chip()
+        item.setToolTip(f"{new_name} · 拖动移动 · 拖角缩放 · 右键删除")
+        self._rois[new_name] = item
+        return True
+
     def remove_roi(self, name: str, *, emit_signal: bool = True) -> None:
         """删除 ROI。"""
 

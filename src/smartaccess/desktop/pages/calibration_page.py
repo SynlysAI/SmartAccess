@@ -94,6 +94,7 @@ class CalibrationPage(QWidget):
         self._canvas.roi_removed.connect(self._on_roi_removed)
         self._table.row_delete_requested.connect(self._delete_anchor_row)
         self._table.row_ocr_toggled.connect(self._on_ocr_toggled)
+        self._table.row_changed.connect(self._on_anchor_row_changed)
         self._windows.itemSelectionChanged.connect(self._on_window_selected)
         self._windows.itemChanged.connect(self._on_window_checked)
         self._instruments.itemDoubleClicked.connect(self._load_instrument)
@@ -432,6 +433,44 @@ class CalibrationPage(QWidget):
             fallback_name = f"{row_data.anchor_id}_observe"
             if fallback_name != removed:
                 self._canvas.remove_roi(fallback_name, emit_signal=False)
+        self._refresh_all_roi_labels()
+
+    def _on_anchor_row_changed(self, row: int) -> None:
+        """锚点 ID 变更时同步画布 ROI 名称。
+
+        检测表格第一列锚点 ID 是否变化，若变化则重命名
+        画布中对应的动作 ROI 和观察 ROI。
+        """
+
+        item = self._table.item(row, 0)
+        if item is None:
+            return
+        stored = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(stored, AnchorRow):
+            return
+        new_id = self._table._item_text(row, 0)
+        old_id = stored.anchor_id
+        if not new_id or new_id == old_id:
+            return
+
+        if old_id in self._canvas.roi_names():
+            self._canvas.rename_roi(old_id, new_id)
+
+        old_observe = f"{old_id}_observe"
+        new_observe = f"{new_id}_observe"
+        if old_observe in self._canvas.roi_names():
+            self._canvas.rename_roi(old_observe, new_observe)
+            observe_item = self._table.item(row, 4)
+            if observe_item is not None:
+                observe_item.setData(Qt.ItemDataRole.UserRole, new_observe)
+
+        stored.anchor_id = new_id
+        stored.action_roi = new_id
+        item.setData(Qt.ItemDataRole.UserRole, stored)
+        action_item = self._table.item(row, 1)
+        if action_item is not None:
+            action_item.setData(Qt.ItemDataRole.UserRole, new_id)
+
         self._refresh_all_roi_labels()
 
     def _on_roi_removed(self, roi_name: str) -> None:
