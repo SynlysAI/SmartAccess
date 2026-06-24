@@ -121,6 +121,8 @@ SmartAccess 采用“AI 认知 + 工程落地”的双层结构化架构，不�
 
 ### 2. 双层架构图
 
+该图展示 SmartAccess 的“双层结构化架构”：上层负责 AI 认知、任务理解、设备使用记忆和技能复用，下层负责工程化执行、接口契约、运行编排、观测审计和异常恢复，说明系统如何把大模型能力转化为可追踪、可复用、可落地的仪器操作自动化流程。
+
 ![SmartAccess 双层结构化架构](resource/smartaccess-two-layer-architecture.png)
 
 
