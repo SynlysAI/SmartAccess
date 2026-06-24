@@ -232,17 +232,6 @@ class AppSettings(BaseModel):
             return cleaned[1:-1]
         return cleaned
 
-    @property
-    def ai_configured(self) -> bool:
-        """在线 AI 配置是否可用。"""
-
-        return bool(self.ai_api_key)
-
-    @property
-    def deepseek_configured(self) -> bool:
-        """旧 DeepSeek 配置是否可用。"""
-
-        return bool(self.deepseek_api_key)
 
     @property
     def speclabos_configured(self) -> bool:
