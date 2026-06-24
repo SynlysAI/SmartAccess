@@ -47,7 +47,11 @@ class StubPlatformClient:
             raise TemplateVersionMissing(template_id, template_version)
         return self._templates[key]
 
-    def list_templates(self) -> list[dict[str, Any]]:
+    def list_templates(
+        self,
+        *,
+        device_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """列出模板。"""
 
         self._raise_if_offline("list_templates")

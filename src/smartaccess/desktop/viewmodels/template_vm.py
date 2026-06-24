@@ -75,45 +75,27 @@ class TemplateViewModel(ViewModel):
         )
         self.changed.emit()
 
-    def update_anchor_profile(
+    def delete_cloud_first(
         self,
         template_id: str,
         template_version: str,
-        anchor_profile: str,
-    ) -> TemplateRecord:
-        """更新模板版本关联的设备锚点配置。
+        *,
+        force: bool,
+    ) -> None:
+        """先删除云端模板，再删除本地副本。
 
         Args:
             template_id: 模板 ID。
             template_version: 模板版本。
-            anchor_profile: 设备锚点配置 ID。
-
-        Returns:
-            更新后的模板记录。
+            force: 是否强制删除。
         """
 
-        record = self._facade.update_template_version(
+        self._facade.delete_template_version_cloud_first(
             template_id,
             template_version,
-            anchor_profile=anchor_profile,
+            force=force,
         )
         self.changed.emit()
-        return record
-
-    def rollback(self, template_id: str, template_version: str) -> TemplateRecord:
-        """回滚到指定模板版本。
-
-        Args:
-            template_id: 模板 ID。
-            template_version: 模板版本。
-
-        Returns:
-            回滚后的模板记录。
-        """
-
-        record = self._facade.rollback_template(template_id, template_version)
-        self.changed.emit()
-        return record
 
     def instruments(self) -> list[str]:
         """列出可关联的设备锚点配置 ID。"""

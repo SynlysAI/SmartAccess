@@ -269,6 +269,7 @@ class MainWindow(QMainWindow):
             return (
                 f"当前页面: {title}\n"
                 f"工作区: {self._settings.workspace_dir}\n"
+                f"执行端: {self._settings.device_id or '未配置'}\n"
                 "状态: 已启动\n"
                 "日志: 已启用"
             )
@@ -276,6 +277,7 @@ class MainWindow(QMainWindow):
         return (
             f"当前页面: {title}\n"
             f"工作区: {status.workspace_dir}\n"
+            f"执行端: {self._settings.device_id or '未配置'}\n"
             f"自动化: {status.automation_provider}\n"
             f"视觉: {status.vision_provider}\n"
             f"平台: {status.platform_provider}\n"

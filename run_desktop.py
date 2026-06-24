@@ -49,6 +49,10 @@ def main() -> int:
     logger = configure_logging(settings)
     logger.info("启动 SmartAccess 桌面应用")
     logger.info("工作区目录: %s", settings.workspace_dir)
+    logger.info(
+        "SmartAccess 执行端 ID: %s",
+        settings.device_id or "未配置",
+    )
     logger.info("自动化提供者: %s", settings.automation_provider)
     logger.info("视觉提供者: %s", settings.vision_provider)
     logger.info("AI 文字模型: %s / %s", settings.ai_text_provider, settings.ai_text_model)

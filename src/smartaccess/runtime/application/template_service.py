@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from smartaccess.runtime.application.ports import (
@@ -31,6 +31,7 @@ class TemplateRecord:
     anchor_profile: str
     source: str
     published_at: str
+    workflow_id: str = ""
     error: str = ""
 
 
@@ -99,6 +100,7 @@ class TemplateService:
                 anchor_profile=meta.anchor_profile or "",
                 source="local",
                 published_at="",
+                workflow_id=meta.workflow_id,
             )
             self._upsert(record)
             loaded_count += 1
@@ -109,7 +111,9 @@ class TemplateService:
         """刷新平台模板索引。"""
 
         try:
-            cloud_templates = self._platform.list_templates()
+            cloud_templates = self._platform.list_templates(
+                device_id=self._source_device_id or None,
+            )
         except Exception:  # noqa: BLE001 - 平台不可用不影响本地模板
             self._cloud_available = False
             return self.stats()
@@ -134,6 +138,7 @@ class TemplateService:
                     ),
                     source="cloud",
                     published_at=str(item.get("published_at") or ""),
+                    workflow_id=str(item.get("workflow_id") or ""),
                 )
             )
         return self.stats()
@@ -194,7 +199,8 @@ class TemplateService:
             status=status,
             anchor_profile=meta.anchor_profile or "",
             source=source,
-            published_at=datetime.now(timezone.utc).isoformat(),
+            published_at=datetime.now().astimezone().isoformat(),
+            workflow_id=meta.workflow_id,
             error=error,
         )
         self._upsert(record)
@@ -216,9 +222,17 @@ class TemplateService:
         return list(self._records.get(template_id, []))
 
     def list_all(self) -> list[TemplateRecord]:
-        """列出全部模板版本。"""
+        """列出全部模板版本，按模板 ID 分组、版本倒序排列。"""
 
-        return [record for records in self._records.values() for record in records]
+        records: list[TemplateRecord] = []
+        for template_id in sorted(self._records):
+            versions = sorted(
+                self._records[template_id],
+                key=lambda r: r.identity.template_version,
+                reverse=True,
+            )
+            records.extend(versions)
+        return records
 
     def search_templates(self, query: str = "", status: str = "") -> list[TemplateRecord]:
         """搜索模板记录。"""
@@ -240,6 +254,7 @@ class TemplateService:
                 [
                     item.identity.template_id,
                     item.identity.template_version,
+                    item.workflow_id,
                     item.status.value,
                     item.anchor_profile,
                     item.source,
