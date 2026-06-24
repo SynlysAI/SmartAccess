@@ -51,7 +51,8 @@ def main() -> int:
     logger.info("工作区目录: %s", settings.workspace_dir)
     logger.info("自动化提供者: %s", settings.automation_provider)
     logger.info("视觉提供者: %s", settings.vision_provider)
-    logger.info("AI 提供者: %s", settings.ai_provider)
+    logger.info("AI 文字模型: %s / %s", settings.ai_text_provider, settings.ai_text_model)
+    logger.info("AI 多模态模型: %s / %s", settings.ai_vision_provider, settings.ai_vision_model)
 
     return run_desktop(settings)
 

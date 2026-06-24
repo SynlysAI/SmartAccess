@@ -279,7 +279,8 @@ class MainWindow(QMainWindow):
             f"自动化: {status.automation_provider}\n"
             f"视觉: {status.vision_provider}\n"
             f"平台: {status.platform_provider}\n"
-            f"AI: {status.ai_provider}\n"
+            f"AI 文字: {status.ai_text_provider}\n"
+            f"AI 多模态: {status.ai_vision_provider}\n"
             "日志: 已启用"
         )
 

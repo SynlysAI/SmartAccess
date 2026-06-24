@@ -58,7 +58,8 @@ class RuntimeStatus:
     automation_provider: str
     vision_provider: str
     platform_provider: str
-    ai_provider: str
+    ai_text_provider: str
+    ai_vision_provider: str
 
 
 class RuntimeFacade:
@@ -145,7 +146,8 @@ class RuntimeFacade:
             automation_provider=self._settings.automation_provider,
             vision_provider=self._settings.vision_provider,
             platform_provider=self._settings.platform_provider,
-            ai_provider=self._settings.ai_provider,
+            ai_text_provider=self._settings.ai_text_provider,
+            ai_vision_provider=self._settings.ai_vision_provider,
         )
 
     def workspace_dir(self) -> Path:
