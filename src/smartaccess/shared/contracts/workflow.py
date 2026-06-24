@@ -357,6 +357,9 @@ def normalize_workflow_steps(
         if action == "wait":
             steps.append(_wait_step(step, step_id))
             continue
+        if action == "ocr":
+            steps.append(_ocr_step(step, step_id))
+            continue
         if action not in EXECUTABLE_WORKFLOW_ACTIONS:
             errors.append(
                 _migration_error(
@@ -445,6 +448,22 @@ def _wait_step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
         clean.pop("timeout_seconds", None)
         clean.pop("min_confidence", None)
         clean["match_mode"] = "none"
+    return clean
+
+
+def _ocr_step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
+    """返回清理后的 OCR 识别步骤。"""
+
+    clean = dict(raw)
+    clean["id"] = step_id
+    clean["action"] = "ocr"
+    clean.pop("target", None)
+    clean["input_mode"] = "free"
+    clean.pop("increment_rule", None)
+    if clean.get("match_mode") in (None, "none"):
+        clean["match_mode"] = "not_empty"
+    if clean.get("timeout_seconds") is None:
+        clean["timeout_seconds"] = 30.0
     return clean
 
 

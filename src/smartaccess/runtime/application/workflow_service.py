@@ -139,6 +139,7 @@ class WorkflowService:
         normalized = WorkflowContract.model_validate(
             workflow.model_dump(mode="json", exclude_none=True)
         )
+        self._log_migration_errors(normalized)
         self._workflows[normalized.metadata.workflow_id] = normalized
         self.save(normalized)
         self._logger.info("工作流已注册: workflow_id=%s, 步骤数=%d",
@@ -154,6 +155,7 @@ class WorkflowService:
         """从文件加载工作流。"""
 
         workflow = load_yaml_contract(path, WorkflowContract)
+        self._log_migration_errors(workflow)
         self._workflows[workflow.metadata.workflow_id] = workflow
         return workflow
 
@@ -222,6 +224,31 @@ class WorkflowService:
         """读取工作流草稿生成记录。"""
 
         return self._draft_records.get(workflow_id)
+
+    @staticmethod
+    def _log_migration_errors(workflow: WorkflowContract) -> None:
+        """记录工作流迁移错误到日志。
+
+        Args:
+            workflow: 已校验的工作流契约。
+        """
+
+        errors = getattr(workflow, "migration_errors", [])
+        if not errors:
+            return
+        logger = get_logger()
+        logger.warning(
+            "工作流 %s 存在 %d 条迁移错误:",
+            workflow.metadata.workflow_id,
+            len(errors),
+        )
+        for error in errors:
+            logger.warning(
+                "  step %s (action=%s): %s",
+                error.id,
+                error.action,
+                error.reason,
+            )
 
     def standardize_check(self, workflow: WorkflowContract) -> StandardizationResult:
         """执行工作流标准化校验。"""
