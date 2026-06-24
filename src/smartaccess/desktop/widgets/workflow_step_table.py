@@ -42,6 +42,7 @@ ACTION_OPTIONS = [
     ("type", "输入"),
     ("hotkey", "快捷键"),
     ("press_enter", "回车"),
+    ("ocr", "OCR识别"),
     ("wait", "等待"),
 ]
 
@@ -867,20 +868,22 @@ class WorkflowStepTable(QTableWidget):
 
         action = self._combo_data(row, 1)
         is_wait = action == "wait"
+        is_ocr = action == "ocr"
         is_type = action == "type"
+        disable_value = is_wait or is_ocr
         for column in (4, 8):
             widget = self.cellWidget(row, column)
             if widget is not None:
-                widget.setEnabled(not is_wait)
+                widget.setEnabled(not disable_value)
         mode = self.cellWidget(row, 5)
         if mode is not None:
-            mode.setEnabled(is_type and not is_wait)
+            mode.setEnabled(is_type and not disable_value)
             if not is_type and isinstance(mode, QComboBox):
                 index = mode.findData("free")
                 mode.setCurrentIndex(max(0, index))
         value = self.cellWidget(row, 4)
         if isinstance(value, InputValueEditor):
-            input_mode = self._combo_data(row, 5) if is_type and not is_wait else "free"
+            input_mode = self._combo_data(row, 5) if is_type and not disable_value else "free"
             value.set_input_mode(str(input_mode or "free"))
         for column in (2, 3, 7):
             widget = self.cellWidget(row, column)
@@ -889,10 +892,15 @@ class WorkflowStepTable(QTableWidget):
         wait = self.cellWidget(row, 6)
         if wait is not None:
             wait.setEnabled(True)
-        if is_wait:
+        if is_wait or is_ocr:
             value = self.cellWidget(row, 4)
             if isinstance(value, InputValueEditor):
                 value.clear_value()
+            condition = self.cellWidget(row, 7)
+            if is_ocr and isinstance(condition, ConditionEditor):
+                if condition.match_mode.currentData() == "none":
+                    index = condition.match_mode.findData("not_empty")
+                    condition.match_mode.setCurrentIndex(max(0, index))
 
     def _move_row(self, row: int, delta: int) -> None:
         """移动行。"""

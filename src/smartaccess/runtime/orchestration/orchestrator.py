@@ -218,6 +218,8 @@ class Orchestrator:
             return False
         if step.action == "wait":
             return self._run_wait_step(session, workflow, profile, step)
+        if step.action == "ocr":
+            return self._observe_after_action(session, workflow, profile, step)
         if self._executor.requires_confirm(step):
             allowed = self._confirm_gate(
                 session,
@@ -527,7 +529,7 @@ class Orchestrator:
         """动作后执行等待或 OCR 观察。"""
 
         anchor = self._executor.anchor_for_step(step)
-        if step.action == "wait" and profile is not None and step.anchor_id:
+        if step.action in ("wait", "ocr") and profile is not None and step.anchor_id:
             anchor = profile.anchor_for_view(step.view_id, step.anchor_id)
             if anchor is None:
                 anchor = profile.anchor_map().get(step.anchor_id)

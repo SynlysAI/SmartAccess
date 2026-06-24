@@ -13,6 +13,7 @@ SIMPLIFIED_WORKFLOW_ACTIONS: tuple[str, ...] = (
     "type",
     "hotkey",
     "press_enter",
+    "ocr",
     "wait",
 )
 EXECUTABLE_WORKFLOW_ACTIONS: tuple[str, ...] = (
@@ -91,7 +92,7 @@ class WorkflowStep(FlexibleContractModel):
     anchor_id: NonEmptyStr | None = None
     view_id: NonEmptyStr = "main"
     target: str | None = Field(default=None, exclude=True)
-    action: Literal["click", "type", "hotkey", "press_enter", "wait"]
+    action: Literal["click", "type", "hotkey", "press_enter", "ocr", "wait"]
     value: Any | None = None
     input_mode: Literal["free", "incrementing"] = "free"
     increment_rule: WorkflowIncrementRule | None = None

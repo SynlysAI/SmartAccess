@@ -198,7 +198,7 @@ def test_new_anchor_and_workflow_examples_use_simplified_model() -> None:
 
     dumped_anchors = anchors.model_dump(mode="json", exclude_none=True)
     dumped_workflow = workflow.model_dump(mode="json", exclude_none=True)
-    allowed_actions = {"click", "type", "hotkey", "press_enter"}
+    allowed_actions = {"click", "type", "hotkey", "press_enter", "ocr"}
 
     assert all("type" not in anchor for anchor in dumped_anchors["anchors"])
     assert all(set(anchor["supported_actions"]) <= allowed_actions for anchor in dumped_anchors["anchors"])

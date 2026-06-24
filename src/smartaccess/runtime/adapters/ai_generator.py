@@ -270,10 +270,12 @@ class SmartAccessAiGenerator:
             "match_mode must be one of contains, equals, regex, not_empty, none; "
             "never use exact.\n"
             "input_mode must be one of free, incrementing; never use replace or other values.\n"
-            "Allowed actions: click, type, hotkey, press_enter, wait.\n"
+            "Allowed actions: click, type, hotkey, press_enter, ocr, wait.\n"
+            "For action=ocr, the anchor's action_region is the OCR scan area; "
+            "set match_mode and expected_text for OCR conditions.\n"
             "For action=wait, omit anchor_id and set wait_seconds.\n"
-            "For OCR checks, use expected_text, match_mode, and timeout_seconds on "
-            "the preceding executable step.\n"
+            "For OCR checks on click/type steps, use expected_text, match_mode, "
+            "and timeout_seconds on the preceding executable step.\n"
             "All wait_seconds and timeout_seconds values are seconds.\n"
             "Use only calibrated anchors, view_id values, and actions from context."
         )
@@ -308,7 +310,7 @@ class SmartAccessAiGenerator:
             '"observe_region":null,"supported_actions":["click"],'
             '"default_wait_seconds":2.0,'
             '"action_bindings":[{"action":"click","requires_confirmation":false}]}]}]}\n'
-            "Allowed actions: click, type, hotkey, press_enter.\n"
+            "Allowed actions: click, type, hotkey, press_enter, ocr.\n"
             "Each anchor has exactly one action_region and at most one OCR observe_region.\n"
             "Represent OCR only through observe_region.\n"
             "If image is unavailable or coordinates are uncertain, return useful anchor "
@@ -463,6 +465,11 @@ class SmartAccessAiGenerator:
                     step["wait_seconds"] = SmartAccessAiGenerator._seconds(step["value"])
                 if step.get("wait_seconds") is None:
                     step["wait_seconds"] = 1.0
+            if action == "ocr":
+                if step.get("match_mode") in (None, "none"):
+                    step["match_mode"] = "not_empty"
+                if step.get("timeout_seconds") is None:
+                    step["timeout_seconds"] = 30.0
             for field in ("wait_seconds", "timeout_seconds"):
                 if step.get(field) is not None:
                     step[field] = SmartAccessAiGenerator._seconds(step[field])
