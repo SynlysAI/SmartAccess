@@ -91,6 +91,24 @@ class AppSettings(BaseModel):
             _get("DEEPSEEK_TIMEOUT_SECONDS", "30"),
         )
 
+        ai_text_provider = _get("SMARTACCESS_AI_TEXT_PROVIDER", "template") or "template"
+        ai_text_base_url = _get(
+            "SMARTACCESS_AI_TEXT_BASE_URL",
+            "https://fufei.mossx.ai/v1",
+        )
+        ai_text_model = _get("SMARTACCESS_AI_TEXT_MODEL", "GPT-5.4") or "GPT-5.4"
+        ai_text_api_key = _get("SMARTACCESS_AI_TEXT_API_KEY")
+        ai_text_timeout_raw = _get("SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS", "30") or "30"
+
+        ai_vision_provider = _get("SMARTACCESS_AI_VISION_PROVIDER", "template") or "template"
+        ai_vision_base_url = _get(
+            "SMARTACCESS_AI_VISION_BASE_URL",
+            "https://fufei.mossx.ai/v1",
+        )
+        ai_vision_model = _get("SMARTACCESS_AI_VISION_MODEL", "GPT-5.4") or "GPT-5.4"
+        ai_vision_api_key = _get("SMARTACCESS_AI_VISION_API_KEY")
+        ai_vision_timeout_raw = _get("SMARTACCESS_AI_VISION_TIMEOUT_SECONDS", "30") or "30"
+
         return cls(
             workspace_dir=Path(workspace_dir or "workspace"),
             log_level=_get("SMARTACCESS_LOG_LEVEL", "INFO") or "INFO",
@@ -112,6 +130,16 @@ class AppSettings(BaseModel):
                 _get("SMARTACCESS_AI_USER_AGENT", DEFAULT_AI_USER_AGENT)
                 or DEFAULT_AI_USER_AGENT
             ),
+            ai_text_provider=ai_text_provider,
+            ai_text_base_url=ai_text_base_url or "https://fufei.mossx.ai/v1",
+            ai_text_model=ai_text_model,
+            ai_text_api_key=ai_text_api_key,
+            ai_text_timeout_seconds=float(ai_text_timeout_raw),
+            ai_vision_provider=ai_vision_provider,
+            ai_vision_base_url=ai_vision_base_url or "https://fufei.mossx.ai/v1",
+            ai_vision_model=ai_vision_model,
+            ai_vision_api_key=ai_vision_api_key,
+            ai_vision_timeout_seconds=float(ai_vision_timeout_raw),
             deepseek_api_key=_get("DEEPSEEK_API_KEY"),
             deepseek_base_url=(
                 _get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
