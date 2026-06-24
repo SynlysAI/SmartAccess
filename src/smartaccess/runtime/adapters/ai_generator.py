@@ -465,6 +465,8 @@ class SmartAccessAiGenerator:
             for field in ("wait_seconds", "timeout_seconds"):
                 if step.get(field) is not None:
                     step[field] = SmartAccessAiGenerator._seconds(step[field])
+            if step.get("input_mode") not in ("free", "incrementing"):
+                step["input_mode"] = "free"
         return workflow_data
 
     @staticmethod
