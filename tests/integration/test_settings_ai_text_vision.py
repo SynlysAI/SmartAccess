@@ -72,3 +72,52 @@ def test_from_env_reads_text_and_vision_specific_vars(
     assert settings.ai_vision_model == "gpt-5.4"
     assert settings.ai_vision_api_key == "sk-vision-key"
     assert settings.ai_vision_timeout_seconds == 90.0
+
+
+def test_from_env_falls_back_to_legacy_single_group_vars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEXT/VISION 专用变量未配时，应回退到旧 SMARTACCESS_AI_* 单组变量。
+
+    旧 .env 只有一组 SMARTACCESS_AI_* 时，TEXT 和 VISION 都使用它，
+    保证现有部署升级后行为不变。
+    """
+
+    for key in (
+        "SMARTACCESS_AI_TEXT_PROVIDER",
+        "SMARTACCESS_AI_TEXT_BASE_URL",
+        "SMARTACCESS_AI_TEXT_MODEL",
+        "SMARTACCESS_AI_TEXT_API_KEY",
+        "SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS",
+        "SMARTACCESS_AI_VISION_PROVIDER",
+        "SMARTACCESS_AI_VISION_BASE_URL",
+        "SMARTACCESS_AI_VISION_MODEL",
+        "SMARTACCESS_AI_VISION_API_KEY",
+        "SMARTACCESS_AI_VISION_TIMEOUT_SECONDS",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "DEEPSEEK_MODEL",
+        "DEEPSEEK_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv("SMARTACCESS_AI_PROVIDER", "codex")
+    monkeypatch.setenv("SMARTACCESS_AI_BASE_URL", "https://legacy.example/v1")
+    monkeypatch.setenv("SMARTACCESS_AI_MODEL", "legacy-model")
+    monkeypatch.setenv("SMARTACCESS_AI_API_KEY", "sk-legacy")
+    monkeypatch.setenv("SMARTACCESS_AI_TIMEOUT_SECONDS", "45")
+
+    settings = AppSettings.from_env()
+
+    # TEXT 和 VISION 都回退到旧单组配置
+    assert settings.ai_text_provider == "codex"
+    assert settings.ai_text_base_url == "https://legacy.example/v1"
+    assert settings.ai_text_model == "legacy-model"
+    assert settings.ai_text_api_key == "sk-legacy"
+    assert settings.ai_text_timeout_seconds == 45.0
+
+    assert settings.ai_vision_provider == "codex"
+    assert settings.ai_vision_base_url == "https://legacy.example/v1"
+    assert settings.ai_vision_model == "legacy-model"
+    assert settings.ai_vision_api_key == "sk-legacy"
+    assert settings.ai_vision_timeout_seconds == 45.0

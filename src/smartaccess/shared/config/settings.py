@@ -91,23 +91,23 @@ class AppSettings(BaseModel):
             _get("DEEPSEEK_TIMEOUT_SECONDS", "30"),
         )
 
-        ai_text_provider = _get("SMARTACCESS_AI_TEXT_PROVIDER", "template") or "template"
-        ai_text_base_url = _get(
-            "SMARTACCESS_AI_TEXT_BASE_URL",
-            "https://fufei.mossx.ai/v1",
-        )
-        ai_text_model = _get("SMARTACCESS_AI_TEXT_MODEL", "GPT-5.4") or "GPT-5.4"
-        ai_text_api_key = _get("SMARTACCESS_AI_TEXT_API_KEY")
-        ai_text_timeout_raw = _get("SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS", "30") or "30"
+        legacy_provider = _get("SMARTACCESS_AI_PROVIDER", "template") or "template"
+        legacy_base_url = ai_base_url or "https://fufei.mossx.ai/v1"
+        legacy_model = ai_model or "GPT-5.4"
+        legacy_api_key = _get("SMARTACCESS_AI_API_KEY", _get("DEEPSEEK_API_KEY"))
+        legacy_timeout = ai_timeout or "30"
 
-        ai_vision_provider = _get("SMARTACCESS_AI_VISION_PROVIDER", "template") or "template"
-        ai_vision_base_url = _get(
-            "SMARTACCESS_AI_VISION_BASE_URL",
-            "https://fufei.mossx.ai/v1",
-        )
-        ai_vision_model = _get("SMARTACCESS_AI_VISION_MODEL", "GPT-5.4") or "GPT-5.4"
-        ai_vision_api_key = _get("SMARTACCESS_AI_VISION_API_KEY")
-        ai_vision_timeout_raw = _get("SMARTACCESS_AI_VISION_TIMEOUT_SECONDS", "30") or "30"
+        ai_text_provider = _get("SMARTACCESS_AI_TEXT_PROVIDER", legacy_provider) or legacy_provider
+        ai_text_base_url = _get("SMARTACCESS_AI_TEXT_BASE_URL", legacy_base_url)
+        ai_text_model = _get("SMARTACCESS_AI_TEXT_MODEL", legacy_model) or legacy_model
+        ai_text_api_key = _get("SMARTACCESS_AI_TEXT_API_KEY", legacy_api_key)
+        ai_text_timeout_raw = _get("SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS", legacy_timeout) or legacy_timeout
+
+        ai_vision_provider = _get("SMARTACCESS_AI_VISION_PROVIDER", legacy_provider) or legacy_provider
+        ai_vision_base_url = _get("SMARTACCESS_AI_VISION_BASE_URL", legacy_base_url)
+        ai_vision_model = _get("SMARTACCESS_AI_VISION_MODEL", legacy_model) or legacy_model
+        ai_vision_api_key = _get("SMARTACCESS_AI_VISION_API_KEY", legacy_api_key)
+        ai_vision_timeout_raw = _get("SMARTACCESS_AI_VISION_TIMEOUT_SECONDS", legacy_timeout) or legacy_timeout
 
         return cls(
             workspace_dir=Path(workspace_dir or "workspace"),
