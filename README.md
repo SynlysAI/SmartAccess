@@ -311,6 +311,21 @@ worker 会消费 SpecLabOS 下发给 `SMARTACCESS_DEVICE_ID` 的任务，启动�
 4. 然后实现执行页：开始/停止/取消、OCR 轮询、截图、日志和 trace。
 5. 最后补模板/平台闭环：模板发布、回拉、状态/trace 上传、评测自动化。
 
+## 打包为 EXE
+
+```powershell
+# 安装 PyInstaller
+pip install pyinstaller
+
+# 打包为单个 exe（保留终端窗口，方便查看日志）
+pyinstaller --onefile --icon=resource/icon.png --name=SmartAccess --add-data="resource/icon.png;resource" run_desktop.py
+
+# 若要隐藏终端黑窗，加上 --windowed（日志将不可见，建议配合文件日志使用）
+pyinstaller --onefile --windowed --icon=resource/icon.png --name=SmartAccess --add-data="resource/icon.png;resource" run_desktop.py
+```
+
+输出文件：`dist/SmartAccess.exe`
+
 ## 验证
 
 ```bash
