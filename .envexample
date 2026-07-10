@@ -4,13 +4,22 @@
 # ---- 基础配置 ----
 SMARTACCESS_WORKSPACE_DIR=workspace
 SMARTACCESS_LOG_LEVEL=INFO
-SMARTACCESS_DEVICE_ID=lab-pc-01
+SMARTACCESS_DEVICE_ID=lab-pc-01  # 这里必须配置唯一的设备ID
 
 # ---- Provider 模式 ----
-# Desktop startup currently wires automation=real and vision=local.
-SMARTACCESS_AUTOMATION_PROVIDER=stub
-SMARTACCESS_VISION_PROVIDER=stub
+# 每个 provider 控制对应功能模块的实现方式：
+#   stub  - 桩模式（不执行实际操作，用于测试）
+#   real  - 真实模式（连接真实设备/API）
+#   local - 本地模式（使用本地实现）
+#   api   - API 模式（调用远程 API 服务）
+
+# 自动化提供者：控制 UI 自动化操作的执行方式
+SMARTACCESS_AUTOMATION_PROVIDER=real
+# 视觉提供者：控制截图和图像识别的方式
+SMARTACCESS_VISION_PROVIDER=api
+# 平台提供者：控制与 SpecLabOS 平台的联动方式
 SMARTACCESS_PLATFORM_PROVIDER=stub
+# 进程执行器提供者：控制进程执行的方式
 SMARTACCESS_PROCESS_EXECUTOR_PROVIDER=stub
 
 # ---- AI 模型配置（文字 LLM + 多模态 分离）----
@@ -18,38 +27,39 @@ SMARTACCESS_AI_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 
 # 文字 LLM —— 用于 AI 生成工作流（不需要图片识别）
 # provider=template 时禁用；可选值：deepseek、codex 或其他 OpenAI 兼容供应商
-SMARTACCESS_AI_TEXT_PROVIDER=template
-SMARTACCESS_AI_TEXT_BASE_URL=https://fufei.mossx.ai/v1
-SMARTACCESS_AI_TEXT_MODEL=GPT-5.4
+SMARTACCESS_AI_TEXT_PROVIDER=deepseek
+SMARTACCESS_AI_TEXT_BASE_URL=https://api.deepseek.com/v1
+SMARTACCESS_AI_TEXT_MODEL=deepseek-v4-pro
 SMARTACCESS_AI_TEXT_API_KEY=
 SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS=30
 
 # 多模态 —— 用于 AI 辅助接入（需要识别截图）
 # provider=template 时禁用；目前仅 codex 走 Responses 接口支持图片
-SMARTACCESS_AI_VISION_PROVIDER=template
+SMARTACCESS_AI_VISION_PROVIDER=codex
 SMARTACCESS_AI_VISION_BASE_URL=https://fufei.mossx.ai/v1
 SMARTACCESS_AI_VISION_MODEL=GPT-5.4
 SMARTACCESS_AI_VISION_API_KEY=
 SMARTACCESS_AI_VISION_TIMEOUT_SECONDS=30
 
 # 向后兼容（可选）：仅当 TEXT_* / VISION_* 都未配时生效，TEXT 和 VISION 共用此组
-# SMARTACCESS_AI_PROVIDER=template
+# SMARTACCESS_AI_PROVIDER=codex
 # SMARTACCESS_AI_BASE_URL=https://fufei.mossx.ai/v1
 # SMARTACCESS_AI_MODEL=GPT-5.4
 # SMARTACCESS_AI_API_KEY=
 # SMARTACCESS_AI_TIMEOUT_SECONDS=30
 
-# ---- Vision API（SMARTACCESS_VISION_PROVIDER=api 时生效） ----
+# ----OCR Vision API（SMARTACCESS_VISION_PROVIDER=api 时生效） ----
 SMARTACCESS_VISION_API_URL=http://100.84.59.58:8090
 
 # ---- SpecLabOS 平台联动 ----
-SPECLABOS_BASE_URL=http://127.0.0.1:8000
+SMARTACCESS_PLATFORM_PROVIDER=stub
+SPECLABOS_BASE_URL=http://10.26.15.93:8010
 SPECLABOS_API_KEY=dev-smartaccess-token
 SPECLABOS_TIMEOUT_SECONDS=20
 
 # ---- 远程任务监听（桌面端 daemon 线程，RabbitMQ） ----
-SMARTACCESS_RABBITMQ_ENABLED=true
-SMARTACCESS_RABBITMQ_HOST=127.0.0.1
+SMARTACCESS_RABBITMQ_ENABLED=false
+SMARTACCESS_RABBITMQ_HOST=10.26.15.93
 SMARTACCESS_RABBITMQ_PORT=5672
 SMARTACCESS_RABBITMQ_USERNAME=admin
 SMARTACCESS_RABBITMQ_PASSWORD=password123

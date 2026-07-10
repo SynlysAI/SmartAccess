@@ -115,7 +115,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         increment_counters=increment_counters,
         orchestrator=orchestrator,
         migration=migration,
-        ai_generator=vision_ai_generator,
+        ai_generator=text_ai_generator,
     )
 
 
