@@ -12,6 +12,27 @@ from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.logging import get_logger
 
 
+def _resolve_icon_path() -> Path | None:
+    """解析应用图标路径，兼容开发环境和 PyInstaller 打包。
+
+    Returns:
+        图标文件路径；未找到时返回 None。
+    """
+
+    # PyInstaller onefile 打包：sys._MEIPASS 指向临时解压目录
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidate = Path(meipass) / "resource" / "icon.png"
+        if candidate.exists():
+            return candidate
+
+    # 开发环境：从源文件路径向上查找项目根目录
+    candidate = Path(__file__).resolve().parents[4] / "resource" / "icon.png"
+    if candidate.exists():
+        return candidate
+    return None
+
+
 def _load_app_icon() -> QIcon | None:
     """加载桌面应用图标。
 
@@ -19,8 +40,8 @@ def _load_app_icon() -> QIcon | None:
         图标对象；图标文件不存在或无效时返回 None。
     """
 
-    icon_path = Path(__file__).resolve().parents[4] / "resource" / "icon.png"
-    if not icon_path.exists():
+    icon_path = _resolve_icon_path()
+    if icon_path is None:
         return None
     icon = QIcon(str(icon_path))
     return icon if not icon.isNull() else None
