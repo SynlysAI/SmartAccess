@@ -16,6 +16,11 @@ from smartaccess.runtime.application.ports import OcrReading
 from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
 
 
+DEFAULT_OCR_MODE = "paddleocr-vl"
+PADDLEOCR_VL_MODES = {"paddleocr-vl", "paddleocr_vl", "vl"}
+PADDLEX_OCR_MODES = {"paddlex", "paddlex-ocr", "paddlex_ocr"}
+
+
 # --------------------------------------------------------------------------- #
 # Optional dependency helpers
 # --------------------------------------------------------------------------- #
@@ -52,6 +57,7 @@ class ApiVisionProvider:
         self,
         *,
         api_url: str,
+        ocr_mode: str = DEFAULT_OCR_MODE,
         workspace_dir: Path | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
@@ -59,12 +65,14 @@ class ApiVisionProvider:
 
         Args:
             api_url: OCR API 基础地址 (例: http://100.84.59.58:8090)。
+            ocr_mode: 远程 OCR 接口模式。
             workspace_dir: 工作区目录。
             timeout_seconds: API 请求超时秒数。
         """
         _require_pil()
 
         self._api_url = api_url.rstrip("/")
+        self._ocr_mode = self._normalize_ocr_mode(ocr_mode)
         self._workspace_dir = workspace_dir
         self._timeout = timeout_seconds
         self._screenshot: bytes | None = None
@@ -263,6 +271,27 @@ class ApiVisionProvider:
         Returns:
             OCR 读取结果。
         """
+        if self._ocr_mode in PADDLEX_OCR_MODES:
+            return self._paddlex_ocr(img_bytes, label)
+        if self._ocr_mode in PADDLEOCR_VL_MODES:
+            return self._paddleocr_vl_ocr(img_bytes, label)
+        return OcrReading(
+            roi=label,
+            text="",
+            confidence=0.0,
+            detail=f"unsupported OCR mode: {self._ocr_mode}",
+        )
+
+    def _paddleocr_vl_ocr(self, img_bytes: bytes, label: str) -> OcrReading:
+        """调用 PaddleOCR-VL 远程服务并解析布局结果。
+
+        Args:
+            img_bytes: PNG 图像字节。
+            label: 结果标签。
+
+        Returns:
+            OCR 读取结果。
+        """
         image_b64 = base64.b64encode(img_bytes).decode("ascii")
         payload = {
             "file": image_b64,
@@ -279,7 +308,7 @@ class ApiVisionProvider:
 
         try:
             resp = self._http.post(
-                f"{self._api_url}/layout-parsing",
+                self._api_endpoint("layout-parsing"),
                 json=payload,
                 timeout=self._timeout,
             )
@@ -321,8 +350,151 @@ class ApiVisionProvider:
             roi=label,
             text=combined,
             confidence=avg_score,
-            detail="api_ocr",
+            detail="api_ocr:paddleocr-vl",
         )
+
+    def _paddlex_ocr(self, img_bytes: bytes, label: str) -> OcrReading:
+        """调用 PaddleX OCR 远程服务并解析 OCR 结果。
+
+        Args:
+            img_bytes: PNG 图像字节。
+            label: 结果标签。
+
+        Returns:
+            OCR 读取结果。
+        """
+        image_b64 = self._encode_paddlex_image(img_bytes)
+        payload = {"file": image_b64, "fileType": 1}
+
+        try:
+            resp = self._http.post(
+                self._api_endpoint("ocr"),
+                json=payload,
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            result = resp.json()["result"]
+        except Exception as exc:
+            return OcrReading(
+                roi=label, text="", confidence=0.0, detail=f"API error: {exc}"
+            )
+
+        ocr_results = result.get("ocrResults", [])
+        if not ocr_results:
+            return OcrReading(
+                roi=label, text="", confidence=0.0, detail="no ocr results"
+            )
+
+        texts: list[str] = []
+        scores: list[float] = []
+        for item in ocr_results:
+            pruned = item.get("prunedResult", {}) if isinstance(item, dict) else {}
+            line_texts, line_scores = self._extract_paddlex_texts(pruned)
+            texts.extend(line_texts)
+            scores.extend(line_scores)
+
+        combined = " ".join(texts)
+        avg_score = float(sum(scores) / len(scores)) if scores else 0.9
+        return OcrReading(
+            roi=label,
+            text=combined,
+            confidence=avg_score,
+            detail="api_ocr:paddlex",
+        )
+
+    def _api_endpoint(self, endpoint: str) -> str:
+        """拼接 API 地址，并兼容已包含接口路径的配置。
+
+        Args:
+            endpoint: 接口路径名称。
+
+        Returns:
+            可直接请求的完整接口地址。
+        """
+        suffix = f"/{endpoint}"
+        if self._api_url.endswith(suffix):
+            return self._api_url
+        return f"{self._api_url}{suffix}"
+
+    @staticmethod
+    def _normalize_ocr_mode(ocr_mode: str) -> str:
+        """标准化 OCR 模式名称。
+
+        Args:
+            ocr_mode: 原始 OCR 模式配置。
+
+        Returns:
+            标准化后的 OCR 模式。
+        """
+        normalized = (ocr_mode or DEFAULT_OCR_MODE).strip().lower()
+        return normalized or DEFAULT_OCR_MODE
+
+    @staticmethod
+    def _encode_paddlex_image(img_bytes: bytes) -> str:
+        """按 PaddleX 服务调用习惯预处理并编码图片。
+
+        Args:
+            img_bytes: 原始 PNG 图像字节。
+
+        Returns:
+            JPEG 图像的 Base64 字符串。
+        """
+        img = _Image.open(BytesIO(img_bytes)).convert("RGB")
+        max_size = 960
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            resampling = getattr(getattr(_Image, "Resampling", None), "LANCZOS", None)
+            if resampling is None:
+                resampling = getattr(_Image, "LANCZOS", 1)
+            img = img.resize(new_size, resampling)
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG")
+        return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    @staticmethod
+    def _extract_paddlex_texts(pruned: dict[str, Any]) -> tuple[list[str], list[float]]:
+        """从 PaddleX OCR 的 prunedResult 中提取文本和置信度。
+
+        Args:
+            pruned: PaddleX OCR 返回的裁剪结果。
+
+        Returns:
+            文本列表和置信度列表。
+        """
+        raw_texts = ApiVisionProvider._ensure_list(
+            pruned.get("rec_texts") or pruned.get("texts")
+        )
+        raw_scores = ApiVisionProvider._ensure_list(
+            pruned.get("rec_scores") or pruned.get("scores")
+        )
+        texts = [str(text).strip() for text in raw_texts if str(text).strip()]
+        scores = [float(score) for score in raw_scores if score is not None]
+        if texts:
+            return texts, scores
+        text = pruned.get("rec_text") or pruned.get("text")
+        if not text:
+            return [], []
+        score = pruned.get("rec_score", pruned.get("score"))
+        return [str(text).strip()], [float(score)] if score is not None else []
+
+    @staticmethod
+    def _ensure_list(value: Any) -> list[Any]:
+        """将 OCR 返回字段标准化为列表。
+
+        Args:
+            value: OCR 返回的原始字段值。
+
+        Returns:
+            标准化后的列表。
+        """
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        return [value]
 
     @staticmethod
     def _extract_box_scores(pruned: dict) -> list[float]:

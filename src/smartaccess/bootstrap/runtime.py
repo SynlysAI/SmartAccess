@@ -44,6 +44,16 @@ from smartaccess.shared.events.bus import EventBus
 from smartaccess.shared.logging import configure_logging, get_logger
 
 
+REMOTE_OCR_MODES = {
+    "paddleocr-vl",
+    "paddleocr_vl",
+    "vl",
+    "paddlex",
+    "paddlex-ocr",
+    "paddlex_ocr",
+}
+
+
 def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
     """按配置创建运行时门面。
 
@@ -327,15 +337,18 @@ def _build_automation(settings: AppSettings):
 def _build_vision(settings: AppSettings):
     """创建视觉 provider。"""
 
-    if settings.vision_provider.lower() == "local":
+    ocr_mode = settings.ocr_mode.lower().strip()
+    vision_provider = settings.vision_provider.lower().strip()
+    if ocr_mode == "local" or vision_provider == "local":
         try:
             return LocalVisionProvider(workspace_dir=settings.workspace_dir)
         except Exception:  # noqa: BLE001 - 可选 OCR 依赖缺失时回退 stub
             get_logger().exception("本地视觉初始化失败，已回退 Stub")
-    if settings.vision_provider.lower() == "api":
+    if ocr_mode in REMOTE_OCR_MODES or vision_provider == "api":
         try:
             return ApiVisionProvider(
-                api_url=settings.vision_api_url,
+                api_url=settings.ocr_api_url,
+                ocr_mode=settings.ocr_mode,
                 workspace_dir=settings.workspace_dir,
             )
         except Exception:  # noqa: BLE001 - API 不可用时回退 stub

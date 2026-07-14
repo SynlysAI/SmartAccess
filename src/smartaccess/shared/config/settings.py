@@ -24,6 +24,8 @@ class AppSettings(BaseModel):
     automation_provider: str = Field(default="stub")
     vision_provider: str = Field(default="stub")
     vision_api_url: str = Field(default="http://100.84.59.58:8090")
+    ocr_mode: str = Field(default="local")
+    ocr_api_url: str = Field(default="http://100.84.59.58:8090")
     platform_provider: str = Field(default="stub")
     ai_provider: str = Field(default="template")
     ai_api_key: str | None = Field(default=None)
@@ -112,17 +114,30 @@ class AppSettings(BaseModel):
         ai_vision_api_key = _get("SMARTACCESS_AI_VISION_API_KEY", legacy_api_key)
         ai_vision_timeout_raw = _get("SMARTACCESS_AI_VISION_TIMEOUT_SECONDS", legacy_timeout) or legacy_timeout
 
+        ocr_mode = _get("SMARTACCESS_OCR_MODE")
+        legacy_vision_provider = _get("SMARTACCESS_VISION_PROVIDER", "stub") or "stub"
+        if not ocr_mode:
+            if legacy_vision_provider.lower() == "local":
+                ocr_mode = "local"
+            elif legacy_vision_provider.lower() == "api":
+                ocr_mode = "paddleocr-vl"
+            else:
+                ocr_mode = "stub"
+        ocr_api_url = _get(
+            "SMARTACCESS_OCR_API_URL",
+            _get("SMARTACCESS_VISION_API_URL", "http://100.84.59.58:8090"),
+        ) or "http://100.84.59.58:8090"
+
         return cls(
             workspace_dir=Path(workspace_dir or "workspace"),
             log_level=_get("SMARTACCESS_LOG_LEVEL", "INFO") or "INFO",
             automation_provider=(
                 _get("SMARTACCESS_AUTOMATION_PROVIDER", "stub") or "stub"
             ),
-            vision_provider=_get("SMARTACCESS_VISION_PROVIDER", "stub") or "stub",
-            vision_api_url=_get(
-                "SMARTACCESS_VISION_API_URL", "http://100.84.59.58:8090"
-            )
-            or "http://100.84.59.58:8090",
+            vision_provider=legacy_vision_provider,
+            vision_api_url=ocr_api_url,
+            ocr_mode=ocr_mode,
+            ocr_api_url=ocr_api_url,
             platform_provider=_get("SMARTACCESS_PLATFORM_PROVIDER", "stub") or "stub",
             ai_provider=_get("SMARTACCESS_AI_PROVIDER", "template") or "template",
             ai_api_key=_get("SMARTACCESS_AI_API_KEY", _get("DEEPSEEK_API_KEY")),
