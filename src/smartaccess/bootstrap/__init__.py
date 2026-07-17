@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from smartaccess.bootstrap.heartbeat import (
+    HeartbeatReporter,
+    start_heartbeat_reporter,
+)
 from smartaccess.bootstrap.runtime import (
     build_edge_app,
     build_experiment_service,
@@ -34,6 +38,7 @@ def run_desktop(settings: AppSettings | None = None) -> int:
     facade = build_runtime_facade(settings)
 
     start_remote_task_listener(settings, facade=facade)
+    start_heartbeat_reporter(settings, facade=facade)
 
     from smartaccess.desktop.shell.app import run_app
 
