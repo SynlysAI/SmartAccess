@@ -11,3 +11,4 @@ workspace_v2
 .idea
 .vscode
 /runtime/
+dist
