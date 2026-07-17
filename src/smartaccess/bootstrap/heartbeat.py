@@ -7,7 +7,12 @@
 from __future__ import annotations
 
 import logging
+import getpass
+import hashlib
+import platform
+import socket
 import threading
+import uuid
 from typing import Any
 
 from smartaccess.runtime.application.ports import PlatformClient, PlatformOffline
@@ -28,6 +33,9 @@ def build_device_info(settings: AppSettings) -> dict[str, Any]:
         上报给平台的设备信息字典。
     """
     return {
+        "hostname": socket.gethostname(),
+        "username": getpass.getuser(),
+        "platform": platform.platform(),
         "workspace_dir": str(settings.workspace_dir),
         "automation_provider": settings.automation_provider,
         "vision_provider": settings.vision_provider,
@@ -38,6 +46,28 @@ def build_device_info(settings: AppSettings) -> dict[str, Any]:
         "edge_api_port": settings.edge_api_port,
         "speclabos_base_url": settings.speclabos_base_url or "",
     }
+
+
+def build_machine_fingerprint(settings: AppSettings) -> str:
+    """构造当前 SmartAccess 执行端机器指纹。
+
+    Args:
+        settings: 应用配置。
+
+    Returns:
+        基于主机信息和工作区路径生成的稳定指纹。
+    """
+
+    parts = [
+        socket.gethostname(),
+        getpass.getuser(),
+        platform.node(),
+        platform.system(),
+        platform.machine(),
+        str(uuid.getnode()),
+    ]
+    raw = "|".join(parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class HeartbeatReporter:

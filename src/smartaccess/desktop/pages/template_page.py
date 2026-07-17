@@ -19,7 +19,10 @@ from PyQt6.QtWidgets import (
 
 from smartaccess.desktop.widgets.cards import create_card
 from smartaccess.desktop.widgets.table_style import configure_data_table
-from smartaccess.desktop.viewmodels.template_vm import TemplateViewModel
+from smartaccess.desktop.viewmodels.template_vm import (
+    DEFAULT_TEMPLATE_VERSION,
+    TemplateViewModel,
+)
 from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.runtime.application.template_service import TemplateRecord
 
@@ -81,6 +84,16 @@ class TemplatePage(QWidget):
         self._workflow_combo = QComboBox()
         self._workflow_combo.setMinimumWidth(280)
         row.addWidget(self._workflow_combo)
+        row.addWidget(QLabel("模板ID:"))
+        self._template_id = QLineEdit()
+        self._template_id.setMinimumWidth(120)
+        self._template_id.setPlaceholderText("默认工作流ID")
+        row.addWidget(self._template_id)
+        row.addWidget(QLabel("版本:"))
+        self._template_version = QLineEdit()
+        self._template_version.setMinimumWidth(80)
+        self._template_version.setPlaceholderText(DEFAULT_TEMPLATE_VERSION)
+        row.addWidget(self._template_version)
         publish_btn = QPushButton("发布")
         publish_btn.clicked.connect(self._publish)
         row.addWidget(publish_btn)
@@ -88,10 +101,6 @@ class TemplatePage(QWidget):
         refresh_btn.setObjectName("Secondary")
         refresh_btn.clicked.connect(self._refresh_cloud)
         row.addWidget(refresh_btn)
-        sync_btn = QPushButton("补传")
-        sync_btn.setObjectName("Secondary")
-        sync_btn.clicked.connect(self._sync_outbox)
-        row.addWidget(sync_btn)
         delete_btn = QPushButton("删除")
         delete_btn.setObjectName("Danger")
         delete_btn.clicked.connect(self._delete)
@@ -173,7 +182,18 @@ class TemplatePage(QWidget):
             QMessageBox.warning(self, "无法发布", "请先保存工作流")
             return
         try:
-            record = self._vm.publish(str(workflow_id))
+            template_id, template_version = self._template_identity(str(workflow_id))
+            if self._vm.template_exists(template_id, template_version):
+                choice = self._confirm_existing_template(template_id, template_version)
+                if choice == "cancel":
+                    return
+                if choice == "new_version":
+                    template_version = self._vm.next_template_version(template_id)
+            record = self._vm.publish(
+                str(workflow_id),
+                template_id=template_id,
+                template_version=template_version,
+            )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "发布失败", str(exc))
             return
@@ -183,15 +203,59 @@ class TemplatePage(QWidget):
             f"{record.identity.template_id}@{record.identity.template_version}",
         )
 
+    def _template_identity(self, workflow_id: str) -> tuple[str, str]:
+        """返回发布页填写或自动生成的模板身份。
+
+        Args:
+            workflow_id: 当前要发布的工作流 ID。
+
+        Returns:
+            模板 ID 与模板版本。
+        """
+
+        template_id = self._template_id.text().strip() or workflow_id
+        template_version = (
+            self._template_version.text().strip() or DEFAULT_TEMPLATE_VERSION
+        )
+        return template_id, template_version
+
+    def _confirm_existing_template(
+        self,
+        template_id: str,
+        template_version: str,
+    ) -> str:
+        """确认已存在模板版本的处理方式。
+
+        Args:
+            template_id: 模板 ID。
+            template_version: 模板版本。
+
+        Returns:
+            用户选择的处理方式。
+        """
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("模板版本已存在")
+        msg.setText(f"模板 {template_id}@{template_version} 已存在。")
+        msg.setInformativeText("请选择覆盖当前版本，或自动发布为新版本。")
+        overwrite_btn = msg.addButton("覆盖", QMessageBox.ButtonRole.AcceptRole)
+        new_version_btn = msg.addButton("发布新版本", QMessageBox.ButtonRole.ActionRole)
+        cancel_btn = msg.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(new_version_btn)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked == overwrite_btn:
+            return "overwrite"
+        if clicked == new_version_btn:
+            return "new_version"
+        if clicked == cancel_btn:
+            return "cancel"
+        return "cancel"
+
     def _refresh_cloud(self) -> None:
         """刷新云端模板索引。"""
 
         self._vm.refresh_cloud()
-
-    def _sync_outbox(self) -> None:
-        """同步平台补传队列。"""
-
-        self._vm.sync_outbox()
 
     def _delete(self) -> None:
         """删除选中的模板版本。"""

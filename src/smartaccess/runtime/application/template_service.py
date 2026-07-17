@@ -112,7 +112,7 @@ class TemplateService:
 
         try:
             cloud_templates = self._platform.list_templates(
-                device_id=self._source_device_id or None,
+                source_device_id=self._source_device_id or None,
             )
         except Exception:  # noqa: BLE001 - 平台不可用不影响本地模板
             self._cloud_available = False

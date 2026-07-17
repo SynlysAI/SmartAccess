@@ -62,13 +62,19 @@ def _set_windows_app_id() -> None:
         return
 
 
-def _http_post_json(url: str, payload: dict, timeout: float = 20.0) -> dict:
+def _http_post_json(
+    url: str,
+    payload: dict,
+    timeout: float = 20.0,
+    headers: dict[str, str] | None = None,
+) -> dict:
     """发送 JSON POST 请求。
 
     Args:
         url: 请求地址。
         payload: JSON 请求体。
         timeout: 超时秒数。
+        headers: 可选 HTTP 头。
 
     Returns:
         JSON 响应字典。
@@ -79,13 +85,15 @@ def _http_post_json(url: str, payload: dict, timeout: float = 20.0) -> dict:
     from urllib.request import Request, urlopen
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request_headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        **(headers or {}),
+    }
     req = Request(
         url,
         data=body,
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
+        headers=request_headers,
         method="POST",
     )
     try:
@@ -96,6 +104,52 @@ def _http_post_json(url: str, payload: dict, timeout: float = 20.0) -> dict:
         raise RuntimeError(f"HTTP {exc.code}: {detail[:300]}")
     except URLError as exc:
         raise RuntimeError(f"无法连接: {exc.reason}")
+
+
+def _register_smartaccess_node(settings: AppSettings, token: str) -> None:
+    """登录后注册并校验当前 SmartAccess 执行端。
+
+    Args:
+        settings: 应用配置。
+        token: 登录成功后获得的 SpecLabOS 访问令牌。
+    """
+
+    if not settings.device_id:
+        raise RuntimeError("未配置 SMARTACCESS_DEVICE_ID，请先在 .env 中配置唯一执行端 ID。")
+
+    from urllib.error import HTTPError, URLError
+    import json
+
+    from smartaccess.bootstrap.heartbeat import (
+        build_device_info,
+        build_machine_fingerprint,
+    )
+
+    base_url = (settings.speclabos_base_url or "").rstrip("/")
+    payload = {
+        "node_id": settings.device_id,
+        "machine_fingerprint": build_machine_fingerprint(settings),
+        "device_info": build_device_info(settings),
+    }
+    try:
+        _http_post_json(
+            f"{base_url}/api/smartaccess/nodes/register",
+            payload,
+            timeout=settings.speclabos_timeout_seconds,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    except RuntimeError as exc:
+        text = str(exc)
+        if "HTTP 409" not in text:
+            raise
+        raise RuntimeError(
+            "当前 SMARTACCESS_DEVICE_ID 已被另一台电脑注册。\n\n"
+            f"冲突 ID：{settings.device_id}\n"
+            "请修改 .env 中的 SMARTACCESS_DEVICE_ID 后重新登录，"
+            "例如 pc-用户名-机器名。"
+        ) from exc
+    except (HTTPError, URLError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"执行端注册检查失败: {exc}") from exc
 
 
 def show_login_dialog(settings: AppSettings) -> bool:
@@ -273,6 +327,12 @@ def show_login_dialog(settings: AppSettings) -> bool:
         if not token or not isinstance(user_payload, dict):
             _set_busy(False)
             QMessageBox.critical(dialog, "登录失败", "登录响应缺少 token 或用户信息。")
+            return
+        try:
+            _register_smartaccess_node(settings, token)
+        except Exception as exc:  # noqa: BLE001
+            _set_busy(False)
+            QMessageBox.critical(dialog, "执行端 ID 冲突", str(exc))
             return
 
         auth_result = {

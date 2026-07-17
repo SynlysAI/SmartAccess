@@ -40,6 +40,7 @@ class SpecLabOSPlatformClient:
             "upload_logs": "/smartaccess/logs",
             "upload_results": "/smartaccess/results",
             "report_heartbeat": "/api/smartaccess/nodes/heartbeat",
+            "register_node": "/api/smartaccess/nodes/register",
             **(endpoints or {}),
         }
 
@@ -69,21 +70,43 @@ class SpecLabOSPlatformClient:
         self,
         *,
         device_id: str | None = None,
+        source_device_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """列出云端模板，按设备 ID 过滤。"""
         path = self._endpoints["list_templates"]
         params = {}
         if device_id:
             params["device_id"] = device_id
+        if source_device_id:
+            params["source_device_id"] = source_device_id
         if params:
             path = f"{path}?{urlencode(params)}"
         payload = self._request("GET", path)
+        return self._extract_template_items(payload)
+
+    @staticmethod
+    def _extract_template_items(payload: Any) -> list[dict[str, Any]]:
+        """从 SpecLabOS 响应中提取模板列表。
+
+        Args:
+            payload: SpecLabOS 模板列表接口响应。
+
+        Returns:
+            模板字典列表。
+        """
+
         if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
-            items = payload.get("items") or payload.get("templates") or []
-            return list(items) if isinstance(items, list) else []
-        return []
+            return [item for item in payload if isinstance(item, dict)]
+        if not isinstance(payload, dict):
+            return []
+        for key in ("items", "templates", "records", "results"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+        data = payload.get("data") or payload.get("result")
+        if data is payload:
+            return []
+        return SpecLabOSPlatformClient._extract_template_items(data)
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         workflow = dict(payload.get("workflow") or {})
@@ -163,6 +186,18 @@ class SpecLabOSPlatformClient:
         """
         self._request("POST", self._endpoints["report_heartbeat"], payload)
         return True
+
+    def register_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """注册并校验 SmartAccess 执行端节点身份。
+
+        Args:
+            payload: 节点注册载荷。
+
+        Returns:
+            平台注册响应。
+        """
+
+        return self._request("POST", self._endpoints["register_node"], payload)
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         url = urljoin(self._base_url, path.lstrip("/"))

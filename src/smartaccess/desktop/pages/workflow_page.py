@@ -138,8 +138,6 @@ class WorkflowPage(QWidget):
         self._lifecycle = NoWheelComboBox()
         for state in ("Draft", "Standardized", "Published"):
             self._lifecycle.addItem(state, state)
-        self._template_id = QLineEdit()
-        self._template_version = QLineEdit()
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(8)
@@ -151,10 +149,6 @@ class WorkflowPage(QWidget):
         grid.addWidget(self._author, 1, 1)
         grid.addWidget(QLabel("状态"), 1, 2)
         grid.addWidget(self._lifecycle, 1, 3)
-        grid.addWidget(QLabel("模板 ID"), 2, 0)
-        grid.addWidget(self._template_id, 2, 1)
-        grid.addWidget(QLabel("模板版本"), 2, 2)
-        grid.addWidget(self._template_version, 2, 3)
         layout.addLayout(grid)
 
         layout.addLayout(self._build_step_toolbar())
@@ -338,8 +332,6 @@ class WorkflowPage(QWidget):
         self._workflow_id.setText(self._next_workflow_id())
         self._author.setText("smartaccess")
         self._lifecycle.setCurrentIndex(0)
-        self._template_id.clear()
-        self._template_version.clear()
         self._steps.set_steps(
             [],
             self._anchor_ids,
@@ -381,8 +373,6 @@ class WorkflowPage(QWidget):
         self._author.setText(meta.author)
         state_index = self._lifecycle.findData(meta.lifecycle_state)
         self._lifecycle.setCurrentIndex(max(0, state_index))
-        self._template_id.setText(meta.template_id or "")
-        self._template_version.setText(meta.template_version or "")
         rows = [
             StepRow(
                 step_id=step.id,
@@ -605,8 +595,6 @@ class WorkflowPage(QWidget):
             anchor_profile=str(anchor_profile),
             author=self._author.text().strip() or "smartaccess",
             lifecycle_state=str(self._lifecycle.currentData() or "Draft"),
-            template_id=self._template_id.text().strip() or None,
-            template_version=self._template_version.text().strip() or None,
         )
         steps = []
         for row in self._steps.rows():

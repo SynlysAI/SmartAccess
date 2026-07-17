@@ -163,7 +163,12 @@ class PlatformClient(Protocol):
     ) -> dict[str, Any]:
         """拉取指定模板版本。"""
 
-    def list_templates(self, *, device_id: str | None = None) -> list[dict[str, Any]]:
+    def list_templates(
+        self,
+        *,
+        device_id: str | None = None,
+        source_device_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """列出云端模板。"""
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -194,6 +199,9 @@ class PlatformClient(Protocol):
 
     def report_heartbeat(self, payload: dict[str, Any]) -> bool:
         """上报执行端心跳,通知平台本节点在线。"""
+
+    def register_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """注册并校验执行端节点身份。"""
 
 
 class ArtifactStore(Protocol):
