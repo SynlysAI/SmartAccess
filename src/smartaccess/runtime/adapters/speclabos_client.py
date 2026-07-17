@@ -39,6 +39,7 @@ class SpecLabOSPlatformClient:
             "upload_status": "/api/smartaccess/runs/{run_id}/events",
             "upload_logs": "/smartaccess/logs",
             "upload_results": "/smartaccess/results",
+            "report_heartbeat": "/api/smartaccess/nodes/heartbeat",
             **(endpoints or {}),
         }
 
@@ -149,6 +150,18 @@ class SpecLabOSPlatformClient:
 
     def upload_results(self, payload: dict[str, Any]) -> bool:
         self._request("POST", self._endpoints["upload_results"], payload)
+        return True
+
+    def report_heartbeat(self, payload: dict[str, Any]) -> bool:
+        """上报执行端心跳到 SpecLabOS 平台。
+
+        Args:
+            payload: 心跳载荷,包含 node_id、device_info、heartbeat_interval_seconds。
+
+        Returns:
+            平台接收成功返回 True。
+        """
+        self._request("POST", self._endpoints["report_heartbeat"], payload)
         return True
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:

@@ -192,6 +192,9 @@ class PlatformClient(Protocol):
     def upload_results(self, payload: dict[str, Any]) -> bool:
         """上传运行结果。"""
 
+    def report_heartbeat(self, payload: dict[str, Any]) -> bool:
+        """上报执行端心跳,通知平台本节点在线。"""
+
 
 class ArtifactStore(Protocol):
     """运行产物存储协议。"""

@@ -108,6 +108,17 @@ class StubPlatformClient:
 
         return self._upload("results", payload)
 
+    def report_heartbeat(self, payload: dict[str, Any]) -> bool:
+        """上报执行端心跳。
+
+        Args:
+            payload: 心跳载荷。
+
+        Returns:
+            平台接收成功返回 True。
+        """
+        return self._upload("heartbeat", payload)
+
     def _upload(self, kind: str, payload: dict[str, Any]) -> bool:
         """记录一次上传。"""
 
