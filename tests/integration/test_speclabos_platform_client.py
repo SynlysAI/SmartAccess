@@ -28,6 +28,39 @@ class CaptureHandler(BaseHTTPRequestHandler):
         return None
 
 
+class ListTemplatesHandler(BaseHTTPRequestHandler):
+    """返回嵌套模板列表的测试 handler。"""
+
+    paths: list[str] = []
+
+    def do_GET(self):  # noqa: N802
+        """处理 GET 请求。"""
+
+        self.__class__.paths.append(self.path)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(
+            json.dumps(
+                {
+                    "data": {
+                        "items": [
+                            {
+                                "template_id": "tpl_weixin",
+                                "template_version": "1.0.0",
+                            }
+                        ]
+                    }
+                }
+            ).encode("utf-8")
+        )
+
+    def log_message(self, format, *args):  # noqa: A002
+        """关闭测试 HTTP 日志。"""
+
+        return None
+
+
 def test_publish_template_posts_smartaccess_endpoint() -> None:
     """验证模板发布调用 SpecLabOS SmartAccess 模板接口。"""
     CaptureHandler.payloads = []
@@ -57,3 +90,21 @@ def test_publish_template_posts_smartaccess_endpoint() -> None:
     assert sent_payload["anchor_profile"] == "weixin"
     assert sent_payload["source_device_id"] == "weixin"
     assert sent_payload["published_by"] == "smartaccess"
+
+
+def test_list_templates_extracts_nested_items() -> None:
+    """验证模板列表兼容 data.items 包装响应。"""
+
+    ListTemplatesHandler.paths = []
+    server = HTTPServer(("127.0.0.1", 0), ListTemplatesHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    client = SpecLabOSPlatformClient(base_url=f"http://127.0.0.1:{server.server_port}")
+
+    templates = client.list_templates(source_device_id="pc-xiaoxu")
+
+    server.shutdown()
+    assert ListTemplatesHandler.paths[-1].endswith(
+        "/api/smartaccess/templates?source_device_id=pc-xiaoxu"
+    )
+    assert templates == [{"template_id": "tpl_weixin", "template_version": "1.0.0"}]

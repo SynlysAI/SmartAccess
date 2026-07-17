@@ -51,11 +51,23 @@ class StubPlatformClient:
         self,
         *,
         device_id: str | None = None,
+        source_device_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """列出模板。"""
 
         self._raise_if_offline("list_templates")
-        return [dict(payload) for payload in self._templates.values()]
+        templates = [dict(payload) for payload in self._templates.values()]
+        if device_id:
+            templates = [
+                item for item in templates if item.get("anchor_profile") == device_id
+            ]
+        if source_device_id:
+            templates = [
+                item
+                for item in templates
+                if item.get("source_device_id") == source_device_id
+            ]
+        return templates
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         """发布模板。"""
@@ -118,6 +130,23 @@ class StubPlatformClient:
             平台接收成功返回 True。
         """
         return self._upload("heartbeat", payload)
+
+    def register_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """注册并校验执行端节点身份。
+
+        Args:
+            payload: 节点注册载荷。
+
+        Returns:
+            注册结果。
+        """
+
+        self._raise_if_offline("register_node")
+        return {
+            "ok": True,
+            "conflict": False,
+            "node_id": payload.get("node_id", ""),
+        }
 
     def _upload(self, kind: str, payload: dict[str, Any]) -> bool:
         """记录一次上传。"""
