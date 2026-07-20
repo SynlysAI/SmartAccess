@@ -10,8 +10,6 @@ SMARTACCESS_DEVICE_ID=lab-pc-01  # 这里必须配置唯一的设备ID
 # 每个 provider 控制对应功能模块的实现方式：
 #   stub  - 桩模式（不执行实际操作，用于测试）
 #   real  - 真实模式（连接真实设备/API）
-#   local - 本地模式（使用本地实现）
-#   api   - API 模式（调用远程 API 服务）
 
 # 自动化提供者：控制 UI 自动化操作的执行方式
 SMARTACCESS_AUTOMATION_PROVIDER=real
