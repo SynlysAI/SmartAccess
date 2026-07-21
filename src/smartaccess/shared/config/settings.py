@@ -50,6 +50,7 @@ class AppSettings(BaseModel):
     deepseek_timeout_seconds: float = Field(default=30.0, gt=0)
     speclabos_base_url: str | None = Field(default=None)
     speclabos_api_key: str | None = Field(default=None)
+    speclabos_datahub_key: str | None = Field(default=None)
     speclabos_username: str = Field(default="")
     speclabos_user_role: str = Field(default="")
     speclabos_user_organization: str = Field(default="")
@@ -174,6 +175,7 @@ class AppSettings(BaseModel):
             ),
             speclabos_base_url=_get("SPECLABOS_BASE_URL"),
             speclabos_api_key=_get("SPECLABOS_API_KEY"),
+            speclabos_datahub_key=_get("SPECLABOS_DATAHUB_KEY"),
             speclabos_timeout_seconds=float(
                 _get("SPECLABOS_TIMEOUT_SECONDS", "20") or "20"
             ),

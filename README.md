@@ -289,9 +289,21 @@ worker 会消费 SpecLabOS 下发给 `SMARTACCESS_DEVICE_ID` 的任务，启动�
 4. 运行标准化检查，通过后切到“运行监控”页选择工作流并开始。
 5. 查看步骤时间线、步骤审计、OCR 文本、截图链接和 `run_trace.jsonl`。
 
+### 数据采集
+
+SmartAccess 已内嵌兼容 SmartDataHub 的设备端采集器，可在左侧底部的“数据采集”页完成配置、启动、停止和状态监控：
+
+1. 填写采集器 ID 与站点；设备 ID、SmartDataHub 服务地址及采集密钥统一读取 `.env` 中的 `SMARTACCESS_DEVICE_ID`、`SPECLABOS_BASE_URL`、`SPECLABOS_DATAHUB_KEY`。
+2. 添加一个或多个监听器；文件型监听器按文件模式上传，目录资产型监听器会按顶层结果目录逐文件上传。
+   数据类型为固定分类：日志类（`device_log`）、样品类（`sample_record`）、报告类（`report`）、数据结果类（`result_data`）和其它（`other`）。
+3. 点击“启动采集”。可选择启动时扫描已有数据，采集器会随后持续监听创建、移动和可选的修改事件。
+4. 页面会显示监听器状态及 SQLite 队列中的待上传、已上传和失败待重试数量；点击“停止采集”可随时安全停止。
+
+采集配置保存在 `workspace/data_collection/collector.yaml`，格式与 SmartDataHub 原有的 `collector.config.yaml` 兼容；本地可靠上传队列位于 `workspace/data_collection/collector_queue.db`。
+
 ## v2 简化模型特性
 
-- ✅ 四页主导航：锚点、工作流、模板/平台、执行
+- ✅ 六页主导航：锚点、工作流、执行、模板/平台、运行概览、数据采集
 - ✅ `anchors.yaml` 作为唯一锚点配置
 - ✅ 新建设备 ID 使用 `体系-实验室-产品型号-设备编号` 四段主键规则
 - ✅ 简化 `workflow.yaml`：线性步骤 + anchor_id + action + expected_text/match_mode + type 输入模式
