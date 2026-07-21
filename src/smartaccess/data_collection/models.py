@@ -52,3 +52,15 @@ class UploadQueueItem:
     metadata: dict[str, Any]
     attempt_count: int
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class TerminalFailureItem:
+    """达到最大重试次数后停止自动重试的队列条目。"""
+
+    item_id: int
+    filename: str
+    file_path: Path
+    watcher_name: str
+    attempt_count: int
+    last_error: str

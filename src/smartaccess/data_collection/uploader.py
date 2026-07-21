@@ -17,6 +17,7 @@ class UploadWorker:
         queue: SQLiteUploadQueue,
         client: DataHubClient,
         retry_interval_seconds: int,
+        max_retry_count: int,
     ) -> None:
         """初始化后台上传工作器。
 
@@ -24,11 +25,13 @@ class UploadWorker:
             queue: 本地可靠上传队列。
             client: SmartDataHub HTTP 客户端。
             retry_interval_seconds: 队列为空或失败重试的等待秒数。
+            max_retry_count: 单个文件允许的最大上传尝试次数。
         """
 
         self._queue = queue
         self._client = client
         self._retry_interval_seconds = retry_interval_seconds
+        self._max_retry_count = max_retry_count
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
@@ -66,14 +69,22 @@ class UploadWorker:
                 if self._stop_event.is_set():
                     break
                 if not item.file_path.is_file():
-                    self._queue.mark_failed(item.item_id, f"文件不存在: {item.file_path}")
+                    self._queue.mark_failed(
+                        item.item_id,
+                        f"文件不存在: {item.file_path}",
+                        self._max_retry_count,
+                    )
                     continue
                 try:
                     self._client.upload_file(item)
                     self._queue.mark_uploaded(item.item_id)
                     self._logger.info("数据采集文件上传成功: %s", item.file_path)
                 except Exception as exc:  # noqa: BLE001
-                    self._queue.mark_failed(item.item_id, str(exc))
+                    self._queue.mark_failed(
+                        item.item_id,
+                        str(exc),
+                        self._max_retry_count,
+                    )
                     self._logger.warning(
                         "数据采集文件上传失败 item_id=%s error=%s",
                         item.item_id,

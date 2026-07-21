@@ -8,6 +8,7 @@ from pathlib import Path
 import threading
 
 from .config import CollectionConfig, validate_config
+from .models import TerminalFailureItem
 from .queue import SQLiteUploadQueue
 
 
@@ -45,6 +46,18 @@ class CollectionController:
 
         with self._lock:
             return self._state in {"starting", "running"}
+
+    def load_queue(self, config: CollectionConfig) -> None:
+        """关联配置对应的本地上传队列以便展示历史状态。
+
+        Args:
+            config: 当前数据采集配置。
+        """
+
+        with self._lock:
+            if self._state in {"starting", "running"}:
+                return
+            self._queue = SQLiteUploadQueue(config.queue.sqlite_path)
 
     def start(
         self,
@@ -91,6 +104,7 @@ class CollectionController:
                 queue=queue,
                 client=DataHubClient(config.server),
                 retry_interval_seconds=config.queue.retry_interval_seconds,
+                max_retry_count=config.queue.max_retry_count,
             )
             initial_scan_files = 0
             if upload_existing:
@@ -164,6 +178,31 @@ class CollectionController:
             queue_counts=queue_counts,
             initial_scan_files=initial_scan_files,
         )
+
+    def list_terminal_failures(self) -> list[TerminalFailureItem]:
+        """查询当前上传队列中的终止失败条目。
+
+        Returns:
+            已停止自动重试的队列条目列表。
+        """
+
+        with self._lock:
+            queue = self._queue
+        return queue.list_terminal_failures() if queue is not None else []
+
+    def retry_terminal_failure(self, item_id: int) -> bool:
+        """将指定终止失败条目重新放入待上传队列。
+
+        Args:
+            item_id: 终止失败队列条目 ID。
+
+        Returns:
+            成功重新入队时返回 True。
+        """
+
+        with self._lock:
+            queue = self._queue
+        return queue.retry_terminal_failure(item_id) if queue is not None else False
 
     @staticmethod
     def _cleanup(uploader: object | None, watchers: list[object]) -> None:

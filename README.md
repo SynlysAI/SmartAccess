@@ -297,7 +297,8 @@ SmartAccess 已内嵌兼容 SmartDataHub 的设备端采集器，可在左侧底
 2. 添加一个或多个监听器；文件型监听器按文件模式上传，目录资产型监听器会按顶层结果目录逐文件上传。
    数据类型为固定分类：日志类（`device_log`）、样品类（`sample_record`）、报告类（`report`）、数据结果类（`result_data`）和其它（`other`）。
 3. 点击“启动采集”。可选择启动时扫描已有数据，采集器会随后持续监听创建、移动和可选的修改事件。
-4. 页面会显示监听器状态及 SQLite 队列中的待上传、已上传和失败待重试数量；点击“停止采集”可随时安全停止。
+4. 页面会显示监听器状态及 SQLite 队列中的待上传、已上传、失败待重试和终止失败数量；最大自动重试次数默认是 `3`，达到上限后可查看失败原因并通过“手动重试”重新入队。
+5. 点击“停止采集”可随时安全停止。
 
 采集配置保存在 `workspace/data_collection/collector.yaml`，格式与 SmartDataHub 原有的 `collector.config.yaml` 兼容；本地可靠上传队列位于 `workspace/data_collection/collector_queue.db`。
 

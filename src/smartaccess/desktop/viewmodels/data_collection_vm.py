@@ -20,6 +20,7 @@ from smartaccess.data_collection.controller import (
     CollectionController,
     CollectionRuntimeStatus,
 )
+from smartaccess.data_collection.models import TerminalFailureItem
 
 from .base import ViewModel
 
@@ -54,7 +55,9 @@ class DataCollectionViewModel(ViewModel):
                 self._facade.settings().device_id,
             )
         )
-        return self._apply_environment_settings(config, require_values=False)
+        effective_config = self._apply_environment_settings(config, require_values=False)
+        self._controller.load_queue(effective_config)
+        return effective_config
 
     def build_configuration(
         self,
@@ -63,6 +66,7 @@ class DataCollectionViewModel(ViewModel):
         site: str,
         timeout_seconds: int,
         retry_interval_seconds: int,
+        max_retry_count: int,
         watchers: Iterable[WatcherConfig],
     ) -> CollectionConfig:
         """根据页面可编辑字段构造采集配置。
@@ -75,6 +79,7 @@ class DataCollectionViewModel(ViewModel):
             site: 采集站点名称。
             timeout_seconds: 单文件上传请求超时秒数。
             retry_interval_seconds: 上传失败重试间隔秒数。
+            max_retry_count: 单文件最大自动上传尝试次数。
             watchers: 页面配置的监听器列表。
 
         Returns:
@@ -95,6 +100,7 @@ class DataCollectionViewModel(ViewModel):
                     / "collector_queue.db"
                 ),
                 retry_interval_seconds=retry_interval_seconds,
+                max_retry_count=max_retry_count,
             ),
             watchers=list(watchers),
         )
@@ -161,6 +167,27 @@ class DataCollectionViewModel(ViewModel):
         """
 
         return self._controller.is_running
+
+    def list_terminal_failures(self) -> list[TerminalFailureItem]:
+        """返回已停止自动重试的上传失败条目。
+
+        Returns:
+            终止失败条目列表。
+        """
+
+        return self._controller.list_terminal_failures()
+
+    def retry_terminal_failure(self, item_id: int) -> bool:
+        """将指定终止失败条目手动重新入队。
+
+        Args:
+            item_id: 终止失败队列条目 ID。
+
+        Returns:
+            条目成功重新入队时返回 True。
+        """
+
+        return self._controller.retry_terminal_failure(item_id)
 
     def _apply_environment_settings(
         self,
