@@ -22,7 +22,11 @@ except Exception:  # noqa: BLE001
 
 from smartaccess.shared.config.settings import DEFAULT_AI_USER_AGENT
 from smartaccess.shared.contracts.anchors import AnchorsContract
-from smartaccess.shared.contracts.workflow import WorkflowContract
+from smartaccess.shared.contracts.workflow import (
+    DEFAULT_OCR_POLL_INTERVAL_SECONDS,
+    DEFAULT_OCR_TIMEOUT_SECONDS,
+    WorkflowContract,
+)
 
 CODEX_USER_AGENT = (
     "codex_vscode/0.137.0-alpha.4 "
@@ -258,10 +262,11 @@ class SmartAccessAiGenerator:
             '"preconditions":[{"description":"..."}],'
             '"steps":[{"id":"step_1",'
             '"action":"click","view_id":"main","anchor_id":"anchor_id","value":null,'
-            '"match_mode":"none","requires_confirmation":false},'
+            '"wait_seconds":1.0,"match_mode":"none","requires_confirmation":false},'
             '{"id":"step_2","action":"ocr","view_id":"main",'
             '"anchor_id":"status_anchor","match_mode":"contains",'
-            '"expected_text":"ready","timeout_seconds":10.0},'
+            '"expected_text":"ready","timeout_seconds":10.0,'
+            '"poll_interval_seconds":0.5,"wait_seconds":1.0},'
             '{"id":"step_3","action":"type","view_id":"main",'
             '"anchor_id":"anchor_id","value":null,"input_mode":"incrementing",'
             '"increment_rule":{"pattern":"{device_id}-{date}-{counter:03d}",'
@@ -274,13 +279,18 @@ class SmartAccessAiGenerator:
             "input_mode must be one of free, incrementing; never use replace or other values.\n"
             "Allowed actions: click, type, hotkey, press_enter, ocr, wait.\n"
             "For action=ocr, the anchor's action_region is the OCR scan area; "
-            "set match_mode and expected_text for OCR conditions.\n"
+            "set match_mode and expected_text for OCR conditions. "
+            "timeout_seconds defaults to 10.0 seconds and poll_interval_seconds "
+            "defaults to 0.5 seconds.\n"
             "For action=wait, omit anchor_id and set wait_seconds.\n"
+            "For all non-wait actions, wait_seconds is the delay after the step succeeds; "
+            "default to 1.0 seconds, and 0 means no delay.\n"
             "Never place OCR match fields on click, type, hotkey, press_enter, or wait steps. "
             "Insert a separate action=ocr step immediately after the action that needs checking.\n"
             "Use requires_confirmation=true only when that exact step must ask for human "
             "confirmation before execution. Do not create standalone manual-confirm wait steps.\n"
-            "All wait_seconds and timeout_seconds values are seconds.\n"
+            "All wait_seconds, timeout_seconds, and poll_interval_seconds values "
+            "are seconds.\n"
             "Use only calibrated anchors, view_id values, and actions from context."
         )
         user = {
@@ -314,8 +324,7 @@ class SmartAccessAiGenerator:
             '"precheck":{"mode":"image",'
             '"region":{"pixel":{"x":0,"y":0,"width":0,"height":0},'
             '"normalized":{"x":0,"y":0,"width":0,"height":0}},'
-            '"image_threshold":0.8},'
-            '"default_wait_seconds":2.0}]}]}\n'
+            '"image_threshold":0.8}}]}]}\n'
             "Anchors do not contain actions or manual-confirm settings.\n"
             "Each anchor has exactly one action_region used by workflow actions.\n"
             "precheck is optional. Allowed precheck modes: image, text, image_text.\n"
@@ -528,6 +537,10 @@ class SmartAccessAiGenerator:
                 step.pop("target", None)
                 step["view_id"] = "main"
                 step["match_mode"] = "none"
+                step.pop("expected_text", None)
+                step.pop("expected_candidates", None)
+                step.pop("timeout_seconds", None)
+                step.pop("poll_interval_seconds", None)
                 if step.get("wait_seconds") is None and step.get("value") is not None:
                     step["wait_seconds"] = SmartAccessAiGenerator._seconds(step["value"])
                 if step.get("wait_seconds") is None:
@@ -536,7 +549,11 @@ class SmartAccessAiGenerator:
                 if step.get("match_mode") in (None, "none"):
                     step["match_mode"] = "not_empty"
                 if step.get("timeout_seconds") is None:
-                    step["timeout_seconds"] = 30.0
+                    step["timeout_seconds"] = DEFAULT_OCR_TIMEOUT_SECONDS
+                if step.get("poll_interval_seconds") is None:
+                    step[
+                        "poll_interval_seconds"
+                    ] = DEFAULT_OCR_POLL_INTERVAL_SECONDS
                 step.pop("ignore_case", None)
                 step.pop("normalize_text", None)
                 step.pop("min_confidence", None)
@@ -545,10 +562,17 @@ class SmartAccessAiGenerator:
                 step.pop("expected_text", None)
                 step.pop("expected_candidates", None)
                 step.pop("timeout_seconds", None)
+                step.pop("poll_interval_seconds", None)
                 step.pop("min_confidence", None)
                 step.pop("ignore_case", None)
                 step.pop("normalize_text", None)
-            for field in ("wait_seconds", "timeout_seconds"):
+            if action != "wait" and step.get("wait_seconds") is None:
+                step["wait_seconds"] = 1.0
+            for field in (
+                "wait_seconds",
+                "timeout_seconds",
+                "poll_interval_seconds",
+            ):
                 if step.get(field) is not None:
                     step[field] = SmartAccessAiGenerator._seconds(step[field])
             if step.get("input_mode") not in ("free", "incrementing"):
@@ -709,7 +733,6 @@ class SmartAccessAiGenerator:
             "id": anchor.get("id") or "anchor",
             "action_region": action_region,
             "precheck": normalized_precheck,
-            "default_wait_seconds": float(anchor.get("default_wait_seconds") or 2.0),
             "notes": anchor.get("notes"),
         }
 

@@ -250,13 +250,13 @@ worker 会消费 SpecLabOS 下发给 `SMARTACCESS_DEVICE_ID` 的任务，启动�
 
 - 本地 OCR provider 是 `LocalVisionProvider`，依赖 `opencv-python`、`paddleocr` 和 `paddlepaddle`。
 - 锚点配置在 `anchors.yaml`：`action_region` 用于点击/聚焦，`observe_region` 用于动作后的 OCR 读取。
-- 工作流配置在 `workflow.yaml`：步骤用 `expected_text`、`match_mode`、`timeout_seconds` 声明 OCR 预期；`match_mode: none` 表示不做 OCR。
+- 工作流配置在 `workflow.yaml`：OCR 步骤用 `expected_text`、`match_mode`、`timeout_seconds`、`poll_interval_seconds` 声明识别规则；默认超时 `10.0s`、轮询间隔 `0.5s`。
 - `type` 步骤支持 `input_mode: free` 和 `input_mode: incrementing`。自由输入沿用 `value`；递增式输入在运行时按 `{device_id}-{author}-{date}-{counter:03d}` 解析，日期由 `date_format` 控制，计数器按 `workflow_id + sequence_key` 持久化。
-- 每个 `type + incrementing` 步骤都有独立 `increment_rule`；桌面工作流表格在该行“值”列显示递增预览，并通过“配置”按钮编辑本行模板、变量名、日期格式、起始值、计数位数和循环范围。
+- 每个 `type + incrementing` 步骤都有独立 `increment_rule`；桌面工作流表格通过“参数摘要”和“配置”按钮编辑本行模板、变量名、日期格式、起始值、计数位数和循环范围。
 - 同一次 run session 内相同递增变量只生成一次值并复用；只有 workflow 成功完成后才持久化推进下次值，失败、取消或阻塞不会消耗编号。
-- Orchestrator 先执行动作；无 OCR 时按 `step.wait_seconds -> anchor.default_wait_seconds -> 0` 固定等待；有 OCR 时每 0.5 秒截图、裁剪 observe region、识别并匹配文本。
+- Orchestrator 按“异常检查 → 锚点执行前校验 → 人工确认 → 动作执行”运行步骤；非等待步骤成功后按 `step.wait_seconds` 后置等待，缺省为 `1.0s`，显式 `0` 表示不等待；OCR 步骤按 `poll_interval_seconds` 周期截图并读取锚点 `action_region`，缺省间隔为 `0.5s`。
 - 每步都会写入 `run_trace.jsonl`，包含期望 OCR、实际 OCR、匹配结果、尝试次数、耗时、截图路径和错误详情；递增式输入写入 trace 的 `action.value` 是运行时解析后的真实输入值。
-- 运行监控日志在任务开始和结束时输出 START/END 边界，包含设备 ID、作者、工作流名称和 session；失败日志保留 OCR 规则、实际文本、匹配结果和尝试次数。
+- 运行监控日志在任务开始和结束时输出 START/END 边界，并展示执行前校验的方式、尝试次数、文字结果或图像相似度；失败日志保留 OCR 规则、实际文本、匹配结果和尝试次数。
 
 ## 能力示例
 

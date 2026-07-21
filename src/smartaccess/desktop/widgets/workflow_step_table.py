@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from string import Formatter
 import re
 from typing import Any, Callable
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -35,6 +35,11 @@ from smartaccess.desktop.widgets.table_style import (
     configure_data_table,
     interactive_header,
     set_embedded_editor_height,
+)
+from smartaccess.shared.contracts.workflow import (
+    DEFAULT_ACTION_WAIT_SECONDS,
+    DEFAULT_OCR_POLL_INTERVAL_SECONDS,
+    DEFAULT_OCR_TIMEOUT_SECONDS,
 )
 
 ACTION_OPTIONS = [
@@ -430,10 +435,206 @@ class StepRow:
     expected_text: str | list[str] | None = None
     expected_candidates: list[str] | None = None
     timeout_seconds: float | None = None
+    poll_interval_seconds: float | None = None
     min_confidence: float | None = None
     ignore_case: bool = False
     normalize_text: bool = False
     requires_confirmation: bool = False
+
+
+def _parameter_summary(step: StepRow) -> str:
+    """生成动作专属参数摘要。
+
+    Args:
+        step: 工作流步骤行。
+
+    Returns:
+        适合在表格中展示的简短摘要。
+    """
+
+    if step.action == "type":
+        if step.input_mode == "incrementing":
+            rule = _increment_rule(step.increment_rule)
+            return f"递增输入：{rule['pattern']}"
+        return f"输入：{step.value or '未填写'}"
+    if step.action == "hotkey":
+        return f"快捷键：{step.value or '未填写'}"
+    if step.action == "ocr":
+        mode_labels = {
+            "contains": "包含",
+            "equals": "等于",
+            "regex": "正则",
+            "not_empty": "非空",
+        }
+        expected = step.expected_text or step.expected_candidates or "-"
+        if isinstance(expected, list):
+            expected = " | ".join(str(item) for item in expected)
+        timeout = (
+            step.timeout_seconds
+            if step.timeout_seconds is not None
+            else DEFAULT_OCR_TIMEOUT_SECONDS
+        )
+        poll_interval = (
+            step.poll_interval_seconds
+            if step.poll_interval_seconds is not None
+            else DEFAULT_OCR_POLL_INTERVAL_SECONDS
+        )
+        return (
+            f"{mode_labels.get(step.match_mode, step.match_mode)}：{expected}；"
+            f"超时 {timeout:g}s；间隔 {poll_interval:g}s"
+        )
+    if step.action == "wait":
+        duration = (
+            step.wait_seconds
+            if step.wait_seconds is not None
+            else DEFAULT_ACTION_WAIT_SECONDS
+        )
+        return f"等待 {duration:g}s"
+    return "无额外参数"
+
+
+class ActionParameterDialog(QDialog):
+    """根据动作类型编辑步骤专属参数。"""
+
+    def __init__(
+        self,
+        step: StepRow,
+        *,
+        context: dict[str, str] | None = None,
+        preview_counter: Callable[[dict[str, Any]], int | None] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        """初始化动作参数弹窗。
+
+        Args:
+            step: 当前工作流步骤。
+            context: 递增输入预览上下文。
+            preview_counter: 递增计数预览回调。
+            parent: Qt 父组件。
+        """
+
+        super().__init__(parent)
+        self._step = replace(step)
+        self._input_mode: QComboBox | None = None
+        self._value_editor: InputValueEditor | None = None
+        self._hotkey: QLineEdit | None = None
+        self._condition: ConditionEditor | None = None
+        self._wait_duration: QDoubleSpinBox | None = None
+        self.setWindowTitle("动作参数配置")
+        self.setMinimumWidth(640)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        action_label = dict(ACTION_OPTIONS).get(step.action, step.action)
+        form.addRow("动作", QLabel(action_label))
+
+        if step.action == "type":
+            self._input_mode = NoWheelComboBox()
+            for key, label in INPUT_MODE_OPTIONS:
+                self._input_mode.addItem(label, key)
+            index = self._input_mode.findData(step.input_mode)
+            self._input_mode.setCurrentIndex(max(0, index))
+            self._value_editor = InputValueEditor(
+                value=step.value,
+                input_mode=step.input_mode,
+                increment_rule=step.increment_rule,
+                context=context,
+                preview_counter=preview_counter,
+            )
+            self._input_mode.currentIndexChanged.connect(
+                lambda _index: self._value_editor.set_input_mode(
+                    str(self._input_mode.currentData() or "free")
+                )
+            )
+            form.addRow("输入模式", self._input_mode)
+            form.addRow("输入内容", self._value_editor)
+        elif step.action == "hotkey":
+            self._hotkey = QLineEdit(str(step.value or ""))
+            self._hotkey.setPlaceholderText("例如：ctrl+v")
+            form.addRow("快捷键", self._hotkey)
+        elif step.action == "ocr":
+            self._condition = ConditionEditor()
+            self._condition.set_condition(
+                match_mode=step.match_mode,
+                expected_text=step.expected_text or step.expected_candidates,
+                timeout_seconds=(
+                    step.timeout_seconds
+                    if step.timeout_seconds is not None
+                    else DEFAULT_OCR_TIMEOUT_SECONDS
+                ),
+                poll_interval_seconds=(
+                    step.poll_interval_seconds
+                    if step.poll_interval_seconds is not None
+                    else DEFAULT_OCR_POLL_INTERVAL_SECONDS
+                ),
+            )
+            form.addRow("OCR条件", self._condition)
+        elif step.action == "wait":
+            self._wait_duration = NoWheelDoubleSpinBox()
+            self._wait_duration.setRange(0, 3600)
+            self._wait_duration.setDecimals(1)
+            self._wait_duration.setSingleStep(0.5)
+            self._wait_duration.setSuffix(" s")
+            self._wait_duration.setValue(
+                float(
+                    step.wait_seconds
+                    if step.wait_seconds is not None
+                    else DEFAULT_ACTION_WAIT_SECONDS
+                )
+            )
+            form.addRow("等待时长", self._wait_duration)
+        else:
+            form.addRow("参数", QLabel("该动作没有额外参数"))
+
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def step(self) -> StepRow:
+        """返回应用弹窗配置后的步骤。"""
+
+        step = replace(self._step)
+        step.value = None
+        step.input_mode = "free"
+        step.increment_rule = None
+        step.match_mode = "none"
+        step.expected_text = None
+        step.expected_candidates = None
+        step.timeout_seconds = None
+        step.poll_interval_seconds = None
+        if step.action == "type" and self._input_mode and self._value_editor:
+            step.input_mode = str(self._input_mode.currentData() or "free")
+            step.value = self._value_editor.value_text() or None
+            step.increment_rule = (
+                self._value_editor.increment_rule()
+                if step.input_mode == "incrementing"
+                else None
+            )
+        elif step.action == "hotkey" and self._hotkey:
+            step.value = self._hotkey.text().strip() or None
+        elif step.action == "ocr" and self._condition:
+            condition = self._condition.condition()
+            step.match_mode = str(condition.get("match_mode") or "not_empty")
+            step.expected_text = condition.get("expected_text")
+            step.expected_candidates = condition.get("expected_candidates")
+            step.timeout_seconds = (
+                float(condition["timeout_seconds"])
+                if condition.get("timeout_seconds") is not None
+                else DEFAULT_OCR_TIMEOUT_SECONDS
+            )
+            step.poll_interval_seconds = (
+                float(condition["poll_interval_seconds"])
+                if condition.get("poll_interval_seconds") is not None
+                else DEFAULT_OCR_POLL_INTERVAL_SECONDS
+            )
+        elif step.action == "wait" and self._wait_duration:
+            step.wait_seconds = float(self._wait_duration.value())
+        return step
 
 
 class WorkflowStepTable(QTableWidget):
@@ -456,10 +657,10 @@ class WorkflowStepTable(QTableWidget):
                 "动作",
                 "视图",
                 "锚点",
-                "值",
-                "输入模式",
-                "等待",
-                "OCR配置",
+                "参数摘要",
+                "",
+                "动作后等待",
+                "",
                 "执行前确认",
                 "操作",
             ]
@@ -467,16 +668,17 @@ class WorkflowStepTable(QTableWidget):
         configure_data_table(self, row_height=38)
         interactive_header(self)
         self.setMinimumHeight(120)
-        self.setColumnWidth(0, 80)
+        self.setColumnHidden(0, True)
+        self.setColumnHidden(5, True)
+        self.setColumnHidden(7, True)
         self.setColumnWidth(1, 118)
         self.setColumnWidth(2, 110)
         self.setColumnWidth(3, 180)
-        self.setColumnWidth(4, 260)
-        self.setColumnWidth(5, 110)
-        self.setColumnWidth(6, 100)
-        self.setColumnWidth(7, 360)
+        self.setColumnWidth(4, 420)
+        self.setColumnWidth(6, 112)
         self.setColumnWidth(8, 86)
-        self.setColumnWidth(9, 104)
+        self.setColumnWidth(9, 148)
+        self.cellDoubleClicked.connect(self._cell_double_clicked)
 
     def set_steps(
         self,
@@ -507,10 +709,6 @@ class WorkflowStepTable(QTableWidget):
 
         self._increment_context = dict(context or {})
         self._preview_counter = preview_counter
-        for row in range(self.rowCount()):
-            value = self.cellWidget(row, 4)
-            if isinstance(value, InputValueEditor):
-                value.set_context(self._increment_context, self._preview_counter)
 
     def add_step(
         self,
@@ -520,9 +718,11 @@ class WorkflowStepTable(QTableWidget):
     ) -> int:
         """新增步骤行。"""
 
+        if step.wait_seconds is None:
+            step = replace(step, wait_seconds=DEFAULT_ACTION_WAIT_SECONDS)
         row = self.rowCount()
         self.insertRow(row)
-        self.setItem(row, 0, QTableWidgetItem(step.step_id))
+        self._set_row_model(row, step)
         self.setCellWidget(row, 1, self._action_combo(step.action))
         self.setCellWidget(row, 2, self._view_combo(view_ids or ["main"], step.view_id))
         self.setCellWidget(
@@ -530,16 +730,7 @@ class WorkflowStepTable(QTableWidget):
             3,
             self._anchor_combo(self._anchor_ids_for_view(step.view_id), step.anchor_id),
         )
-        value = InputValueEditor(
-            value=step.value,
-            input_mode=step.input_mode,
-            increment_rule=step.increment_rule,
-            context=self._increment_context,
-            preview_counter=self._preview_counter,
-        )
-        value.changed.connect(lambda: self.rows_changed.emit())
-        self.setCellWidget(row, 4, value)
-        self.setCellWidget(row, 5, self._input_mode_combo(step.input_mode))
+        self._set_parameter_summary(row, step)
         wait = NoWheelDoubleSpinBox()
         wait.setObjectName("TableSpinBox")
         set_embedded_editor_height(wait)
@@ -547,22 +738,13 @@ class WorkflowStepTable(QTableWidget):
         wait.setDecimals(1)
         wait.setSingleStep(0.5)
         wait.setSuffix(" s")
-        wait.setValue(float(step.wait_seconds or (1.0 if step.action == "wait" else 0)))
+        wait.setValue(
+            0.0
+            if step.action == "wait"
+            else float(step.wait_seconds)
+        )
         wait.valueChanged.connect(lambda _value: self.rows_changed.emit())
         self.setCellWidget(row, 6, wait)
-        condition = ConditionEditor()
-        condition.set_condition(
-            match_mode=step.match_mode,
-            expected_text=step.expected_text or step.expected_candidates,
-            timeout_seconds=step.timeout_seconds,
-            min_confidence=step.min_confidence,
-            ignore_case=step.ignore_case,
-            normalize_text=step.normalize_text,
-        )
-        condition.match_mode.currentIndexChanged.connect(lambda _idx: self.rows_changed.emit())
-        condition.expected_text.textChanged.connect(lambda _text: self.rows_changed.emit())
-        condition.timeout_seconds.valueChanged.connect(lambda _value: self.rows_changed.emit())
-        self.setCellWidget(row, 7, condition)
         confirm = self._checkbox(step.requires_confirmation)
         self.setCellWidget(row, 8, confirm)
         self.setCellWidget(row, 9, self._row_buttons(row))
@@ -589,6 +771,7 @@ class WorkflowStepTable(QTableWidget):
                 action="click",
                 view_id=view_id,
                 anchor_id=anchor_id,
+                wait_seconds=DEFAULT_ACTION_WAIT_SECONDS,
                 match_mode="none",
             ),
         )
@@ -604,84 +787,51 @@ class WorkflowStepTable(QTableWidget):
         """插入等待步骤。"""
 
         target = self.rowCount() if row is None or row < 0 else row
-        self.insertRow(target)
-        self.setItem(target, 0, QTableWidgetItem(self._next_step_id("wait")))
-        self.setCellWidget(target, 1, self._action_combo("wait"))
-        self.setCellWidget(target, 2, self._view_combo(self._view_ids, "main"))
-        self.setCellWidget(target, 3, self._anchor_combo([], None))
-        value = InputValueEditor(context=self._increment_context)
-        value.setEnabled(False)
-        self.setCellWidget(target, 4, value)
-        mode = self._input_mode_combo("free")
-        mode.setEnabled(False)
-        self.setCellWidget(target, 5, mode)
-        wait = NoWheelDoubleSpinBox()
-        wait.setObjectName("TableSpinBox")
-        set_embedded_editor_height(wait)
-        wait.setRange(0, 3600)
-        wait.setDecimals(1)
-        wait.setValue(1.0)
-        wait.setSuffix(" s")
-        wait.valueChanged.connect(lambda _value: self.rows_changed.emit())
-        self.setCellWidget(target, 6, wait)
-        condition = ConditionEditor()
-        condition.setEnabled(False)
-        self.setCellWidget(target, 7, condition)
-        confirm = self._checkbox(False)
-        self.setCellWidget(target, 8, confirm)
-        self._rebind_buttons()
-        self.rows_changed.emit()
+        rows = self.rows()
+        rows.insert(
+            target,
+            StepRow(
+                step_id=self._next_step_id("wait"),
+                action="wait",
+                wait_seconds=DEFAULT_ACTION_WAIT_SECONDS,
+            ),
+        )
+        self.set_steps(
+            rows,
+            self._anchor_ids,
+            self._view_ids,
+            anchors_by_view=self._anchors_by_view,
+        )
+        self.selectRow(target)
 
     def rows(self) -> list[StepRow]:
         """返回全部步骤行模型。"""
 
         result: list[StepRow] = []
         for row in range(self.rowCount()):
-            step_id = self.item(row, 0).text().strip() if self.item(row, 0) else ""
+            stored = self._row_model(row)
+            if stored is None:
+                continue
             action = self._combo_data(row, 1) or "click"
             view_id = self._combo_data(row, 2) or "main"
             anchor_id = self._combo_data(row, 3) or None
-            value_text = self._value_text(row, 4)
-            input_mode = self._combo_data(row, 5) or "free"
-            wait_seconds = self._spin_value(row, 6)
-            condition = self.cellWidget(row, 7)
-            condition_data = (
-                condition.condition()
-                if action == "ocr" and isinstance(condition, ConditionEditor)
-                else {
-                    "match_mode": "none",
-                    "expected_text": None,
-                    "expected_candidates": None,
-                    "timeout_seconds": None,
-                    "min_confidence": None,
-                    "ignore_case": True,
-                    "normalize_text": True,
-                }
-            )
             confirm = self._checkbox_value(row, 8)
-            normalized_input_mode = str(input_mode) if action == "type" else "free"
-            increment_rule = (
-                self._increment_rule(row, 4)
-                if normalized_input_mode == "incrementing"
-                else None
+            wait_seconds = (
+                stored.wait_seconds
+                if action == "wait"
+                else self._spin_value(row, 6)
             )
             result.append(
-                StepRow(
-                    step_id=step_id or self._next_step_id("step"),
+                replace(
+                    stored,
                     action=action,
                     view_id="main" if action == "wait" else str(view_id),
                     anchor_id=None if action == "wait" else anchor_id,
-                    value=value_text or None,
-                    input_mode=normalized_input_mode,
-                    increment_rule=increment_rule,
-                    wait_seconds=wait_seconds if action == "wait" or wait_seconds else None,
-                    match_mode=str(condition_data.get("match_mode") or "none"),
-                    expected_text=condition_data.get("expected_text"),
-                    expected_candidates=condition_data.get("expected_candidates"),
-                    timeout_seconds=condition_data.get("timeout_seconds"),
-                    min_confidence=condition_data.get("min_confidence"),
-                    ignore_case=bool(condition_data.get("ignore_case")),
-                    normalize_text=bool(condition_data.get("normalize_text")),
+                    wait_seconds=(
+                        float(wait_seconds)
+                        if wait_seconds is not None
+                        else DEFAULT_ACTION_WAIT_SECONDS
+                    ),
                     requires_confirmation=bool(confirm),
                 )
             )
@@ -711,19 +861,6 @@ class WorkflowStepTable(QTableWidget):
         index = combo.findData(view_id or "main")
         combo.setCurrentIndex(max(0, index))
         combo.currentIndexChanged.connect(lambda _idx, c=combo: self._view_changed(c))
-        return combo
-
-    def _input_mode_combo(self, input_mode: str) -> QComboBox:
-        """Create the input mode selector."""
-
-        combo = NoWheelComboBox()
-        combo.setObjectName("TableComboBox")
-        set_embedded_editor_height(combo)
-        for key, label in INPUT_MODE_OPTIONS:
-            combo.addItem(label, key)
-        index = combo.findData(input_mode or "free")
-        combo.setCurrentIndex(max(0, index))
-        combo.currentIndexChanged.connect(lambda _idx, c=combo: self._input_mode_changed(c))
         return combo
 
     def _anchor_combo(self, anchor_ids: list[str], anchor_id: str | None) -> QComboBox:
@@ -789,6 +926,12 @@ class WorkflowStepTable(QTableWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         for label, tooltip, danger, callback in [
+            (
+                "配置",
+                "配置动作参数",
+                False,
+                lambda _checked=False, r=row: self._configure_parameters(r),
+            ),
             ("↑", "上移", False, lambda _checked=False, r=row: self._move_row(r, -1)),
             ("↓", "下移", False, lambda _checked=False, r=row: self._move_row(r, 1)),
             ("×", "删除", True, lambda _checked=False, r=row: self._delete_row(r)),
@@ -796,7 +939,7 @@ class WorkflowStepTable(QTableWidget):
             button = QPushButton(label)
             button.setToolTip(tooltip)
             button.setObjectName("TableDanger" if danger else "TableAction")
-            button.setFixedSize(22, 22)
+            button.setFixedSize(46 if label == "配置" else 22, 22)
             button.clicked.connect(callback)
             layout.addWidget(button)
         return widget
@@ -806,61 +949,182 @@ class WorkflowStepTable(QTableWidget):
 
         row = self.indexAt(combo.pos()).row()
         if row >= 0:
-            self._sync_action_controls(row)
-            self.rows_changed.emit()
-
-    def _input_mode_changed(self, combo: QComboBox) -> None:
-        """Sync the row value editor when input mode changes."""
-
-        row = self.indexAt(combo.pos()).row()
-        if row >= 0:
+            stored = self._row_model(row)
+            action = str(combo.currentData() or "click")
+            if stored is not None and action != stored.action:
+                previous_action = stored.action
+                current_wait = (
+                    stored.wait_seconds
+                    if previous_action == "wait"
+                    else self._spin_value(row, 6)
+                )
+                current = replace(
+                    stored,
+                    view_id=str(self._combo_data(row, 2) or "main"),
+                    anchor_id=self._combo_data(row, 3) or None,
+                    wait_seconds=(
+                        float(current_wait)
+                        if current_wait is not None
+                        else DEFAULT_ACTION_WAIT_SECONDS
+                    ),
+                    requires_confirmation=self._checkbox_value(row, 8),
+                )
+                self._set_row_model(row, self._step_for_action(current, action))
+                if action == "wait":
+                    view = self.cellWidget(row, 2)
+                    if isinstance(view, QComboBox):
+                        index = view.findData("main")
+                        view.setCurrentIndex(max(0, index))
+                    self.setCellWidget(row, 3, self._anchor_combo([], None))
+                elif previous_action == "wait":
+                    self._refresh_anchor_combo(row)
             self._sync_action_controls(row)
             self.rows_changed.emit()
 
     def _sync_action_controls(self, row: int) -> None:
         """根据动作启用或禁用行控件。"""
 
-        action = self._combo_data(row, 1)
+        action = str(self._combo_data(row, 1) or "click")
         is_wait = action == "wait"
-        is_ocr = action == "ocr"
-        is_type = action == "type"
-        disable_value = is_wait or is_ocr
-        value_widget = self.cellWidget(row, 4)
-        if value_widget is not None:
-            value_widget.setEnabled(not disable_value)
-        mode = self.cellWidget(row, 5)
-        if mode is not None:
-            mode.setEnabled(is_type and not disable_value)
-            if not is_type and isinstance(mode, QComboBox):
-                index = mode.findData("free")
-                mode.setCurrentIndex(max(0, index))
-        value = self.cellWidget(row, 4)
-        if isinstance(value, InputValueEditor):
-            input_mode = self._combo_data(row, 5) if is_type and not disable_value else "free"
-            value.set_input_mode(str(input_mode or "free"))
         for column in (2, 3):
             widget = self.cellWidget(row, column)
             if widget is not None:
-                widget.setEnabled(True)
-        condition = self.cellWidget(row, 7)
-        if condition is not None:
-            condition.setEnabled(is_ocr)
+                widget.setEnabled(not is_wait)
         wait = self.cellWidget(row, 6)
-        if wait is not None:
-            wait.setEnabled(True)
-        if is_wait or is_ocr:
-            value = self.cellWidget(row, 4)
-            if isinstance(value, InputValueEditor):
-                value.clear_value()
-            if is_ocr and isinstance(condition, ConditionEditor):
-                if condition.match_mode.currentData() == "none":
-                    index = condition.match_mode.findData("not_empty")
-                    condition.match_mode.setCurrentIndex(max(0, index))
-        if not is_ocr and isinstance(condition, ConditionEditor):
-            none_index = condition.match_mode.findData("none")
-            condition.match_mode.setCurrentIndex(max(0, none_index))
-            condition.expected_text.clear()
-            condition.timeout_seconds.setValue(0.0)
+        if isinstance(wait, QDoubleSpinBox):
+            wait.setEnabled(not is_wait)
+            if is_wait:
+                wait.setValue(0.0)
+            else:
+                stored = self._row_model(row)
+                wait.setValue(
+                    float(
+                        stored.wait_seconds
+                        if stored is not None and stored.wait_seconds is not None
+                        else DEFAULT_ACTION_WAIT_SECONDS
+                    )
+                )
+        stored = self._row_model(row)
+        if stored is not None:
+            self._set_parameter_summary(row, stored)
+
+    def _cell_double_clicked(self, row: int, column: int) -> None:
+        """双击参数摘要单元格时打开动作参数配置弹窗。
+
+        Args:
+            row: 被双击的表格行号。
+            column: 被双击的表格列号。
+        """
+
+        if column == 4:
+            self._configure_parameters(row)
+
+    def _configure_parameters(self, row: int) -> None:
+        """打开指定步骤的动作参数配置弹窗。
+
+        Args:
+            row: 待配置的表格行号。
+        """
+
+        step = self._current_step(row)
+        if step is None:
+            return
+        dialog = ActionParameterDialog(
+            step,
+            context=self._increment_context,
+            preview_counter=self._preview_counter,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        updated = dialog.step()
+        self._set_row_model(row, updated)
+        self._set_parameter_summary(row, updated)
+        self.rows_changed.emit()
+
+    def _current_step(self, row: int) -> StepRow | None:
+        """合并行控件和隐藏模型，返回当前步骤。"""
+
+        stored = self._row_model(row)
+        if stored is None:
+            return None
+        action = str(self._combo_data(row, 1) or stored.action)
+        wait_seconds = (
+            stored.wait_seconds
+            if action == "wait"
+            else self._spin_value(row, 6)
+        )
+        return replace(
+            stored,
+            action=action,
+            view_id=(
+                "main"
+                if action == "wait"
+                else str(self._combo_data(row, 2) or "main")
+            ),
+            anchor_id=(
+                None
+                if action == "wait"
+                else self._combo_data(row, 3) or None
+            ),
+            wait_seconds=(
+                float(wait_seconds)
+                if wait_seconds is not None
+                else DEFAULT_ACTION_WAIT_SECONDS
+            ),
+            requires_confirmation=self._checkbox_value(row, 8),
+        )
+
+    @staticmethod
+    def _step_for_action(step: StepRow, action: str) -> StepRow:
+        """切换动作时清理不适用参数并生成默认配置。"""
+
+        wait_seconds = (
+            step.wait_seconds
+            if step.action != "wait" and action != "wait"
+            else DEFAULT_ACTION_WAIT_SECONDS
+        )
+        updated = StepRow(
+            step_id=step.step_id,
+            action=action,
+            view_id="main" if action == "wait" else step.view_id,
+            anchor_id=None if action == "wait" else step.anchor_id,
+            wait_seconds=wait_seconds,
+            requires_confirmation=step.requires_confirmation,
+        )
+        if action == "ocr":
+            updated.match_mode = "not_empty"
+            updated.timeout_seconds = DEFAULT_OCR_TIMEOUT_SECONDS
+            updated.poll_interval_seconds = DEFAULT_OCR_POLL_INTERVAL_SECONDS
+        return updated
+
+    def _set_row_model(self, row: int, step: StepRow) -> None:
+        """保存步骤行隐藏模型。"""
+
+        item = self.item(row, 0) or QTableWidgetItem()
+        item.setText(step.step_id)
+        item.setData(Qt.ItemDataRole.UserRole, step)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.setItem(row, 0, item)
+
+    def _row_model(self, row: int) -> StepRow | None:
+        """读取步骤行隐藏模型。"""
+
+        item = self.item(row, 0)
+        if item is None:
+            return None
+        model = item.data(Qt.ItemDataRole.UserRole)
+        return model if isinstance(model, StepRow) else None
+
+    def _set_parameter_summary(self, row: int, step: StepRow) -> None:
+        """刷新步骤参数摘要。"""
+
+        summary = _parameter_summary(step)
+        item = self.item(row, 4) or QTableWidgetItem()
+        item.setText(summary)
+        item.setToolTip(summary)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.setItem(row, 4, item)
 
     def _move_row(self, row: int, delta: int) -> None:
         """移动行。"""
@@ -916,26 +1180,6 @@ class WorkflowStepTable(QTableWidget):
 
         widget = self.cellWidget(row, column)
         return widget.isChecked() if isinstance(widget, QCheckBox) else False
-
-    def _line_text(self, row: int, column: int) -> str:
-        """读取文本框内容。"""
-
-        widget = self.cellWidget(row, column)
-        return widget.text().strip() if isinstance(widget, QLineEdit) else ""
-
-    def _value_text(self, row: int, column: int) -> str:
-        """Read the value editor text."""
-
-        widget = self.cellWidget(row, column)
-        return widget.value_text() if isinstance(widget, InputValueEditor) else ""
-
-    def _increment_rule(self, row: int, column: int) -> dict[str, Any]:
-        """Read the row's incrementing input rule."""
-
-        widget = self.cellWidget(row, column)
-        if isinstance(widget, InputValueEditor):
-            return widget.increment_rule() or _increment_rule()
-        return _increment_rule()
 
     def _spin_value(self, row: int, column: int) -> float | None:
         """读取数字框内容。"""

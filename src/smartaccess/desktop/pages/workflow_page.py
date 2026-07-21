@@ -383,6 +383,7 @@ class WorkflowPage(QWidget):
                 expected_text=step.expected_text,
                 expected_candidates=step.expected_candidates,
                 timeout_seconds=step.timeout_seconds,
+                poll_interval_seconds=step.poll_interval_seconds,
                 min_confidence=step.min_confidence,
                 ignore_case=step.ignore_case,
                 normalize_text=step.normalize_text,
@@ -480,7 +481,6 @@ class WorkflowPage(QWidget):
                     "precheck_mode": (
                         anchor.precheck.mode if anchor.precheck is not None else "none"
                     ),
-                    "default_wait_seconds": anchor.default_wait_seconds,
                 }
                 for anchor in profile.anchors
             ]
@@ -596,6 +596,9 @@ class WorkflowPage(QWidget):
                 "expected_text": row.expected_text if is_ocr else None,
                 "expected_candidates": row.expected_candidates if is_ocr else None,
                 "timeout_seconds": row.timeout_seconds if is_ocr else None,
+                "poll_interval_seconds": (
+                    row.poll_interval_seconds if is_ocr else None
+                ),
                 "min_confidence": row.min_confidence if is_ocr else None,
                 "ignore_case": row.ignore_case if is_ocr else True,
                 "normalize_text": row.normalize_text if is_ocr else True,

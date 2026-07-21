@@ -1067,7 +1067,6 @@ class CalibrationPage(QWidget):
                     "id": row.anchor_id,
                     "action_region": {"pixel": rect, "normalized": norm},
                     "precheck": precheck,
-                    "default_wait_seconds": 2.0,
                 }
             )
         return anchors
