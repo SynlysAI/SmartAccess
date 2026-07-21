@@ -186,14 +186,6 @@ class WorkflowPage(QWidget):
         wait_btn.setObjectName("TableToolbarButton")
         wait_btn.clicked.connect(self._insert_wait)
         row.addWidget(wait_btn)
-        wait_ocr_btn = QPushButton("等待OCR")
-        wait_ocr_btn.setObjectName("TableToolbarButton")
-        wait_ocr_btn.clicked.connect(self._insert_wait_ocr)
-        row.addWidget(wait_ocr_btn)
-        manual_btn = QPushButton("人工确认")
-        manual_btn.setObjectName("TableToolbarButton")
-        manual_btn.clicked.connect(self._insert_manual_confirm)
-        row.addWidget(manual_btn)
         return row
 
     def _build_result_box(self) -> QWidget:
@@ -426,20 +418,6 @@ class WorkflowPage(QWidget):
         insert_at = self._steps.rowCount() if row < 0 else row + 1
         self._steps.insert_wait(insert_at)
 
-    def _insert_wait_ocr(self) -> None:
-        """在当前选择行之后插入等待 OCR 锚点步骤。"""
-
-        row = self._steps.currentRow()
-        insert_at = self._steps.rowCount() if row < 0 else row + 1
-        self._steps.insert_wait_ocr(insert_at)
-
-    def _insert_manual_confirm(self) -> None:
-        """在当前选择行之后插入人工确认步骤。"""
-
-        row = self._steps.currentRow()
-        insert_at = self._steps.rowCount() if row < 0 else row + 1
-        self._steps.insert_manual_confirm(insert_at)
-
     def _save(self) -> None:
         """保存当前工作流。"""
 
@@ -499,8 +477,9 @@ class WorkflowPage(QWidget):
             anchors = [
                 {
                     "id": anchor.id,
-                    "supported_actions": list(anchor.supported_actions),
-                    "has_ocr": anchor.observe_region is not None,
+                    "precheck_mode": (
+                        anchor.precheck.mode if anchor.precheck is not None else "none"
+                    ),
                     "default_wait_seconds": anchor.default_wait_seconds,
                 }
                 for anchor in profile.anchors
@@ -525,9 +504,14 @@ class WorkflowPage(QWidget):
             "experiment_type": "generic_automation",
             "anchors": anchors,
             "views": views,
-            "available_actions": sorted(
-                {action for item in anchors for action in item["supported_actions"]}
-            ),
+            "available_actions": [
+                "click",
+                "type",
+                "hotkey",
+                "press_enter",
+                "ocr",
+                "wait",
+            ],
         }
 
         self._ai_btn.setEnabled(False)
@@ -598,6 +582,7 @@ class WorkflowPage(QWidget):
         )
         steps = []
         for row in self._steps.rows():
+            is_ocr = row.action == "ocr"
             payload = {
                 "id": row.step_id,
                 "action": row.action,
@@ -607,13 +592,13 @@ class WorkflowPage(QWidget):
                 "input_mode": row.input_mode,
                 "increment_rule": row.increment_rule,
                 "wait_seconds": row.wait_seconds,
-                "match_mode": row.match_mode,
-                "expected_text": row.expected_text,
-                "expected_candidates": row.expected_candidates,
-                "timeout_seconds": row.timeout_seconds,
-                "min_confidence": row.min_confidence,
-                "ignore_case": row.ignore_case,
-                "normalize_text": row.normalize_text,
+                "match_mode": row.match_mode if is_ocr else "none",
+                "expected_text": row.expected_text if is_ocr else None,
+                "expected_candidates": row.expected_candidates if is_ocr else None,
+                "timeout_seconds": row.timeout_seconds if is_ocr else None,
+                "min_confidence": row.min_confidence if is_ocr else None,
+                "ignore_case": row.ignore_case if is_ocr else True,
+                "normalize_text": row.normalize_text if is_ocr else True,
                 "requires_confirmation": row.requires_confirmation,
             }
             steps.append(WorkflowStep.model_validate(payload))

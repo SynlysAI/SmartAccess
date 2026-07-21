@@ -37,6 +37,8 @@ from .observer import Observation, Observer
 from .recovery import RecoveryEngine
 
 POLL_INTERVAL_SECONDS = 0.5
+PRECHECK_MAX_ATTEMPTS = 3
+PRECHECK_RETRY_INTERVAL_SECONDS = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,19 +218,25 @@ class Orchestrator:
         if detected is not None:
             self._block_on_exception_popup(session, step, detected)
             return False
-        if step.action == "wait":
-            return self._run_wait_step(session, workflow, profile, step)
-        if step.action == "ocr":
-            return self._observe_after_action(session, workflow, profile, step)
+        if step.action != "wait" and not self._validate_anchor_precheck(
+            session,
+            profile,
+            step,
+        ):
+            return False
         if self._executor.requires_confirm(step):
             allowed = self._confirm_gate(
                 session,
                 step.id,
-                f"步骤 {step.id} 需要人工确认",
+                f"步骤 {step.id} 执行前需要人工确认",
             )
             if not allowed:
                 self._set_step_status(session, step, RunStepStatus.BLOCKED)
                 return False
+        if step.action == "wait":
+            return self._run_wait_step(session, workflow, profile, step)
+        if step.action == "ocr":
+            return self._observe_after_action(session, workflow, profile, step)
         outcome = self._run_with_recovery(session, step, profile)
         if outcome is None:
             self._set_step_status(session, step, RunStepStatus.FAILED)
@@ -317,19 +325,7 @@ class Orchestrator:
         profile: AnchorsContract | None,
         step: WorkflowStep,
     ) -> bool:
-        """执行固定等待、等待 OCR 或人工确认步骤。"""
-
-        if step.requires_confirmation:
-            allowed = self._confirm_gate(
-                session,
-                step.id,
-                f"步骤 {step.id} 需要人工确认",
-            )
-            if not allowed:
-                self._set_step_status(session, step, RunStepStatus.BLOCKED)
-                return False
-        if step.match_mode != "none" and step.anchor_id:
-            return self._observe_after_action(session, workflow, profile, step)
+        """执行固定等待步骤。"""
 
         wait_seconds = float(step.wait_seconds or 0.0)
         start = time.monotonic()
@@ -771,7 +767,7 @@ class Orchestrator:
             if not rule.blocking:
                 continue
             anchor = profile.anchor_for_view(rule.view_id, rule.anchor_id)
-            if anchor is None or anchor.observe_region is None:
+            if anchor is None:
                 continue
             self._configure_view_for_observation(profile, rule.view_id)
             screenshot = self._executor.screenshot(f"{step.id}_{rule.id}_exception")
@@ -813,6 +809,115 @@ class Orchestrator:
                 screenshot_path=screenshot_path,
             )
         return None
+
+    def _validate_anchor_precheck(
+        self,
+        session: RunSession,
+        profile: AnchorsContract | None,
+        step: WorkflowStep,
+    ) -> bool:
+        """在执行动作前校验当前锚点区域。
+
+        Args:
+            session: 当前运行会话。
+            profile: 当前设备锚点配置。
+            step: 待执行工作流步骤。
+
+        Returns:
+            是否通过锚点执行前校验。
+        """
+
+        anchor = self._executor.anchor_for_step(step)
+        if anchor is None or anchor.precheck is None:
+            return True
+        self._executor.configure_step_view(step)
+        precheck = anchor.precheck
+        self._run_sessions.emit_event(
+            session,
+            RuntimeEventName.RUN_STEP_PRECHECK_STARTED,
+            step_id=step.id,
+            anchor_id=anchor.id,
+            precheck_mode=precheck.mode,
+            image_threshold=precheck.image_threshold,
+            max_attempts=PRECHECK_MAX_ATTEMPTS,
+        )
+        last_detail = "执行前校验失败"
+        last_result = None
+        for attempt in range(1, PRECHECK_MAX_ATTEMPTS + 1):
+            if self._is_stopped(session, step.id):
+                return False
+            last_result = None
+            try:
+                screenshot = self._executor.screenshot(
+                    f"precheck_{step.id}_{attempt}"
+                )
+                self._observer.configure_screenshot(screenshot)
+                result = self._observer.validate_anchor(
+                    profile,
+                    step.anchor_id,
+                    step.view_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - 校验失败必须阻断动作
+                last_detail = str(exc)
+            else:
+                last_result = result
+                last_detail = result.detail or "执行前校验未通过"
+                if result.passed:
+                    self._run_sessions.emit_event(
+                        session,
+                        RuntimeEventName.RUN_STEP_PRECHECK_PASSED,
+                        step_id=step.id,
+                        anchor_id=anchor.id,
+                        precheck_mode=precheck.mode,
+                        attempt=attempt,
+                        max_attempts=PRECHECK_MAX_ATTEMPTS,
+                        image_score=result.image_score,
+                        image_threshold=precheck.image_threshold,
+                        reference_text=result.reference_text,
+                        current_text=result.current_text,
+                    )
+                    return True
+            if attempt < PRECHECK_MAX_ATTEMPTS:
+                self._run_sessions.emit_event(
+                    session,
+                    RuntimeEventName.RUN_STEP_PRECHECK_RETRYING,
+                    step_id=step.id,
+                    anchor_id=anchor.id,
+                    precheck_mode=precheck.mode,
+                    attempt=attempt,
+                    max_attempts=PRECHECK_MAX_ATTEMPTS,
+                    image_score=(last_result.image_score if last_result else None),
+                    image_threshold=precheck.image_threshold,
+                    reference_text=(last_result.reference_text if last_result else None),
+                    current_text=(last_result.current_text if last_result else None),
+                    detail=last_detail if last_result is None else None,
+                )
+                time.sleep(PRECHECK_RETRY_INTERVAL_SECONDS)
+        self._run_sessions.emit_event(
+            session,
+            RuntimeEventName.RUN_STEP_PRECHECK_FAILED,
+            step_id=step.id,
+            anchor_id=anchor.id,
+            precheck_mode=precheck.mode,
+            attempt=PRECHECK_MAX_ATTEMPTS,
+            max_attempts=PRECHECK_MAX_ATTEMPTS,
+            image_score=(last_result.image_score if last_result else None),
+            image_threshold=precheck.image_threshold,
+            reference_text=(last_result.reference_text if last_result else None),
+            current_text=(last_result.current_text if last_result else None),
+            detail=last_detail if last_result is None else None,
+        )
+        self._set_step_status(session, step, RunStepStatus.FAILED)
+        self._run_sessions.emit_event(
+            session,
+            RuntimeEventName.RUN_FAILED,
+            step_id=step.id,
+            detail=(
+                f"锚点 {step.anchor_id} 执行前校验失败，动作未执行：{last_detail}"
+            ),
+            **self._profile_payload(profile),
+        )
+        return False
 
     def _block_on_exception_popup(
         self,

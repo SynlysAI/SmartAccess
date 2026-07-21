@@ -7,15 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from smartaccess.shared.contracts.anchors import (
-    ACTION_SUPPORT_SETS,
-    AnchorActionBinding,
     AnchorDefinition,
-    AnchorRegion,
     AnchorsContract,
     ExceptionRule,
-    NormalizedRegion,
-    PixelRegion,
-    SIMPLIFIED_ACTIONS,
     WindowSignature,
 )
 from smartaccess.shared.contracts.io import dump_yaml_contract, load_yaml_contract
@@ -240,105 +234,4 @@ class AnchorService:
     def _coerce_anchor(raw: dict[str, Any]) -> AnchorDefinition:
         """把 UI 原始锚点数据转换为契约锚点。"""
 
-        if "action_region" in raw:
-            return AnchorService._simplify_anchor(AnchorDefinition.model_validate(raw))
-        roi = raw.get("roi") or {}
-        normalized = raw.get("normalized_roi") or {}
-        action_bindings = raw.get("action_bindings") or []
-        main_action = raw.get("main_action")
-        if not main_action and action_bindings:
-            main_action = action_bindings[0].get("action")
-        if main_action not in SIMPLIFIED_ACTIONS:
-            main_action = "click"
-        supported_actions = ACTION_SUPPORT_SETS[main_action]
-        requires_confirmation = bool(raw.get("requires_confirmation"))
-        if action_bindings:
-            requires_confirmation = any(
-                bool(binding.get("requires_confirmation"))
-                for binding in action_bindings
-            )
-        observe_region = AnchorService._observe_region(raw, roi, normalized)
-        return AnchorService._simplify_anchor(
-            AnchorDefinition(
-                id=raw["id"],
-                label=raw.get("label") or raw["id"],
-                action_region=AnchorRegion(
-                    pixel=PixelRegion(**roi),
-                    normalized=(
-                        NormalizedRegion(**normalized)
-                        if normalized
-                        else NormalizedRegion()
-                    ),
-                ),
-                observe_region=observe_region,
-                supported_actions=supported_actions,
-                default_wait_seconds=float(raw.get("default_wait_seconds", 2.0)),
-                notes=raw.get("notes"),
-                type=raw.get("type"),
-                locator_hint=raw.get("locator_hint"),
-                vision_mode=raw.get("vision_mode"),
-                action_bindings=[
-                    {
-                        "action": action,
-                        "requires_confirmation": requires_confirmation,
-                    }
-                    for action in supported_actions
-                ],
-            )
-        )
-
-    @staticmethod
-    def _observe_region(
-        raw: dict[str, Any],
-        roi: dict[str, Any],
-        normalized: dict[str, Any],
-    ) -> AnchorRegion | None:
-        """从原始数据中提取观察区域。"""
-
-        observe_roi = raw.get("observe_roi") or raw.get("observe_region")
-        observe_normalized = raw.get("observe_normalized_roi")
-        vision_mode = raw.get("vision_mode") or ("ocr" if observe_roi else "none")
-        if vision_mode != "ocr":
-            return None
-        observe_pixel = (
-            observe_roi.get("pixel")
-            if isinstance(observe_roi, dict) and "pixel" in observe_roi
-            else observe_roi or roi
-        )
-        observe_norm = (
-            observe_roi.get("normalized")
-            if isinstance(observe_roi, dict) and "normalized" in observe_roi
-            else observe_normalized or normalized
-        )
-        return AnchorRegion(
-            pixel=PixelRegion(**(observe_pixel or {})),
-            normalized=(
-                NormalizedRegion(**observe_norm) if observe_norm else NormalizedRegion()
-            ),
-        )
-
-    @staticmethod
-    def _simplify_anchor(anchor: AnchorDefinition) -> AnchorDefinition:
-        """清理锚点动作绑定和视觉字段。"""
-
-        supported_actions = [
-            action for action in anchor.supported_actions if action in SIMPLIFIED_ACTIONS
-        ] or ["click"]
-        requires_confirmation = any(
-            binding.requires_confirmation
-            for binding in anchor.action_bindings
-            if binding.action in supported_actions
-        )
-        anchor.supported_actions = list(dict.fromkeys(supported_actions))
-        anchor.action_bindings = [
-            AnchorActionBinding(
-                action=action,
-                requires_confirmation=requires_confirmation,
-            )
-            for action in anchor.supported_actions
-        ]
-        anchor.type = "observation" if anchor.observe_region is not None else "action_target"
-        anchor.vision_mode = "ocr" if anchor.observe_region is not None else None
-        anchor.confidence_threshold = None
-        anchor.vision_config = None
-        return anchor
+        return AnchorDefinition.model_validate(raw)

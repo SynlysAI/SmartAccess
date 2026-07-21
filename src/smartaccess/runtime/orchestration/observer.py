@@ -7,7 +7,11 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-from smartaccess.runtime.application.ports import OcrReading, VisionProvider
+from smartaccess.runtime.application.ports import (
+    OcrReading,
+    VisionProvider,
+    VisualCheckResult,
+)
 from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorsContract
 
 
@@ -109,6 +113,43 @@ class Observer:
             return None
         return capture(screenshot=self._screenshot, anchor=anchor)
 
+    def validate_anchor(
+        self,
+        profile: AnchorsContract | None,
+        anchor_id: str | None,
+        view_id: str | None = None,
+    ) -> VisualCheckResult:
+        """执行锚点配置的动作前视觉校验。
+
+        Args:
+            profile: 当前锚点配置。
+            anchor_id: 锚点 ID。
+            view_id: 当前视图 ID。
+
+        Returns:
+            视觉校验结果。
+        """
+
+        if profile is None or not anchor_id:
+            return VisualCheckResult(passed=True, detail="anchor precheck not required")
+        anchor = profile.anchor_for_view(view_id, anchor_id)
+        if anchor is None:
+            anchor = profile.anchor_map().get(anchor_id)
+        if anchor is None or anchor.precheck is None:
+            return VisualCheckResult(passed=True, detail="anchor precheck disabled")
+        validate = getattr(self._vision, "validate_anchor", None)
+        if not callable(validate):
+            return VisualCheckResult(
+                passed=False,
+                detail="current vision provider does not support anchor precheck",
+            )
+        return validate(
+            screenshot=self._screenshot,
+            anchor=anchor,
+            profile_id=profile.profile_id,
+            view_id=view_id or "main",
+        )
+
     def matches(
         self,
         reading: OcrReading | None,
@@ -179,8 +220,6 @@ class Observer:
     def _read_anchor(self, anchor: AnchorDefinition) -> OcrReading:
         """读取单个锚点的观察区域。"""
 
-        if anchor.observe_region is None:
-            return OcrReading(roi=anchor.id, text="", confidence=1.0, detail="none")
         return self._vision.read_roi_text(
             screenshot=self._screenshot,
             anchor=anchor,

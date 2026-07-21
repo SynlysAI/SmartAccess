@@ -48,6 +48,17 @@ class OcrReading:
 
 
 @dataclass(slots=True)
+class VisualCheckResult:
+    """一次锚点执行前视觉校验结果。"""
+
+    passed: bool
+    image_score: float | None = None
+    reference_text: str | None = None
+    current_text: str | None = None
+    detail: str = ""
+
+
+@dataclass(slots=True)
 class ActionOutcome:
     """自动化动作执行结果。"""
 
@@ -145,6 +156,16 @@ class VisionProvider(Protocol):
 
     def sample_color(self, roi: str) -> OcrReading:
         """采样指定 ROI 颜色。"""
+
+    def validate_anchor(
+        self,
+        *,
+        screenshot: bytes | None,
+        anchor: AnchorDefinition,
+        profile_id: str,
+        view_id: str,
+    ) -> VisualCheckResult:
+        """校验当前锚点区域是否与校准参考截图一致。"""
 
 
 class PlatformClient(Protocol):

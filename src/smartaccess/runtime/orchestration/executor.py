@@ -95,18 +95,7 @@ class Executor:
             是否需要人工确认。
         """
 
-        if step.requires_confirmation:
-            return True
-        if step.action == "ocr":
-            return False
-        anchor = self.anchor_for_step(step)
-        if anchor is None:
-            return False
-        return any(
-            bool(binding.requires_confirmation)
-            for binding in anchor.action_bindings
-            if binding.action == step.action
-        )
+        return bool(step.requires_confirmation)
 
     def anchor_for_step(self, step: WorkflowStep) -> AnchorDefinition | None:
         """查找步骤绑定的锚点。
@@ -118,7 +107,7 @@ class Executor:
             锚点定义；等待步骤或缺失时返回 None。
         """
 
-        if step.action in ("wait", "ocr") or self._profile is None or step.anchor_id is None:
+        if step.action == "wait" or self._profile is None or step.anchor_id is None:
             return None
         anchor = self._profile.anchor_for_view(step.view_id, step.anchor_id)
         return anchor or self._profile.anchor_map().get(step.anchor_id)
@@ -143,10 +132,6 @@ class Executor:
             else None
         )
         self.ensure_window(title)
-        if step.action not in anchor.supported_actions:
-            raise ExecutorError(
-                f"锚点 {step.anchor_id} 不支持动作 {step.action}"
-            )
         self._check_safety(step)
         if not self._automation.locate_anchor(step.anchor_id):
             raise AnchorMissingError(f"锚点无法定位: {step.anchor_id}")

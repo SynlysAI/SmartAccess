@@ -21,11 +21,7 @@ except Exception:  # noqa: BLE001
     certifi = None  # type: ignore[assignment]
 
 from smartaccess.shared.config.settings import DEFAULT_AI_USER_AGENT
-from smartaccess.shared.contracts.anchors import (
-    ACTION_SUPPORT_SETS,
-    SIMPLIFIED_ACTIONS,
-    AnchorsContract,
-)
+from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.workflow import WorkflowContract
 
 CODEX_USER_AGENT = (
@@ -262,8 +258,11 @@ class SmartAccessAiGenerator:
             '"preconditions":[{"description":"..."}],'
             '"steps":[{"id":"step_1",'
             '"action":"click","view_id":"main","anchor_id":"anchor_id","value":null,'
-            '"match_mode":"none","wait_seconds":1.0},'
-            '{"id":"step_2","action":"type","view_id":"main",'
+            '"match_mode":"none","requires_confirmation":false},'
+            '{"id":"step_2","action":"ocr","view_id":"main",'
+            '"anchor_id":"status_anchor","match_mode":"contains",'
+            '"expected_text":"ready","timeout_seconds":10.0},'
+            '{"id":"step_3","action":"type","view_id":"main",'
             '"anchor_id":"anchor_id","value":null,"input_mode":"incrementing",'
             '"increment_rule":{"pattern":"{device_id}-{date}-{counter:03d}",'
             '"sequence_key":"sample_id","date_format":"%Y%m%d",'
@@ -277,8 +276,10 @@ class SmartAccessAiGenerator:
             "For action=ocr, the anchor's action_region is the OCR scan area; "
             "set match_mode and expected_text for OCR conditions.\n"
             "For action=wait, omit anchor_id and set wait_seconds.\n"
-            "For OCR checks on click/type steps, use expected_text, match_mode, "
-            "and timeout_seconds on the preceding executable step.\n"
+            "Never place OCR match fields on click, type, hotkey, press_enter, or wait steps. "
+            "Insert a separate action=ocr step immediately after the action that needs checking.\n"
+            "Use requires_confirmation=true only when that exact step must ask for human "
+            "confirmation before execution. Do not create standalone manual-confirm wait steps.\n"
             "All wait_seconds and timeout_seconds values are seconds.\n"
             "Use only calibrated anchors, view_id values, and actions from context."
         )
@@ -310,12 +311,17 @@ class SmartAccessAiGenerator:
             '"anchors":[{"id":"anchor_id",'
             '"action_region":{"pixel":{"x":0,"y":0,"width":0,"height":0},'
             '"normalized":{"x":0,"y":0,"width":0,"height":0}},'
-            '"observe_region":null,"supported_actions":["click"],'
-            '"default_wait_seconds":2.0,'
-            '"action_bindings":[{"action":"click","requires_confirmation":false}]}]}]}\n'
-            "Allowed actions: click, type, hotkey, press_enter, ocr.\n"
-            "Each anchor has exactly one action_region and at most one OCR observe_region.\n"
-            "Represent OCR only through observe_region.\n"
+            '"precheck":{"mode":"image",'
+            '"region":{"pixel":{"x":0,"y":0,"width":0,"height":0},'
+            '"normalized":{"x":0,"y":0,"width":0,"height":0}},'
+            '"image_threshold":0.8},'
+            '"default_wait_seconds":2.0}]}]}\n'
+            "Anchors do not contain actions or manual-confirm settings.\n"
+            "Each anchor has exactly one action_region used by workflow actions.\n"
+            "precheck is optional. Allowed precheck modes: image, text, image_text.\n"
+            "Use image precheck for buttons or controls when a surrounding visual region can "
+            "prevent wrong-window or wrong-position operations. Use text or image_text only when "
+            "the validation region contains stable readable text.\n"
             "If image is unavailable or coordinates are uncertain, return useful anchor "
             "names with zero-size regions so the user can finish calibration."
         )
@@ -531,6 +537,17 @@ class SmartAccessAiGenerator:
                     step["match_mode"] = "not_empty"
                 if step.get("timeout_seconds") is None:
                     step["timeout_seconds"] = 30.0
+                step.pop("ignore_case", None)
+                step.pop("normalize_text", None)
+                step.pop("min_confidence", None)
+            elif action != "wait":
+                step["match_mode"] = "none"
+                step.pop("expected_text", None)
+                step.pop("expected_candidates", None)
+                step.pop("timeout_seconds", None)
+                step.pop("min_confidence", None)
+                step.pop("ignore_case", None)
+                step.pop("normalize_text", None)
             for field in ("wait_seconds", "timeout_seconds"):
                 if step.get(field) is not None:
                     step[field] = SmartAccessAiGenerator._seconds(step[field])
@@ -666,44 +683,34 @@ class SmartAccessAiGenerator:
                     height,
                 ),
             }
-        observe_region = anchor.get("observe_region")
-        observe_roi = anchor.get("observe_roi")
-        if not observe_region and observe_roi:
-            observe_region = {
-                "pixel": SmartAccessAiGenerator._region(observe_roi),
-                "normalized": SmartAccessAiGenerator._normalized_region(
-                    anchor.get("observe_normalized_roi") or {},
-                    observe_roi,
-                    width,
-                    height,
-                ),
-            }
-        actions = [
-            str(action)
-            for action in (anchor.get("supported_actions") or [])
-            if str(action) in SIMPLIFIED_ACTIONS
-        ]
-        if not actions:
-            main_action = str(anchor.get("main_action") or "click")
-            actions = ACTION_SUPPORT_SETS.get(main_action, ["click"])
-        actions = list(dict.fromkeys(actions))
-        bindings = [
-            item
-            for item in (anchor.get("action_bindings") or [])
-            if isinstance(item, dict) and str(item.get("action")) in SIMPLIFIED_ACTIONS
-        ]
-        confirm = any(bool(item.get("requires_confirmation")) for item in bindings)
+        precheck = anchor.get("precheck")
+        normalized_precheck = None
+        if isinstance(precheck, dict):
+            mode = str(precheck.get("mode") or "").strip()
+            region = precheck.get("region")
+            if mode in {"image", "text", "image_text"} and isinstance(region, dict):
+                pixel = region.get("pixel") or {}
+                normalized_precheck = {
+                    "mode": mode,
+                    "region": {
+                        "pixel": SmartAccessAiGenerator._region(pixel),
+                        "normalized": SmartAccessAiGenerator._normalized_region(
+                            region.get("normalized") or {},
+                            pixel,
+                            width,
+                            height,
+                        ),
+                    },
+                    "image_threshold": float(
+                        precheck.get("image_threshold") or 0.8
+                    ),
+                }
         return {
             "id": anchor.get("id") or "anchor",
             "action_region": action_region,
-            "observe_region": observe_region,
-            "supported_actions": actions,
+            "precheck": normalized_precheck,
             "default_wait_seconds": float(anchor.get("default_wait_seconds") or 2.0),
             "notes": anchor.get("notes"),
-            "action_bindings": [
-                {"action": action, "requires_confirmation": confirm}
-                for action in actions
-            ],
         }
 
     @staticmethod
@@ -804,11 +811,10 @@ class SmartAccessAiGenerator:
         ]
         if anchors:
             for anchor in anchors:
-                actions = ", ".join(anchor.get("supported_actions") or [])
+                precheck = anchor.get("precheck") or {}
                 lines.append(
                     f"- {anchor.get('id')} - action_region={bool(anchor.get('action_region'))} "
-                    f"- observe_region={bool(anchor.get('observe_region'))} "
-                    f"- actions={actions or 'click'}"
+                    f"- precheck={precheck.get('mode') or 'none'}"
                 )
         else:
             lines.append("- none")

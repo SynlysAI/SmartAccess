@@ -8,12 +8,13 @@
 from __future__ import annotations
 
 import base64
+import unicodedata
 from pathlib import Path
 from io import BytesIO
 from typing import Any
 
-from smartaccess.runtime.application.ports import OcrReading
-from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
+from smartaccess.runtime.application.ports import OcrReading, VisualCheckResult
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorRegion, PixelRegion
 
 
 DEFAULT_OCR_MODE = "paddleocr-vl"
@@ -26,10 +27,16 @@ PADDLEX_OCR_MODES = {"paddlex", "paddlex-ocr", "paddlex_ocr"}
 # --------------------------------------------------------------------------- #
 _PIL_AVAILABLE = False
 _Image: Any = None
+_ImageChops: Any = None
+_ImageStat: Any = None
 
 try:
     from PIL import Image as _PILImage
+    from PIL import ImageChops as _PILImageChops
+    from PIL import ImageStat as _PILImageStat
     _Image = _PILImage
+    _ImageChops = _PILImageChops
+    _ImageStat = _PILImageStat
     _PIL_AVAILABLE = True
 except ImportError:
     pass
@@ -258,6 +265,74 @@ class ApiVisionProvider:
             text=hex_color,
             confidence=1.0,
             detail=f"sampled RGB=({int(r)},{int(g)},{int(b)})",
+        )
+
+    def validate_anchor(
+        self,
+        *,
+        screenshot: bytes | None,
+        anchor: AnchorDefinition,
+        profile_id: str,
+        view_id: str,
+    ) -> VisualCheckResult:
+        """使用Pillow和远程OCR执行锚点动作前校验。"""
+
+        precheck = anchor.precheck
+        if precheck is None:
+            return VisualCheckResult(passed=True, detail="precheck disabled")
+        if screenshot is None:
+            return VisualCheckResult(passed=False, detail="current screenshot unavailable")
+        reference_path = self._reference_capture_path(profile_id, view_id)
+        if not reference_path.exists():
+            return VisualCheckResult(
+                passed=False,
+                detail=f"reference capture unavailable: {reference_path}",
+            )
+        current_crop = self._crop_precheck_region(
+            screenshot,
+            precheck.region,
+            use_normalized=True,
+        )
+        reference_crop = self._crop_precheck_region(
+            reference_path.read_bytes(),
+            precheck.region,
+            use_normalized=False,
+        )
+        if current_crop is None or reference_crop is None:
+            return VisualCheckResult(passed=False, detail="precheck region is invalid")
+
+        image_score = None
+        image_passed = True
+        if precheck.mode in {"image", "image_text"}:
+            image_score = self._image_similarity(reference_crop, current_crop)
+            image_passed = image_score >= precheck.image_threshold
+
+        reference_text = None
+        current_text = None
+        text_passed = True
+        if precheck.mode in {"text", "image_text"}:
+            reference_reading = self._api_ocr(reference_crop, anchor.id)
+            current_reading = self._api_ocr(current_crop, anchor.id)
+            reference_text = reference_reading.text
+            current_text = current_reading.text
+            normalized_reference = " ".join(
+                unicodedata.normalize("NFKC", reference_text).strip().split()
+            ).casefold()
+            normalized_current = " ".join(
+                unicodedata.normalize("NFKC", current_text).strip().split()
+            ).casefold()
+            text_passed = bool(normalized_reference) and (
+                normalized_reference == normalized_current
+            )
+        detail = f"mode={precheck.mode}"
+        if image_score is not None:
+            detail += f" image_score={image_score:.3f}/{precheck.image_threshold:.3f}"
+        return VisualCheckResult(
+            passed=image_passed and text_passed,
+            image_score=image_score,
+            reference_text=reference_text,
+            current_text=current_text,
+            detail=detail,
         )
 
     # -- helpers ----------------------------------------------------------- #
@@ -539,10 +614,52 @@ class ApiVisionProvider:
         Returns:
             裁剪后的 PNG 字节；无法裁剪时返回 None。
         """
-        observe = getattr(anchor, "observe_region", None)
-        if observe is None:
-            return None
-        return self._crop_pixel_roi(img_bytes, observe.pixel)
+        return self._crop_pixel_roi(img_bytes, anchor.action_region.pixel)
+
+    def _reference_capture_path(self, profile_id: str, view_id: str) -> Path:
+        """返回锚点校准参考截图路径。"""
+
+        relative = Path("anchors") / profile_id
+        if view_id and view_id != "main":
+            relative = relative / "views" / view_id
+        relative = relative / "capture.png"
+        return self._workspace_dir / relative if self._workspace_dir else relative
+
+    @staticmethod
+    def _crop_precheck_region(
+        image_bytes: bytes,
+        region: AnchorRegion,
+        *,
+        use_normalized: bool,
+    ) -> bytes | None:
+        """按执行前校验区域裁剪PNG图像。"""
+
+        image = _Image.open(BytesIO(image_bytes))
+        if use_normalized:
+            width, height = image.size
+            normalized = region.normalized
+            roi = PixelRegion(
+                x=normalized.x * width,
+                y=normalized.y * height,
+                width=normalized.width * width,
+                height=normalized.height * height,
+            )
+        else:
+            roi = region.pixel
+        return ApiVisionProvider._crop_pixel_roi(image_bytes, roi)
+
+    @staticmethod
+    def _image_similarity(reference_bytes: bytes, current_bytes: bytes) -> float:
+        """计算两张区域图像的像素相似度。"""
+
+        reference = _Image.open(BytesIO(reference_bytes)).convert("RGB")
+        current = _Image.open(BytesIO(current_bytes)).convert("RGB")
+        if current.size != reference.size:
+            current = current.resize(reference.size)
+        difference = _ImageChops.difference(reference, current)
+        rms = _ImageStat.Stat(difference).rms
+        mean_rms = sum(float(value) for value in rms) / max(len(rms), 1)
+        return max(0.0, min(1.0, 1.0 - mean_rms / 255.0))
 
     @staticmethod
     def _crop_pixel_roi(img_bytes: bytes, roi: PixelRegion) -> bytes | None:
