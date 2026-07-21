@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .models import FileAssetRecord, UploadQueueItem
+from .models import FileAssetRecord, TerminalFailureItem, UploadQueueItem
 
 
 class SQLiteUploadQueue:
@@ -121,15 +121,92 @@ class SQLiteUploadQueue:
 
         self._update_item(item_id, "uploaded", None, increment_attempt=False)
 
-    def mark_failed(self, item_id: int, error_message: str) -> None:
-        """记录指定队列条目的上传失败原因。
+    def mark_failed(
+        self,
+        item_id: int,
+        error_message: str,
+        max_retry_count: int,
+    ) -> None:
+        """记录上传失败并在达到上限后终止自动重试。
 
         Args:
             item_id: 队列条目 ID。
             error_message: 失败原因。
+            max_retry_count: 单个条目允许的最大上传尝试次数。
         """
 
-        self._update_item(item_id, "failed", error_message[:2000], increment_attempt=True)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT attempt_count FROM upload_queue WHERE item_id = ?",
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                return
+            attempt_count = int(row["attempt_count"]) + 1
+            status = "exhausted" if attempt_count >= max_retry_count else "failed"
+            connection.execute(
+                """
+                UPDATE upload_queue
+                SET status = ?, attempt_count = ?, last_error = ?, updated_at = ?
+                WHERE item_id = ?
+                """,
+                (status, attempt_count, error_message[:2000], _utc_now_text(), item_id),
+            )
+
+    def list_terminal_failures(self, limit: int = 100) -> list[TerminalFailureItem]:
+        """查询已经达到最大重试次数的终止失败条目。
+
+        Args:
+            limit: 最多返回的失败条目数量。
+
+        Returns:
+            终止失败条目列表，按最近更新时间倒序排列。
+        """
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT item_id, filename, file_path, watcher_name, attempt_count, last_error
+                FROM upload_queue
+                WHERE status = 'exhausted'
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            TerminalFailureItem(
+                item_id=int(row["item_id"]),
+                filename=str(row["filename"]),
+                file_path=Path(row["file_path"]),
+                watcher_name=str(row["watcher_name"]),
+                attempt_count=int(row["attempt_count"]),
+                last_error=str(row["last_error"] or "未知错误"),
+            )
+            for row in rows
+        ]
+
+    def retry_terminal_failure(self, item_id: int) -> bool:
+        """将终止失败条目重置为待上传状态。
+
+        Args:
+            item_id: 终止失败队列条目 ID。
+
+        Returns:
+            条目成功重新入队时返回 True。
+        """
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE upload_queue
+                SET status = 'pending', attempt_count = 0, last_error = NULL,
+                    updated_at = ?
+                WHERE item_id = ? AND status = 'exhausted'
+                """,
+                (_utc_now_text(), item_id),
+            )
+        return cursor.rowcount > 0
 
     def count_by_status(self) -> dict[str, int]:
         """统计上传队列各状态的数量。
@@ -223,7 +300,7 @@ class SQLiteUploadQueue:
             配置好行工厂的 SQLite 连接。
         """
 
-        connection = sqlite3.connect(self._sqlite_path)
+        connection = sqlite3.connect(self._sqlite_path, timeout=10)
         connection.row_factory = sqlite3.Row
         return connection
 

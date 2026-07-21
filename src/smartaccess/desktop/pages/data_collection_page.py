@@ -32,6 +32,7 @@ from smartaccess.data_collection.config import (
     WatcherConfig,
 )
 from smartaccess.data_collection.controller import CollectionRuntimeStatus
+from smartaccess.data_collection.models import TerminalFailureItem
 from smartaccess.desktop.viewmodels.data_collection_vm import DataCollectionViewModel
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.widgets.cards import create_card
@@ -52,6 +53,7 @@ class DataCollectionPage(QWidget):
         "更新采集",
     )
     STATUS_HEADERS = ("监听器", "监听路径", "状态")
+    FAILURE_HEADERS = ("文件", "监听器", "尝试次数", "失败原因")
 
     def __init__(self, facade: RuntimeFacade, parent: QWidget | None = None) -> None:
         """初始化数据采集页面。
@@ -160,6 +162,7 @@ class DataCollectionPage(QWidget):
         self._site.setPlaceholderText("例如 Lab-A")
         self._timeout = self._create_spin_box(1, 3600, 30, "秒")
         self._retry_interval = self._create_spin_box(1, 3600, 30, "秒")
+        self._max_retry_count = self._create_spin_box(1, 1000, 3, "次")
         self._upload_existing = QCheckBox("启动时扫描当前已存在的数据")
         self._upload_existing.setChecked(True)
         self._force_upload_existing = QCheckBox("强制重新上传已扫描过的数据")
@@ -170,6 +173,7 @@ class DataCollectionPage(QWidget):
         form.addRow("站点", self._site)
         form.addRow("请求超时", self._timeout)
         form.addRow("失败重试间隔", self._retry_interval)
+        form.addRow("最大重试次数", self._max_retry_count)
         form.addRow("历史数据", self._upload_existing)
         form.addRow("重复历史数据", self._force_upload_existing)
         return form
@@ -224,6 +228,22 @@ class DataCollectionPage(QWidget):
         configure_data_table(self._status_table, row_height=34, stretch_last=True)
         self._status_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self._status_table)
+        failure_toolbar = QHBoxLayout()
+        failure_toolbar.addWidget(QLabel("终止失败记录"))
+        failure_toolbar.addStretch(1)
+        self._retry_failure_button = QPushButton("手动重试")
+        self._retry_failure_button.setObjectName("Secondary")
+        self._retry_failure_button.clicked.connect(self._retry_terminal_failure)
+        failure_toolbar.addWidget(self._retry_failure_button)
+        layout.addLayout(failure_toolbar)
+        self._failure_table = QTableWidget(0, len(self.FAILURE_HEADERS))
+        self._failure_table.setHorizontalHeaderLabels(self.FAILURE_HEADERS)
+        configure_data_table(self._failure_table, row_height=34, stretch_last=True)
+        self._failure_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._failure_table.setColumnWidth(0, 260)
+        self._failure_table.setColumnWidth(1, 160)
+        self._failure_table.setColumnWidth(2, 90)
+        layout.addWidget(self._failure_table)
         return layout
 
     def _load_configuration(self) -> None:
@@ -248,6 +268,7 @@ class DataCollectionPage(QWidget):
         self._site.setText(config.collector.site)
         self._timeout.setValue(config.server.timeout_seconds)
         self._retry_interval.setValue(config.queue.retry_interval_seconds)
+        self._max_retry_count.setValue(config.queue.max_retry_count)
         self._watchers = list(config.watchers)
         self._refresh_watcher_table()
 
@@ -263,6 +284,7 @@ class DataCollectionPage(QWidget):
             site=self._site.text().strip(),
             timeout_seconds=self._timeout.value(),
             retry_interval_seconds=self._retry_interval.value(),
+            max_retry_count=self._max_retry_count.value(),
             watchers=self._watchers,
         )
 
@@ -352,6 +374,50 @@ class DataCollectionPage(QWidget):
             values = (name, path, "监听中" if is_running else "已停止")
             for column_index, value in enumerate(values):
                 self._status_table.setItem(row_index, column_index, QTableWidgetItem(value))
+        self._refresh_terminal_failures()
+
+    def _refresh_terminal_failures(self) -> None:
+        """刷新达到最大重试次数的失败条目列表。"""
+
+        failures = self._vm.list_terminal_failures()
+        self._failure_table.setRowCount(len(failures))
+        for row_index, failure in enumerate(failures):
+            values = (
+                failure.filename,
+                failure.watcher_name,
+                str(failure.attempt_count),
+                failure.last_error,
+            )
+            for column_index, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, failure)
+                self._failure_table.setItem(row_index, column_index, item)
+
+    def _retry_terminal_failure(self) -> None:
+        """将当前选中的终止失败条目重新放入待上传队列。"""
+
+        row_index = self._failure_table.currentRow()
+        if row_index < 0:
+            QMessageBox.information(self, "手动重试", "请先选择一条终止失败记录")
+            return
+        item = self._failure_table.item(row_index, 0)
+        failure = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if not isinstance(failure, TerminalFailureItem):
+            QMessageBox.warning(self, "手动重试", "无法读取选中的失败记录")
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "手动重试",
+                f"确认将“{failure.filename}”重新放入上传队列吗？",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        if not self._vm.retry_terminal_failure(failure.item_id):
+            QMessageBox.warning(self, "手动重试", "重新入队失败，记录可能已被处理")
+            return
+        self._refresh_status()
 
     def _refresh_watcher_table(self) -> None:
         """刷新监听器配置表格。"""
@@ -600,5 +666,6 @@ def _summary_text(status: CollectionRuntimeStatus) -> str:
         f"运行状态：{_state_text(status.state, status.message)}\n"
         f"启动时间：{started_at}    历史扫描入队：{status.initial_scan_files}\n"
         f"上传队列：待上传 {queue_counts.get('pending', 0)}，"
-        f"已上传 {queue_counts.get('uploaded', 0)}，失败待重试 {queue_counts.get('failed', 0)}"
+        f"已上传 {queue_counts.get('uploaded', 0)}，失败待重试 {queue_counts.get('failed', 0)}，"
+        f"终止失败 {queue_counts.get('exhausted', 0)}"
     )

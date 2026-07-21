@@ -43,6 +43,7 @@ class QueueConfig:
 
     sqlite_path: Path
     retry_interval_seconds: int = 30
+    max_retry_count: int = 3
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,7 @@ def save_config(config: CollectionConfig, config_path: Path) -> None:
         "queue": {
             "sqlite_path": sqlite_path,
             "retry_interval_seconds": config.queue.retry_interval_seconds,
+            "max_retry_count": config.queue.max_retry_count,
         },
         "watchers": [
             {
@@ -177,6 +179,8 @@ def validate_config(config: CollectionConfig, validate_paths: bool = True) -> No
         raise ValueError("请求超时必须大于 0")
     if config.queue.retry_interval_seconds <= 0:
         raise ValueError("重试间隔必须大于 0")
+    if config.queue.max_retry_count <= 0:
+        raise ValueError("最大重试次数必须大于 0")
     if not config.watchers:
         raise ValueError("请至少添加一个监听器")
 
@@ -253,6 +257,7 @@ def _parse_config(raw_config: dict[str, Any], base_dir: Path) -> CollectionConfi
                 queue_raw.get("sqlite_path", "./collector_queue.db"), base_dir
             ),
             retry_interval_seconds=int(queue_raw.get("retry_interval_seconds", 30)),
+            max_retry_count=int(queue_raw.get("max_retry_count", 3)),
         ),
         watchers=watchers,
     )
