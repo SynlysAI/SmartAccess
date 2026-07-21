@@ -15,14 +15,15 @@ from __future__ import annotations
 
 import io
 import inspect
+import unicodedata
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from smartaccess.runtime.application.ports import OcrReading
+from smartaccess.runtime.application.ports import OcrReading, VisualCheckResult
 from smartaccess.runtime.application.roi_resolver import resolve_anchor_roi
-from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorRegion, PixelRegion
 
 # --------------------------------------------------------------------------- #
 # Optional dependency helpers
@@ -302,6 +303,90 @@ class LocalVisionProvider:
             detail=f"sampled BGR=({mean_bgr[2]:.0f},{mean_bgr[1]:.0f},{mean_bgr[0]:.0f})",
         )
 
+    def validate_anchor(
+        self,
+        *,
+        screenshot: bytes | None,
+        anchor: AnchorDefinition,
+        profile_id: str,
+        view_id: str,
+    ) -> VisualCheckResult:
+        """校验当前锚点区域是否与校准参考截图一致。
+
+        Args:
+            screenshot: 当前目标窗口截图。
+            anchor: 待校验锚点。
+            profile_id: 设备锚点配置 ID。
+            view_id: 当前视图 ID。
+
+        Returns:
+            图像和文字校验的综合结果。
+        """
+
+        precheck = anchor.precheck
+        if precheck is None:
+            return VisualCheckResult(passed=True, detail="precheck disabled")
+        current_image = self._image_from_screenshot(screenshot)
+        reference_path = self._reference_capture_path(profile_id, view_id)
+        reference_image = _cv2.imread(str(reference_path), _cv2.IMREAD_COLOR)
+        if current_image is None:
+            return VisualCheckResult(passed=False, detail="current screenshot unavailable")
+        if reference_image is None:
+            return VisualCheckResult(
+                passed=False,
+                detail=f"reference capture unavailable: {reference_path}",
+            )
+        current_roi = self._region_for_image(
+            precheck.region,
+            current_image,
+            use_normalized=True,
+        )
+        reference_roi = self._region_for_image(
+            precheck.region,
+            reference_image,
+            use_normalized=False,
+        )
+        current_crop = self._crop_roi(current_image, current_roi)
+        reference_crop = self._crop_roi(reference_image, reference_roi)
+        if current_crop is None or reference_crop is None:
+            return VisualCheckResult(passed=False, detail="precheck region is invalid")
+
+        image_score = None
+        image_passed = True
+        if precheck.mode in {"image", "image_text"}:
+            image_score = self._image_similarity(reference_crop, current_crop)
+            image_passed = image_score >= precheck.image_threshold
+
+        reference_text = None
+        current_text = None
+        text_passed = True
+        if precheck.mode in {"text", "image_text"}:
+            reference_reading = self._ocr_image(reference_crop, anchor.id)
+            current_reading = self._ocr_image(current_crop, anchor.id)
+            reference_text = reference_reading.text
+            current_text = current_reading.text
+            normalized_reference = self._normalized_text(reference_text)
+            normalized_current = self._normalized_text(current_text)
+            text_passed = bool(normalized_reference) and (
+                normalized_reference == normalized_current
+            )
+
+        detail_parts = [f"mode={precheck.mode}"]
+        if image_score is not None:
+            detail_parts.append(
+                f"image_score={image_score:.3f}/{precheck.image_threshold:.3f}"
+            )
+        if reference_text is not None:
+            detail_parts.append(f"reference_text={reference_text!r}")
+            detail_parts.append(f"current_text={current_text!r}")
+        return VisualCheckResult(
+            passed=image_passed and text_passed,
+            image_score=image_score,
+            reference_text=reference_text,
+            current_text=current_text,
+            detail=" ".join(detail_parts),
+        )
+
     # -- helpers ----------------------------------------------------------- #
     def _ocr_image(self, img: np.ndarray, label: str) -> OcrReading:
         if self._ocr is None:
@@ -474,10 +559,7 @@ class LocalVisionProvider:
         return img[y1:y2, x1:x2]
 
     def _vision_config(self, roi: str):
-        anchor = self._profile_anchors.get(roi)
-        if anchor is None:
-            return None
-        return anchor.vision_config
+        return None
 
     def _image_from_screenshot(self, screenshot: bytes | None) -> np.ndarray | None:
         """从截图字节或缓存中获取 OpenCV 图像。"""
@@ -489,14 +571,72 @@ class LocalVisionProvider:
 
     def _resolved_roi(self, anchor: AnchorDefinition, img: np.ndarray) -> PixelRegion | None:
         height, width = img.shape[:2]
-        if anchor.observe_region is not None:
-            return anchor.observe_region.pixel
         return resolve_anchor_roi(
             anchor,
             self._window_signature,
             current_width=width,
             current_height=height,
         )
+
+    def _reference_capture_path(self, profile_id: str, view_id: str) -> Path:
+        """返回锚点校准参考截图路径。"""
+
+        relative = Path("anchors") / profile_id
+        if view_id and view_id != "main":
+            relative = relative / "views" / view_id
+        relative = relative / "capture.png"
+        return self._workspace_dir / relative if self._workspace_dir else relative
+
+    @staticmethod
+    def _region_for_image(
+        region: AnchorRegion,
+        image: np.ndarray,
+        *,
+        use_normalized: bool,
+    ) -> PixelRegion:
+        """按参考像素或归一化坐标解析图像区域。"""
+
+        if not use_normalized:
+            return region.pixel
+        height, width = image.shape[:2]
+        normalized = region.normalized
+        return PixelRegion(
+            x=normalized.x * width,
+            y=normalized.y * height,
+            width=normalized.width * width,
+            height=normalized.height * height,
+        )
+
+    @staticmethod
+    def _image_similarity(reference: np.ndarray, current: np.ndarray) -> float:
+        """计算两张界面区域图像的综合相似度。"""
+
+        height, width = reference.shape[:2]
+        if current.shape[:2] != (height, width):
+            current = _cv2.resize(current, (width, height))
+        reference_gray = _cv2.cvtColor(reference, _cv2.COLOR_BGR2GRAY)
+        current_gray = _cv2.cvtColor(current, _cv2.COLOR_BGR2GRAY)
+        reference_gray = _cv2.GaussianBlur(reference_gray, (3, 3), 0)
+        current_gray = _cv2.GaussianBlur(current_gray, (3, 3), 0)
+        pixel_difference = _cv2.absdiff(reference_gray, current_gray)
+        pixel_score = 1.0 - float(np.mean(pixel_difference)) / 255.0
+        if float(np.std(reference_gray)) < 1e-6 or float(np.std(current_gray)) < 1e-6:
+            return max(0.0, min(1.0, pixel_score))
+        correlation = _cv2.matchTemplate(
+            current_gray,
+            reference_gray,
+            _cv2.TM_CCOEFF_NORMED,
+        )
+        correlation_score = max(0.0, float(correlation[0][0]))
+        score = correlation_score * 0.7 + pixel_score * 0.3
+        return max(0.0, min(1.0, score))
+
+    @staticmethod
+    def _normalized_text(value: str) -> str:
+        """归一化执行前校验使用的 OCR 文字。"""
+
+        text = unicodedata.normalize("NFKC", str(value or ""))
+        return " ".join(text.strip().split()).casefold()
 
 
 # --------------------------------------------------------------------------- #

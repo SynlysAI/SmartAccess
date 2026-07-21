@@ -451,7 +451,18 @@ class WorkflowStepTable(QTableWidget):
         self._increment_context: dict[str, str] = {}
         self._preview_counter: Callable[[dict[str, Any]], int | None] | None = None
         self.setHorizontalHeaderLabels(
-            ["步骤 ID", "动作", "视图", "锚点", "值", "输入模式", "等待", "OCR 条件", "确认", "操作"]
+            [
+                "步骤 ID",
+                "动作",
+                "视图",
+                "锚点",
+                "值",
+                "输入模式",
+                "等待",
+                "OCR配置",
+                "执行前确认",
+                "操作",
+            ]
         )
         configure_data_table(self, row_height=38)
         interactive_header(self)
@@ -463,8 +474,8 @@ class WorkflowStepTable(QTableWidget):
         self.setColumnWidth(4, 260)
         self.setColumnWidth(5, 110)
         self.setColumnWidth(6, 100)
-        self.setColumnWidth(7, 520)
-        self.setColumnWidth(8, 50)
+        self.setColumnWidth(7, 360)
+        self.setColumnWidth(8, 86)
         self.setColumnWidth(9, 104)
 
     def set_steps(
@@ -551,9 +562,6 @@ class WorkflowStepTable(QTableWidget):
         condition.match_mode.currentIndexChanged.connect(lambda _idx: self.rows_changed.emit())
         condition.expected_text.textChanged.connect(lambda _text: self.rows_changed.emit())
         condition.timeout_seconds.valueChanged.connect(lambda _value: self.rows_changed.emit())
-        condition.min_confidence.valueChanged.connect(lambda _value: self.rows_changed.emit())
-        condition.ignore_case.toggled.connect(lambda _value: self.rows_changed.emit())
-        condition.normalize_text.toggled.connect(lambda _value: self.rows_changed.emit())
         self.setCellWidget(row, 7, condition)
         confirm = self._checkbox(step.requires_confirmation)
         self.setCellWidget(row, 8, confirm)
@@ -620,62 +628,9 @@ class WorkflowStepTable(QTableWidget):
         condition.setEnabled(False)
         self.setCellWidget(target, 7, condition)
         confirm = self._checkbox(False)
-        confirm.setEnabled(False)
         self.setCellWidget(target, 8, confirm)
         self._rebind_buttons()
         self.rows_changed.emit()
-
-    def insert_wait_ocr(self, row: int | None = None) -> None:
-        """插入只等待 OCR 锚点的步骤。"""
-
-        target = self.rowCount() if row is None or row < 0 else row
-        view_id = self._view_ids[0] if self._view_ids else "main"
-        anchor_ids = self._anchor_ids_for_view(view_id)
-        rows = self.rows()
-        rows.insert(
-            target,
-            StepRow(
-                step_id=self._next_step_id("wait_ocr"),
-                action="wait",
-                view_id=view_id,
-                anchor_id=anchor_ids[0] if anchor_ids else None,
-                wait_seconds=0.0,
-                match_mode="not_empty",
-                timeout_seconds=30.0,
-            ),
-        )
-        self.set_steps(
-            rows,
-            self._anchor_ids,
-            self._view_ids,
-            anchors_by_view=self._anchors_by_view,
-        )
-        self.selectRow(target)
-
-    def insert_manual_confirm(self, row: int | None = None) -> None:
-        """插入人工确认闸门步骤。"""
-
-        target = self.rowCount() if row is None or row < 0 else row
-        rows = self.rows()
-        rows.insert(
-            target,
-            StepRow(
-                step_id=self._next_step_id("manual_confirm"),
-                action="wait",
-                view_id="main",
-                anchor_id=None,
-                wait_seconds=0.0,
-                match_mode="none",
-                requires_confirmation=True,
-            ),
-        )
-        self.set_steps(
-            rows,
-            self._anchor_ids,
-            self._view_ids,
-            anchors_by_view=self._anchors_by_view,
-        )
-        self.selectRow(target)
 
     def rows(self) -> list[StepRow]:
         """返回全部步骤行模型。"""
@@ -691,7 +646,17 @@ class WorkflowStepTable(QTableWidget):
             wait_seconds = self._spin_value(row, 6)
             condition = self.cellWidget(row, 7)
             condition_data = (
-                condition.condition() if isinstance(condition, ConditionEditor) else {}
+                condition.condition()
+                if action == "ocr" and isinstance(condition, ConditionEditor)
+                else {
+                    "match_mode": "none",
+                    "expected_text": None,
+                    "expected_candidates": None,
+                    "timeout_seconds": None,
+                    "min_confidence": None,
+                    "ignore_case": True,
+                    "normalize_text": True,
+                }
             )
             confirm = self._checkbox_value(row, 8)
             normalized_input_mode = str(input_mode) if action == "type" else "free"
@@ -704,19 +669,8 @@ class WorkflowStepTable(QTableWidget):
                 StepRow(
                     step_id=step_id or self._next_step_id("step"),
                     action=action,
-                    view_id=(
-                        "main"
-                        if action == "wait"
-                        and condition_data.get("match_mode") == "none"
-                        and not anchor_id
-                        else str(view_id)
-                    ),
-                    anchor_id=(
-                        None
-                        if action == "wait"
-                        and condition_data.get("match_mode") == "none"
-                        else anchor_id
-                    ),
+                    view_id="main" if action == "wait" else str(view_id),
+                    anchor_id=None if action == "wait" else anchor_id,
                     value=value_text or None,
                     input_mode=normalized_input_mode,
                     increment_rule=increment_rule,
@@ -871,10 +825,9 @@ class WorkflowStepTable(QTableWidget):
         is_ocr = action == "ocr"
         is_type = action == "type"
         disable_value = is_wait or is_ocr
-        for column in (4, 8):
-            widget = self.cellWidget(row, column)
-            if widget is not None:
-                widget.setEnabled(not disable_value)
+        value_widget = self.cellWidget(row, 4)
+        if value_widget is not None:
+            value_widget.setEnabled(not disable_value)
         mode = self.cellWidget(row, 5)
         if mode is not None:
             mode.setEnabled(is_type and not disable_value)
@@ -885,10 +838,13 @@ class WorkflowStepTable(QTableWidget):
         if isinstance(value, InputValueEditor):
             input_mode = self._combo_data(row, 5) if is_type and not disable_value else "free"
             value.set_input_mode(str(input_mode or "free"))
-        for column in (2, 3, 7):
+        for column in (2, 3):
             widget = self.cellWidget(row, column)
             if widget is not None:
                 widget.setEnabled(True)
+        condition = self.cellWidget(row, 7)
+        if condition is not None:
+            condition.setEnabled(is_ocr)
         wait = self.cellWidget(row, 6)
         if wait is not None:
             wait.setEnabled(True)
@@ -896,11 +852,15 @@ class WorkflowStepTable(QTableWidget):
             value = self.cellWidget(row, 4)
             if isinstance(value, InputValueEditor):
                 value.clear_value()
-            condition = self.cellWidget(row, 7)
             if is_ocr and isinstance(condition, ConditionEditor):
                 if condition.match_mode.currentData() == "none":
                     index = condition.match_mode.findData("not_empty")
                     condition.match_mode.setCurrentIndex(max(0, index))
+        if not is_ocr and isinstance(condition, ConditionEditor):
+            none_index = condition.match_mode.findData("none")
+            condition.match_mode.setCurrentIndex(max(0, none_index))
+            condition.expected_text.clear()
+            condition.timeout_seconds.setValue(0.0)
 
     def _move_row(self, row: int, delta: int) -> None:
         """移动行。"""

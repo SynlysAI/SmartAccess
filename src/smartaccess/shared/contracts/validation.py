@@ -90,23 +90,17 @@ def validate_workflow_against_anchors(
             else:
                 issues.append(f"step {step.id}: unknown anchor_id '{step.anchor_id}'")
             continue
-        if not is_wait and step.action not in anchor.supported_actions:
+        if step.action != "ocr" and step.match_mode != "none":
             issues.append(
-                f"step {step.id}: action '{step.action}' not supported by "
-                f"anchor '{step.anchor_id}'"
+                f"step {step.id}: OCR match fields are only allowed for action 'ocr'"
             )
-        needs_observe_region = step.match_mode != "none"
-        if needs_observe_region and anchor.observe_region is None:
-            issues.append(
-                f"step {step.id}: anchor '{step.anchor_id}' requires "
-                "observe_region for OCR matching"
+        if step.action == "ocr":
+            _validate_text_expectation(
+                step.id,
+                step.match_mode,
+                step.expected_text,
+                issues,
             )
-        _validate_text_expectation(
-            step.id,
-            step.match_mode,
-            step.expected_text,
-            issues,
-        )
     return issues
 
 

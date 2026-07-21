@@ -93,7 +93,7 @@ class CalibrationPage(QWidget):
         self._canvas.roi_changed.connect(self._on_roi_changed)
         self._canvas.roi_removed.connect(self._on_roi_removed)
         self._table.row_delete_requested.connect(self._delete_anchor_row)
-        self._table.row_ocr_toggled.connect(self._on_ocr_toggled)
+        self._table.row_precheck_changed.connect(self._on_precheck_changed)
         self._table.row_changed.connect(self._on_anchor_row_changed)
         self._windows.itemSelectionChanged.connect(self._on_window_selected)
         self._windows.itemChanged.connect(self._on_window_checked)
@@ -213,10 +213,10 @@ class CalibrationPage(QWidget):
         self._ai_btn.setObjectName("TableToolbarButton")
         self._ai_btn.clicked.connect(self._ai_assist)
         row.addWidget(self._ai_btn)
-        ocr_btn = QPushButton("OCR预览")
-        ocr_btn.setObjectName("TableToolbarButton")
-        ocr_btn.clicked.connect(self._preview_current_view_ocr)
-        row.addWidget(ocr_btn)
+        preview_btn = QPushButton("校验预览")
+        preview_btn.setObjectName("TableToolbarButton")
+        preview_btn.clicked.connect(self._preview_current_view_precheck)
+        row.addWidget(preview_btn)
         row.addStretch(1)
         layout.addLayout(row)
         self._ai_busy = AiBusyOverlay()
@@ -328,40 +328,52 @@ class CalibrationPage(QWidget):
             self._selected_hwnd,
         ]
 
-    def _preview_current_view_ocr(self) -> None:
-        """对当前视图第一个 OCR 锚点做一次识别预览。"""
+    def _preview_current_view_precheck(self) -> None:
+        """预览当前视图第一个已配置锚点的执行前校验。"""
 
         try:
             anchors = self._collect_anchors()
         except ValueError as exc:
-            QMessageBox.warning(self, "OCR预览失败", str(exc))
+            QMessageBox.warning(self, "校验预览失败", str(exc))
             return
         anchor = next(
-            (item for item in anchors if item.get("observe_region") is not None),
+            (item for item in anchors if item.get("precheck") is not None),
             None,
         )
         if anchor is None:
-            QMessageBox.warning(self, "OCR预览失败", "当前视图没有开启 OCR 的锚点。")
+            QMessageBox.warning(
+                self,
+                "校验预览失败",
+                "当前视图没有配置执行前校验的锚点。",
+            )
             return
         capture_data = self._latest_capture
         if capture_data is None:
             state = self._view_states.get(self._current_view_id) or {}
             capture_data = state.get("capture")
         if capture_data is None:
-            QMessageBox.warning(self, "OCR预览失败", "请先刷新当前视图截图。")
+            QMessageBox.warning(self, "校验预览失败", "请先刷新当前视图截图。")
             return
-        try:
-            text = self._vm.preview_anchor_ocr(
-                capture_data=capture_data,
-                anchor_payload=anchor,
-            )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "OCR预览失败", str(exc))
-            return
+        precheck = dict(anchor.get("precheck") or {})
+        mode = str(precheck.get("mode") or "none")
+        text = "-"
+        if mode in {"text", "image_text"}:
+            preview_anchor = dict(anchor)
+            preview_anchor["action_region"] = precheck.get("region")
+            preview_anchor["precheck"] = None
+            try:
+                reading = self._vm.preview_anchor_ocr(
+                    capture_data=capture_data,
+                    anchor_payload=preview_anchor,
+                )
+                text = reading or "-"
+            except Exception as exc:  # noqa: BLE001
+                QMessageBox.critical(self, "校验预览失败", str(exc))
+                return
         QMessageBox.information(
             self,
-            "OCR预览",
-            f"锚点：{anchor.get('id')}\n识别文本：{text or '-'}",
+            "校验预览",
+            f"锚点：{anchor.get('id')}\n校验方式：{mode}\n参考文字：{text}",
         )
 
     def _restore_page_focus(self) -> None:
@@ -373,7 +385,7 @@ class CalibrationPage(QWidget):
         window.activateWindow()
 
     def _add_anchor(self) -> None:
-        """添加一个锚点和动作 ROI。"""
+        """添加一个锚点和目标 ROI。"""
 
         default_name = self._next_anchor_name()
         name, ok = QInputDialog.getText(self, "添加锚点", "锚点 ID：", text=default_name)
@@ -386,7 +398,7 @@ class CalibrationPage(QWidget):
             QMessageBox.warning(self, "锚点重复", f"ROI 已存在：{name}")
             return
         self._canvas.add_roi(name)
-        self._table.add_anchor(AnchorRow(anchor_id=name, action_roi=name))
+        self._table.add_anchor(AnchorRow(anchor_id=name, target_roi=name))
         self._refresh_all_roi_labels()
 
     def _delete_anchor_row(self, row: int) -> None:
@@ -395,42 +407,50 @@ class CalibrationPage(QWidget):
         row_data = self._table.remove_row(row)
         if row_data is None:
             return
-        self._canvas.remove_roi(row_data.action_roi, emit_signal=False)
-        if row_data.observe_roi:
-            self._canvas.remove_roi(row_data.observe_roi, emit_signal=False)
+        self._canvas.remove_roi(row_data.target_roi, emit_signal=False)
+        if row_data.validation_roi:
+            self._canvas.remove_roi(row_data.validation_roi, emit_signal=False)
         self._refresh_all_roi_labels()
 
-    def _on_ocr_toggled(self, row: int, checked: bool) -> None:
-        """开关 OCR 时同步观察 ROI。"""
+    def _on_precheck_changed(self, row: int, mode: str) -> None:
+        """执行前校验方式变化时同步校验 ROI。
+
+        Args:
+            row: 锚点表格行号。
+            mode: 执行前校验方式。
+        """
 
         row_data = self._table.row_model(row)
         if row_data is None:
             return
-        if row_data.action == "ocr":
-            return
-        if checked:
-            observe_name = row_data.observe_roi or f"{row_data.anchor_id}_observe"
-            if observe_name not in self._canvas.roi_names():
-                rect = self._canvas.roi_rect(row_data.action_roi) or {
+        if mode != "none":
+            validation_name = (
+                row_data.validation_roi or f"{row_data.anchor_id}_validation"
+            )
+            if validation_name not in self._canvas.roi_names():
+                rect = self._canvas.roi_rect(row_data.target_roi) or {
                     "x": 60,
                     "y": 80,
                     "width": 180,
                     "height": 70,
                 }
                 self._canvas.add_roi(
-                    observe_name,
-                    rect["x"] + 24,
-                    rect["y"] + 24,
+                    validation_name,
+                    rect["x"],
+                    rect["y"],
                     rect["width"],
                     rect["height"],
                 )
-            self._table.set_observe_roi(row, observe_name)
-            self._table.update_roi_label(observe_name, self._roi_label(observe_name))
+            self._table.set_validation_roi(row, validation_name)
+            self._table.update_roi_label(
+                validation_name,
+                self._roi_label(validation_name),
+            )
         else:
-            removed = self._table.clear_observe_roi(row)
+            removed = self._table.clear_validation_roi(row)
             if removed:
                 self._canvas.remove_roi(removed, emit_signal=False)
-            fallback_name = f"{row_data.anchor_id}_observe"
+            fallback_name = f"{row_data.anchor_id}_validation"
             if fallback_name != removed:
                 self._canvas.remove_roi(fallback_name, emit_signal=False)
         self._refresh_all_roi_labels()
@@ -439,7 +459,7 @@ class CalibrationPage(QWidget):
         """锚点 ID 变更时同步画布 ROI 名称。
 
         检测表格第一列锚点 ID 是否变化，若变化则重命名
-        画布中对应的动作 ROI 和观察 ROI。
+        画布中对应的目标 ROI 和校验 ROI。
         """
 
         item = self._table.item(row, 0)
@@ -456,16 +476,16 @@ class CalibrationPage(QWidget):
         if old_id in self._canvas.roi_names():
             self._canvas.rename_roi(old_id, new_id)
 
-        old_observe = f"{old_id}_observe"
-        new_observe = f"{new_id}_observe"
-        if old_observe in self._canvas.roi_names():
-            self._canvas.rename_roi(old_observe, new_observe)
-            observe_item = self._table.item(row, 4)
-            if observe_item is not None:
-                observe_item.setData(Qt.ItemDataRole.UserRole, new_observe)
+        old_validation = f"{old_id}_validation"
+        new_validation = f"{new_id}_validation"
+        if old_validation in self._canvas.roi_names():
+            self._canvas.rename_roi(old_validation, new_validation)
+            validation_item = self._table.item(row, 3)
+            if validation_item is not None:
+                validation_item.setData(Qt.ItemDataRole.UserRole, new_validation)
 
         stored.anchor_id = new_id
-        stored.action_roi = new_id
+        stored.target_roi = new_id
         item.setData(Qt.ItemDataRole.UserRole, stored)
         action_item = self._table.item(row, 1)
         if action_item is not None:
@@ -477,8 +497,8 @@ class CalibrationPage(QWidget):
         """画布删除 ROI 后同步表格。"""
 
         for row_data in self._table.row_models():
-            if row_data.action_roi == roi_name and row_data.observe_roi:
-                self._canvas.remove_roi(row_data.observe_roi, emit_signal=False)
+            if row_data.target_roi == roi_name and row_data.validation_roi:
+                self._canvas.remove_roi(row_data.validation_roi, emit_signal=False)
         self._table.remove_rows_by_roi(roi_name)
         self._refresh_all_roi_labels()
 
@@ -1018,34 +1038,36 @@ class CalibrationPage(QWidget):
 
         anchors: list[dict] = []
         for row in self._table.row_models():
-            rect = self._canvas.roi_rect(row.action_roi)
-            norm = self._canvas.normalized_roi_rect(row.action_roi)
+            rect = self._canvas.roi_rect(row.target_roi)
+            norm = self._canvas.normalized_roi_rect(row.target_roi)
             if rect is None or norm is None:
-                raise ValueError(f"锚点 {row.anchor_id} 缺少动作 ROI")
-            observe_region = None
-            if row.action == "ocr":
-                observe_region = {"pixel": rect, "normalized": norm}
-            elif row.ocr_enabled:
-                observe_rect = self._canvas.roi_rect(row.observe_roi)
-                observe_norm = self._canvas.normalized_roi_rect(row.observe_roi)
-                if observe_rect is None or observe_norm is None:
-                    raise ValueError(f"锚点 {row.anchor_id} 已开启 OCR，但缺少观察 ROI")
-                observe_region = {"pixel": observe_rect, "normalized": observe_norm}
-            supported_actions = self._supported_actions(row.action)
+                raise ValueError(f"锚点 {row.anchor_id} 缺少目标 ROI")
+            precheck = None
+            if row.precheck_mode != "none":
+                validation_rect = self._canvas.roi_rect(row.validation_roi)
+                validation_norm = self._canvas.normalized_roi_rect(
+                    row.validation_roi
+                )
+                if validation_rect is None or validation_norm is None:
+                    raise ValueError(
+                        f"锚点 {row.anchor_id} 已配置执行前校验，但缺少校验 ROI"
+                    )
+                precheck = {
+                    "mode": row.precheck_mode,
+                    "region": {
+                        "pixel": validation_rect,
+                        "normalized": validation_norm,
+                    },
+                    "image_threshold": 0.8,
+                    "ignore_case": True,
+                    "normalize_text": True,
+                }
             anchors.append(
                 {
                     "id": row.anchor_id,
                     "action_region": {"pixel": rect, "normalized": norm},
-                    "observe_region": observe_region,
-                    "supported_actions": supported_actions,
+                    "precheck": precheck,
                     "default_wait_seconds": 2.0,
-                    "action_bindings": [
-                        {
-                            "action": action,
-                            "requires_confirmation": row.requires_confirmation,
-                        }
-                        for action in supported_actions
-                    ],
                 }
             )
         return anchors
@@ -1063,32 +1085,27 @@ class CalibrationPage(QWidget):
             float(pixel.get("width") or 80),
             float(pixel.get("height") or 32),
         )
-        observe_name = ""
-        observe_region = anchor.get("observe_region")
-        if isinstance(observe_region, dict):
-            observe = observe_region.get("pixel") or {}
-            observe_name = f"{anchor_id}_observe"
+        validation_name = ""
+        precheck = anchor.get("precheck")
+        precheck_mode = "none"
+        if isinstance(precheck, dict):
+            precheck_mode = str(precheck.get("mode") or "none")
+            validation_region = precheck.get("region") or {}
+            validation = validation_region.get("pixel") or {}
+            validation_name = f"{anchor_id}_validation"
             self._canvas.add_roi(
-                observe_name,
-                float(observe.get("x") or 0),
-                float(observe.get("y") or 0),
-                float(observe.get("width") or 80),
-                float(observe.get("height") or 32),
+                validation_name,
+                float(validation.get("x") or 0),
+                float(validation.get("y") or 0),
+                float(validation.get("width") or 80),
+                float(validation.get("height") or 32),
             )
-        bindings = anchor.get("action_bindings") or []
-        requires_confirmation = any(
-            bool(binding.get("requires_confirmation"))
-            for binding in bindings
-            if isinstance(binding, dict)
-        )
         self._table.add_anchor(
             AnchorRow(
                 anchor_id=anchor_id,
-                action_roi=anchor_id,
-                action=self._main_action(list(anchor.get("supported_actions") or [])),
-                ocr_enabled=bool(observe_name),
-                observe_roi=observe_name,
-                requires_confirmation=requires_confirmation,
+                target_roi=anchor_id,
+                precheck_mode=precheck_mode,
+                validation_roi=validation_name,
             )
         )
 
@@ -1208,28 +1225,25 @@ class CalibrationPage(QWidget):
                 pixel.width,
                 pixel.height,
             )
-            observe_name = ""
-            if anchor.observe_region is not None:
-                observe_name = f"{anchor.id}_observe"
-                observe = anchor.observe_region.pixel
+            validation_name = ""
+            precheck_mode = "none"
+            if anchor.precheck is not None:
+                precheck_mode = anchor.precheck.mode
+                validation_name = f"{anchor.id}_validation"
+                validation = anchor.precheck.region.pixel
                 self._canvas.add_roi(
-                    observe_name,
-                    observe.x,
-                    observe.y,
-                    observe.width,
-                    observe.height,
+                    validation_name,
+                    validation.x,
+                    validation.y,
+                    validation.width,
+                    validation.height,
                 )
-            requires_confirmation = any(
-                binding.requires_confirmation for binding in anchor.action_bindings
-            )
             self._table.add_anchor(
                 AnchorRow(
                     anchor_id=anchor.id,
-                    action_roi=anchor.id,
-                    action=self._main_action(list(anchor.supported_actions)),
-                    ocr_enabled=bool(observe_name),
-                    observe_roi=observe_name,
-                    requires_confirmation=requires_confirmation,
+                    target_roi=anchor.id,
+                    precheck_mode=precheck_mode,
+                    validation_roi=validation_name,
                 )
             )
         self._refresh_all_roi_labels()
@@ -1318,31 +1332,3 @@ class CalibrationPage(QWidget):
         while f"view_{index}" in existing:
             index += 1
         return f"view_{index}"
-
-    @staticmethod
-    def _supported_actions(action: str) -> list[str]:
-        """按主动作推导支持动作集合。"""
-
-        if action == "type":
-            return ["click", "type", "hotkey", "press_enter"]
-        if action == "hotkey":
-            return ["click", "hotkey"]
-        if action == "press_enter":
-            return ["click", "press_enter"]
-        if action == "ocr":
-            return ["ocr"]
-        return ["click"]
-
-    @staticmethod
-    def _main_action(actions: list[str]) -> str:
-        """按支持动作推导主动作。"""
-
-        if "type" in actions:
-            return "type"
-        if "hotkey" in actions:
-            return "hotkey"
-        if "press_enter" in actions:
-            return "press_enter"
-        if "ocr" in actions:
-            return "ocr"
-        return "click"

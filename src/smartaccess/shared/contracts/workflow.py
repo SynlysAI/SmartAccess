@@ -100,9 +100,9 @@ class WorkflowStep(FlexibleContractModel):
     expected_text: str | list[str] | None = None
     expected_candidates: list[str] = Field(default_factory=list)
     match_mode: Literal["contains", "equals", "regex", "not_empty", "none"] = "none"
-    ignore_case: bool = False
-    normalize_text: bool = False
-    min_confidence: float | None = Field(default=None, ge=0, le=1)
+    ignore_case: bool = Field(default=True, exclude=True)
+    normalize_text: bool = Field(default=True, exclude=True)
+    min_confidence: float | None = Field(default=None, ge=0, le=1, exclude=True)
     timeout_seconds: float | None = Field(default=None, ge=0)
     wait_seconds: float | None = Field(default=None, ge=0)
     requires_confirmation: bool = False
@@ -167,12 +167,24 @@ class WorkflowStep(FlexibleContractModel):
             self.increment_rule = None
         elif self.input_mode == "incrementing" and self.increment_rule is None:
             self.increment_rule = WorkflowIncrementRule()
-        if self.expected_candidates:
+        if self.action != "ocr":
+            self.match_mode = "none"
+            self.expected_text = None
+            self.expected_candidates = []
+            self.timeout_seconds = None
+            self.min_confidence = None
+        else:
+            self.ignore_case = True
+            self.normalize_text = True
+            self.min_confidence = None
+        if self.action == "ocr" and self.expected_candidates:
             if self.expected_text is None:
                 self.expected_text = list(self.expected_candidates)
             elif isinstance(self.expected_text, str):
                 values = [self.expected_text, *self.expected_candidates]
                 self.expected_text = list(dict.fromkeys(values))
+        if self.action == "ocr" and self.match_mode == "none":
+            self.match_mode = "not_empty"
         if self.match_mode == "none":
             self.expected_text = None
             self.expected_candidates = []
@@ -189,23 +201,14 @@ class WorkflowStep(FlexibleContractModel):
             self.wait_seconds = _coerce_seconds(self.value)
         if self.wait_seconds is None:
             self.wait_seconds = 1.0
-        if self.match_mode == "none":
-            self.anchor_id = None
-            self.target = None
-            self.view_id = "main"
-            self.expected_text = None
-            self.expected_candidates = []
-            self.timeout_seconds = None
-            self.min_confidence = None
-            return
-        if self.expected_candidates:
-            if self.expected_text is None:
-                self.expected_text = list(self.expected_candidates)
-            elif isinstance(self.expected_text, str):
-                values = [self.expected_text, *self.expected_candidates]
-                self.expected_text = list(dict.fromkeys(values))
-        if not self.anchor_id:
-            self.migration_error = "anchor_id is required for OCR wait steps"
+        self.anchor_id = None
+        self.target = None
+        self.view_id = "main"
+        self.match_mode = "none"
+        self.expected_text = None
+        self.expected_candidates = []
+        self.timeout_seconds = None
+        self.min_confidence = None
 
 
 class WorkflowMigrationError(FlexibleContractModel):

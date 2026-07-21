@@ -2,36 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field, model_validator
 
 from .base import ContractModel, FlexibleContractModel, JsonMap, NonEmptyStr
 
-SIMPLIFIED_ACTIONS: tuple[str, ...] = (
+WORKFLOW_ACTIONS: tuple[str, ...] = (
     "click",
     "type",
     "hotkey",
     "press_enter",
     "ocr",
+    "wait",
 )
-ACTION_SUPPORT_SETS: dict[str, list[str]] = {
-    "click": ["click"],
-    "type": ["click", "type", "hotkey", "press_enter"],
-    "hotkey": ["click", "hotkey"],
-    "press_enter": ["click", "press_enter"],
-    "ocr": ["ocr"],
-}
-LEGACY_ANCHOR_TYPES = {
-    "action_target",
-    "observation",
-    "button",
-    "input",
-    "readout",
-    "status",
-    "region",
-    "roi",
-}
 
 
 class ScreenshotSize(FlexibleContractModel):
@@ -93,14 +77,22 @@ class AnchorRegion(FlexibleContractModel):
     normalized: NormalizedRegion
 
 
-class VisionConfig(FlexibleContractModel):
-    """视觉识别配置。"""
+class AnchorPrecheck(FlexibleContractModel):
+    """锚点执行前的视觉校验配置。"""
 
-    template_asset_path: str | None = None
-    template_threshold: float = Field(default=0.8, ge=0, le=1)
-    color_reference_hex: str | None = None
-    color_tolerance: float = Field(default=0.1, ge=0, le=1)
-    presence_threshold: float = Field(default=0.05, ge=0, le=1)
+    mode: Literal["image", "text", "image_text"]
+    region: AnchorRegion
+    image_threshold: float = Field(default=0.8, ge=0, le=1)
+    ignore_case: bool = Field(default=True, exclude=True)
+    normalize_text: bool = Field(default=True, exclude=True)
+
+    @model_validator(mode="after")
+    def _fix_text_normalization(self) -> "AnchorPrecheck":
+        """固定文字校验使用忽略大小写和 NFKC 归一化。"""
+
+        self.ignore_case = True
+        self.normalize_text = True
+        return self
 
 
 class ExceptionRule(FlexibleContractModel):
@@ -142,120 +134,14 @@ class SafetyLimits(FlexibleContractModel):
     fields: list[SafetyField] = Field(default_factory=list)
 
 
-class AnchorActionBinding(FlexibleContractModel):
-    """锚点支持的动作绑定。"""
-
-    action: NonEmptyStr
-    requires_confirmation: bool = False
-    default_value: str | None = None
-    hotkey: str | None = None
-    metadata: JsonMap = Field(default_factory=dict)
-
-
 class AnchorDefinition(FlexibleContractModel):
-    """目标软件界面上的一个动作或观察锚点。"""
+    """目标软件界面上的一个可操作或可观察锚点。"""
 
     id: NonEmptyStr
-    label: str | None = Field(default=None, exclude=True)
     action_region: AnchorRegion
-    observe_region: AnchorRegion | None = None
-    supported_actions: list[NonEmptyStr] = Field(default_factory=list)
+    precheck: AnchorPrecheck | None = None
     default_wait_seconds: float = Field(default=2.0, ge=0)
     notes: str | None = None
-    type: str | None = Field(default=None, exclude=True)
-    locator_hint: str | None = Field(default=None, exclude=True)
-    roi: PixelRegion | None = Field(default=None, exclude=True)
-    normalized_roi: NormalizedRegion | None = Field(default=None, exclude=True)
-    action_bindings: list[AnchorActionBinding] = Field(default_factory=list)
-    vision_mode: Literal["ocr", "template", "presence", "color", "none"] | None = None
-    confidence_threshold: float | None = Field(default=None, ge=0, le=1, exclude=True)
-    vision_config: VisionConfig | None = Field(default=None, exclude=True)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_legacy_shape(cls, raw: Any) -> Any:
-        """兼容旧版 roi/normalized_roi 结构。"""
-
-        if not isinstance(raw, dict):
-            return raw
-        data = dict(raw)
-        if "action_region" not in data:
-            data["action_region"] = {
-                "pixel": data.get("roi") or {},
-                "normalized": data.get("normalized_roi") or {},
-            }
-        if "observe_region" not in data:
-            vision_mode = data.get("vision_mode") or "none"
-            legacy_type = data.get("type")
-            if (
-                vision_mode == "ocr"
-                or legacy_type in {"observation", "readout", "status", "region", "roi"}
-            ):
-                data["observe_region"] = {
-                    "pixel": data.get("observe_roi") or data.get("roi") or {},
-                    "normalized": (
-                        data.get("observe_normalized_roi")
-                        or data.get("normalized_roi")
-                        or {}
-                    ),
-                }
-        if "label" not in data and data.get("id"):
-            data["label"] = data["id"]
-        return data
-
-    @model_validator(mode="after")
-    def _normalize_compat_fields(self) -> "AnchorDefinition":
-        """标准化兼容字段和动作绑定。"""
-
-        if self.label is None:
-            self.label = self.id
-        if self.roi is None:
-            self.roi = self.action_region.pixel
-        if self.normalized_roi is None:
-            self.normalized_roi = self.action_region.normalized
-        self.supported_actions = [
-            action for action in self.supported_actions if action in SIMPLIFIED_ACTIONS
-        ]
-        if not self.action_bindings and self.supported_actions:
-            self.action_bindings = [
-                AnchorActionBinding(action=action, requires_confirmation=False)
-                for action in self.supported_actions
-            ]
-        if not self.supported_actions and self.action_bindings:
-            self.supported_actions = [
-                binding.action
-                for binding in self.action_bindings
-                if binding.action in SIMPLIFIED_ACTIONS
-            ]
-        self.supported_actions = [
-            action
-            for action in dict.fromkeys(self.supported_actions)
-            if action in SIMPLIFIED_ACTIONS
-        ]
-        self.action_bindings = [
-            binding
-            for binding in self.action_bindings
-            if binding.action in SIMPLIFIED_ACTIONS
-        ]
-        if not self.supported_actions:
-            self.supported_actions = ["click"]
-        requires_confirmation = any(
-            binding.requires_confirmation for binding in self.action_bindings
-        )
-        self.action_bindings = [
-            AnchorActionBinding(
-                action=action,
-                requires_confirmation=requires_confirmation,
-            )
-            for action in self.supported_actions
-        ]
-        if self.type is None:
-            self.type = "observation" if self.observe_region is not None else "action_target"
-        if self.observe_region is not None and self.vision_mode in (None, "none"):
-            self.vision_mode = "ocr"
-        if self.observe_region is None:
-            self.vision_mode = None
-        return self
 
 
 class AnchorView(FlexibleContractModel):
@@ -365,11 +251,6 @@ class AnchorsContract(ContractModel):
 
     @property
     def actions(self) -> list[str]:
-        """返回当前锚点配置支持的动作列表。"""
+        """返回工作流当前支持的动作列表。"""
 
-        values: list[str] = []
-        for anchor in self.anchors:
-            for action in anchor.supported_actions:
-                if action not in values:
-                    values.append(action)
-        return values
+        return list(WORKFLOW_ACTIONS)

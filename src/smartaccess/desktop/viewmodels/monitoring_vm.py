@@ -158,7 +158,12 @@ class MonitoringViewModel(ViewModel):
                 status_text="未找到绑定设备配置",
                 actions=[],
             )
-        ocr_count = sum(1 for anchor in profile.anchors if anchor.observe_region is not None)
+        ocr_count = sum(
+            1
+            for anchor in profile.anchors
+            if anchor.precheck is not None
+            and anchor.precheck.mode in {"text", "image_text"}
+        )
         return WorkflowRunSummary(
             workflow_id=str(metadata.workflow_id),
             lifecycle_state=str(metadata.lifecycle_state),
@@ -224,21 +229,35 @@ class MonitoringViewModel(ViewModel):
         detail = payload.get("detail") or payload.get("reason") or ""
         action = payload.get("action")
         message = str(event.name.value)
-        boundary = MonitoringViewModel._boundary_message(event.name.value, payload, event.session_id)
-        if boundary:
-            message = boundary
-        if step_id:
-            message = f"{message} / {step_id}"
-        if action:
-            message = f"{message} / {action}"
-        if event.name.value in {"run.step.observed", "run.failed"} and _has_ocr_payload(payload):
-            message = MonitoringViewModel._append_ocr_detail(message, payload)
-        if detail:
-            message = f"{message} / {detail}"
+        if event.name.value.startswith("run.step.precheck."):
+            message = MonitoringViewModel._precheck_message(event.name.value, payload)
+        else:
+            boundary = MonitoringViewModel._boundary_message(
+                event.name.value,
+                payload,
+                event.session_id,
+            )
+            if boundary:
+                message = boundary
+            if step_id:
+                message = f"{message} / {step_id}"
+            if action:
+                message = f"{message} / {action}"
+            if (
+                event.name.value in {"run.step.observed", "run.failed"}
+                and _has_ocr_payload(payload)
+            ):
+                message = MonitoringViewModel._append_ocr_detail(message, payload)
+            if detail:
+                message = f"{message} / {detail}"
         level = "INFO"
         if event.name.value.endswith("failed"):
             level = "ERROR"
-        elif "blocked" in event.name.value or "stopping" in event.name.value:
+        elif (
+            "blocked" in event.name.value
+            or "stopping" in event.name.value
+            or "retrying" in event.name.value
+        ):
             level = "WARN"
         return MonitorLogEntry(
             timestamp=event.timestamp.astimezone().strftime("%H:%M:%S"),
@@ -292,6 +311,49 @@ class MonitoringViewModel(ViewModel):
             f"{message} / OCR规则: {rule} / OCR实际: {actual_text} / "
             f"匹配: {payload.get('matched')} / 尝试: {payload.get('attempts')}"
         )
+
+    @staticmethod
+    def _precheck_message(event_name: str, payload: dict) -> str:
+        """格式化锚点执行前校验日志。"""
+
+        labels = {
+            "run.step.precheck.started": "执行前校验开始",
+            "run.step.precheck.retrying": "执行前校验未通过，准备重试",
+            "run.step.precheck.passed": "执行前校验通过",
+            "run.step.precheck.failed": "执行前校验失败",
+        }
+        mode_labels = {
+            "image": "图像一致",
+            "text": "文字一致",
+            "image_text": "图像 + 文字",
+        }
+        parts = [labels.get(event_name, event_name)]
+        if payload.get("step_id"):
+            parts.append(str(payload["step_id"]))
+        if payload.get("anchor_id"):
+            parts.append(f"锚点={payload['anchor_id']}")
+        mode = str(payload.get("precheck_mode") or "")
+        if mode:
+            parts.append(f"方式={mode_labels.get(mode, mode)}")
+        attempt = payload.get("attempt")
+        max_attempts = payload.get("max_attempts")
+        if attempt is not None and max_attempts is not None:
+            parts.append(f"尝试={attempt}/{max_attempts}")
+        elif max_attempts is not None:
+            parts.append(f"最多尝试={max_attempts}")
+        image_score = payload.get("image_score")
+        image_threshold = payload.get("image_threshold")
+        if image_score is not None:
+            parts.append(f"相似度={float(image_score):.3f}")
+            if image_threshold is not None:
+                parts.append(f"阈值={float(image_threshold):.3f}")
+        if payload.get("reference_text") is not None:
+            parts.append(f"参考文字={payload['reference_text'] or '-'}")
+        if payload.get("current_text") is not None:
+            parts.append(f"当前文字={payload['current_text'] or '-'}")
+        if payload.get("detail"):
+            parts.append(f"原因={payload['detail']}")
+        return " / ".join(parts)
 
     @staticmethod
     def _template_label(template_id: str | None, template_version: str | None) -> str:
