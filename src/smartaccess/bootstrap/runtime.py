@@ -125,7 +125,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         increment_counters=increment_counters,
         orchestrator=orchestrator,
         migration=migration,
-        ai_generator=text_ai_generator,
+        ai_generator=vision_ai_generator,
     )
 
 
@@ -424,4 +424,5 @@ def _build_vision_ai_generator(settings: AppSettings) -> SmartAccessAiGenerator 
         provider=provider,
         timeout_seconds=settings.ai_vision_timeout_seconds,
         user_agent=settings.ai_user_agent,
+        enable_thinking=settings.ai_vision_enable_thinking,
     )

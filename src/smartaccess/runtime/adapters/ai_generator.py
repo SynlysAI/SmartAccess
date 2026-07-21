@@ -48,6 +48,7 @@ class SmartAccessAiGenerator:
         provider: str,
         timeout_seconds: float = 30.0,
         user_agent: str | None = None,
+        enable_thinking: bool = False,
     ) -> None:
         """初始化 AI 生成器。
 
@@ -58,6 +59,7 @@ class SmartAccessAiGenerator:
             provider: AI 提供者名称。
             timeout_seconds: 请求超时时间。
             user_agent: 可选 User-Agent。
+            enable_thinking: 是否启用模型思考模式。
         """
 
         self._api_key = api_key
@@ -70,6 +72,7 @@ class SmartAccessAiGenerator:
             if self._provider == "codex"
             else (user_agent or DEFAULT_AI_USER_AGENT)
         )
+        self._enable_thinking = enable_thinking
         self.last_error = ""
         self.last_reasoning = ""
 
@@ -77,7 +80,7 @@ class SmartAccessAiGenerator:
     def supports_images(self) -> bool:
         """返回当前 provider 是否支持发送截图。"""
 
-        return self._provider == "codex"
+        return self._provider == "codex" or self._provider == "qwen"
 
     def generator_label(self) -> str:
         """返回生成器标签。"""
@@ -360,9 +363,10 @@ class SmartAccessAiGenerator:
             "temperature": 0.2,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": user_text},
+                {"role": "user", "content": self._chat_user_content(user_text, context)},
             ],
             "response_format": {"type": "json_object"},
+            **self._chat_generation_options(),
         }
 
     def _responses_user_content(
@@ -385,6 +389,46 @@ class SmartAccessAiGenerator:
                 "image_url": f"data:{mime_type};base64,{screenshot['data']}",
             },
         ]
+
+    def _chat_user_content(
+        self,
+        user_text: str,
+        context: dict[str, Any],
+    ) -> str | list[dict[str, Any]]:
+        """构建 Chat Completions 用户内容，Chat 视觉模型可携带图片。
+
+        Args:
+            user_text: 用户文本内容。
+            context: 生成上下文。
+
+        Returns:
+            文本或 OpenAI 兼容的多模态 content 列表。
+        """
+
+        screenshot = context.get("screenshot")
+        if self._provider != "qwen":
+            return user_text
+        if not isinstance(screenshot, dict) or not screenshot.get("data"):
+            return user_text
+        mime_type = str(screenshot.get("mime_type") or "image/png")
+        return [
+            {"type": "text", "text": user_text},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{screenshot['data']}",
+                },
+            },
+        ]
+
+    def _chat_generation_options(self) -> dict[str, Any]:
+        """返回 Chat 视觉模型的固定生成参数。"""
+
+        if self._provider != "qwen":
+            return {}
+        return {
+            "chat_template_kwargs": {"enable_thinking": self._enable_thinking},
+        }
 
     def _context_for_provider(self, context: dict[str, Any]) -> dict[str, Any]:
         """返回适配当前 provider 能力的上下文。"""
@@ -428,7 +472,7 @@ class SmartAccessAiGenerator:
     def _extract_structured(content: str) -> dict[str, Any]:
         """从模型输出中提取 JSON/YAML 对象。"""
 
-        stripped = content.strip()
+        stripped = SmartAccessAiGenerator._strip_thinking_content(content).strip()
         if stripped.startswith("```"):
             stripped = stripped.strip("`")
             if stripped.startswith(("json", "yaml")):
@@ -440,6 +484,23 @@ class SmartAccessAiGenerator:
             if not isinstance(data, dict):
                 raise ValueError("model output is not a JSON/YAML object")
             return data
+
+    @staticmethod
+    def _strip_thinking_content(content: str) -> str:
+        """移除模型输出中的思考内容，仅保留最终回答。
+
+        Args:
+            content: 模型原始输出文本。
+
+        Returns:
+            去除 `<think>` 片段后的文本。
+        """
+
+        stripped = content.strip()
+        stripped = re.sub(r"<think>.*?</think>", "", stripped, flags=re.DOTALL).strip()
+        if "</think>" in stripped:
+            stripped = stripped.split("</think>", 1)[1].strip()
+        return stripped
 
     @staticmethod
     def _normalize_workflow(workflow_data: dict[str, Any]) -> dict[str, Any]:
