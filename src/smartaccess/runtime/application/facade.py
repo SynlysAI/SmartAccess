@@ -394,6 +394,16 @@ class RuntimeFacade:
 
         return self._workflows.draft_from_prompt(prompt, context)
 
+    def workflow_ai_reasoning(self) -> str:
+        """返回最近一次工作流 AI 生成摘要。"""
+
+        return self._workflows.last_reasoning()
+
+    def workflow_ai_label(self) -> str:
+        """返回工作流 AI 生成器标签。"""
+
+        return self._workflows.generator_label()
+
     def ai_reasoning(self) -> str:
         """返回最近一次 AI 生成摘要。"""
 

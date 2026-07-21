@@ -43,6 +43,7 @@ class AppSettings(BaseModel):
     ai_vision_model: str = Field(default="GPT-5.4")
     ai_vision_api_key: str | None = Field(default=None)
     ai_vision_timeout_seconds: float = Field(default=30.0, gt=0)
+    ai_vision_enable_thinking: bool = Field(default=False)
     deepseek_api_key: str | None = Field(default=None)
     deepseek_base_url: str = Field(default="https://api.deepseek.com")
     deepseek_model: str = Field(default="deepseek-chat")
@@ -113,6 +114,9 @@ class AppSettings(BaseModel):
         ai_vision_model = _get("SMARTACCESS_AI_VISION_MODEL", legacy_model) or legacy_model
         ai_vision_api_key = _get("SMARTACCESS_AI_VISION_API_KEY", legacy_api_key)
         ai_vision_timeout_raw = _get("SMARTACCESS_AI_VISION_TIMEOUT_SECONDS", legacy_timeout) or legacy_timeout
+        ai_vision_enable_thinking = (
+            _get("SMARTACCESS_AI_VISION_ENABLE_THINKING", "false") or "false"
+        ).lower() == "true"
 
         ocr_mode = _get("SMARTACCESS_OCR_MODE")
         legacy_vision_provider = _get("SMARTACCESS_VISION_PROVIDER", "stub") or "stub"
@@ -158,6 +162,7 @@ class AppSettings(BaseModel):
             ai_vision_model=ai_vision_model,
             ai_vision_api_key=ai_vision_api_key,
             ai_vision_timeout_seconds=float(ai_vision_timeout_raw),
+            ai_vision_enable_thinking=ai_vision_enable_thinking,
             deepseek_api_key=_get("DEEPSEEK_API_KEY"),
             deepseek_base_url=(
                 _get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
