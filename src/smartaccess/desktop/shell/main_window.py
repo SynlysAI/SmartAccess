@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from smartaccess.desktop.pages.calibration_page import CalibrationPage
+from smartaccess.desktop.pages.data_collection_page import DataCollectionPage
 from smartaccess.desktop.pages.dashboard_page import DashboardPage
 from smartaccess.desktop.pages.monitoring_page import MonitoringPage
 from smartaccess.desktop.pages.template_page import TemplatePage
@@ -36,6 +37,7 @@ _NAV_ITEMS = [
     ("运行监控", "执行工作流并查看日志和审计"),
     ("模板/平台", "模板发布、回滚和平台同步"),
     ("运行概览", "设备、模板、运行和异常概览"),
+    ("数据采集", "配置本地目录监听并可靠上传至 SmartDataHub"),
 ]
 
 
@@ -79,6 +81,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         """关闭窗口前保存 UI 状态。"""
 
+        for index in range(self._stack.count()):
+            page = self._stack.widget(index)
+            shutdown = getattr(page, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
         self._save_window_state()
         super().closeEvent(event)
 
@@ -107,16 +114,18 @@ class MainWindow(QMainWindow):
         root.addLayout(body, 1)
         self.setCentralWidget(center)
 
-        for index, (title, hint) in enumerate(_NAV_ITEMS):
-            if index == 0 and self._facade is not None:
+        for title, hint in _NAV_ITEMS:
+            if title == "设备接入与校准" and self._facade is not None:
                 self._stack.addWidget(CalibrationPage(self._facade))
-            elif index == 1 and self._facade is not None:
+            elif title == "数据采集" and self._facade is not None:
+                self._stack.addWidget(DataCollectionPage(self._facade))
+            elif title == "工作流设计" and self._facade is not None:
                 self._stack.addWidget(WorkflowPage(self._facade))
-            elif index == 2 and self._facade is not None:
+            elif title == "运行监控" and self._facade is not None:
                 self._stack.addWidget(MonitoringPage(self._facade))
-            elif index == 3 and self._facade is not None:
+            elif title == "模板/平台" and self._facade is not None:
                 self._stack.addWidget(TemplatePage(self._facade))
-            elif index == 4 and self._facade is not None:
+            elif title == "运行概览" and self._facade is not None:
                 self._stack.addWidget(DashboardPage(self._facade))
             else:
                 self._stack.addWidget(self._placeholder_page(title, hint))
@@ -195,6 +204,7 @@ class MainWindow(QMainWindow):
             QStyle.StandardPixmap.SP_MediaPlay,
             QStyle.StandardPixmap.SP_DirIcon,
             QStyle.StandardPixmap.SP_FileDialogInfoView,
+            QStyle.StandardPixmap.SP_DriveHDIcon,
         ]
         for index, (title, hint) in enumerate(_NAV_ITEMS):
             item = QListWidgetItem(title)
