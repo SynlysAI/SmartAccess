@@ -140,7 +140,6 @@ class AnchorDefinition(FlexibleContractModel):
     id: NonEmptyStr
     action_region: AnchorRegion
     precheck: AnchorPrecheck | None = None
-    default_wait_seconds: float = Field(default=2.0, ge=0)
     notes: str | None = None
 
 

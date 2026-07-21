@@ -16,6 +16,9 @@ SIMPLIFIED_WORKFLOW_ACTIONS: tuple[str, ...] = (
     "ocr",
     "wait",
 )
+DEFAULT_ACTION_WAIT_SECONDS = 1.0
+DEFAULT_OCR_TIMEOUT_SECONDS = 10.0
+DEFAULT_OCR_POLL_INTERVAL_SECONDS = 0.5
 EXECUTABLE_WORKFLOW_ACTIONS: tuple[str, ...] = (
     "click",
     "type",
@@ -104,6 +107,7 @@ class WorkflowStep(FlexibleContractModel):
     normalize_text: bool = Field(default=True, exclude=True)
     min_confidence: float | None = Field(default=None, ge=0, le=1, exclude=True)
     timeout_seconds: float | None = Field(default=None, ge=0)
+    poll_interval_seconds: float | None = Field(default=None, ge=0.1)
     wait_seconds: float | None = Field(default=None, ge=0)
     requires_confirmation: bool = False
     migration_error: str | None = Field(default=None, exclude=True)
@@ -157,6 +161,13 @@ class WorkflowStep(FlexibleContractModel):
                 and normalized.get("timeout_seconds") is not None
             ):
                 self.timeout_seconds = float(normalized["timeout_seconds"])
+            if (
+                self.poll_interval_seconds is None
+                and normalized.get("poll_interval_seconds") is not None
+            ):
+                self.poll_interval_seconds = float(
+                    normalized["poll_interval_seconds"]
+                )
         if self.action == "wait":
             self.input_mode = "free"
             self.increment_rule = None
@@ -172,6 +183,7 @@ class WorkflowStep(FlexibleContractModel):
             self.expected_text = None
             self.expected_candidates = []
             self.timeout_seconds = None
+            self.poll_interval_seconds = None
             self.min_confidence = None
         else:
             self.ignore_case = True
@@ -185,13 +197,20 @@ class WorkflowStep(FlexibleContractModel):
                 self.expected_text = list(dict.fromkeys(values))
         if self.action == "ocr" and self.match_mode == "none":
             self.match_mode = "not_empty"
+        if self.action == "ocr" and self.timeout_seconds is None:
+            self.timeout_seconds = DEFAULT_OCR_TIMEOUT_SECONDS
+        if self.action == "ocr" and self.poll_interval_seconds is None:
+            self.poll_interval_seconds = DEFAULT_OCR_POLL_INTERVAL_SECONDS
         if self.match_mode == "none":
             self.expected_text = None
             self.expected_candidates = []
             self.timeout_seconds = None
+            self.poll_interval_seconds = None
             self.min_confidence = None
         if not self.anchor_id:
             self.migration_error = "anchor_id is required for executable workflow steps"
+        if self.wait_seconds is None:
+            self.wait_seconds = DEFAULT_ACTION_WAIT_SECONDS
         return self
 
     def _normalize_wait_step(self) -> None:
@@ -200,7 +219,7 @@ class WorkflowStep(FlexibleContractModel):
         if self.wait_seconds is None and self.value is not None:
             self.wait_seconds = _coerce_seconds(self.value)
         if self.wait_seconds is None:
-            self.wait_seconds = 1.0
+            self.wait_seconds = DEFAULT_ACTION_WAIT_SECONDS
         self.anchor_id = None
         self.target = None
         self.view_id = "main"
@@ -208,6 +227,7 @@ class WorkflowStep(FlexibleContractModel):
         self.expected_text = None
         self.expected_candidates = []
         self.timeout_seconds = None
+        self.poll_interval_seconds = None
         self.min_confidence = None
 
 
@@ -299,6 +319,10 @@ def normalize_condition(condition: dict[str, Any] | None) -> dict[str, Any] | No
     if candidates is None:
         candidates = condition.get("candidates")
     timeout = condition.get("timeout_seconds", condition.get("timeout"))
+    poll_interval = condition.get(
+        "poll_interval_seconds",
+        condition.get("poll_interval"),
+    )
     normalized: dict[str, Any] = {"match_mode": operator}
     if expected is not None and operator != "not_empty":
         normalized["expected_text"] = expected
@@ -316,6 +340,8 @@ def normalize_condition(condition: dict[str, Any] | None) -> dict[str, Any] | No
         normalized["min_confidence"] = float(condition["min_confidence"])
     if timeout is not None:
         normalized["timeout_seconds"] = _coerce_seconds(timeout)
+    if poll_interval is not None:
+        normalized["poll_interval_seconds"] = _coerce_seconds(poll_interval)
     return normalized
 
 
@@ -390,6 +416,7 @@ def _append_double_click_steps(
     second = _action_step(step, action="click", step_id=f"{step_id}_click_2")
     first.pop("expected_text", None)
     first.pop("timeout_seconds", None)
+    first.pop("poll_interval_seconds", None)
     first["match_mode"] = "none"
     steps.extend([first, second])
 
@@ -449,6 +476,7 @@ def _wait_step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
         clean.pop("expected_text", None)
         clean.pop("expected_candidates", None)
         clean.pop("timeout_seconds", None)
+        clean.pop("poll_interval_seconds", None)
         clean.pop("min_confidence", None)
         clean["match_mode"] = "none"
     return clean
@@ -466,7 +494,9 @@ def _ocr_step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
     if clean.get("match_mode") in (None, "none"):
         clean["match_mode"] = "not_empty"
     if clean.get("timeout_seconds") is None:
-        clean["timeout_seconds"] = 30.0
+        clean["timeout_seconds"] = DEFAULT_OCR_TIMEOUT_SECONDS
+    if clean.get("poll_interval_seconds") is None:
+        clean["poll_interval_seconds"] = DEFAULT_OCR_POLL_INTERVAL_SECONDS
     return clean
 
 
@@ -477,6 +507,7 @@ def _condition_from_flat_step(step: dict[str, Any]) -> dict[str, Any] | None:
     expected_text = step.get("expected_text")
     expected_candidates = step.get("expected_candidates")
     timeout = step.get("timeout_seconds")
+    poll_interval = step.get("poll_interval_seconds")
     if match_mode in MATCH_MODES and (
         match_mode != "none"
         or expected_text is not None
@@ -489,6 +520,8 @@ def _condition_from_flat_step(step: dict[str, Any]) -> dict[str, Any] | None:
             condition["expected_candidates"] = expected_candidates
         if timeout is not None:
             condition["timeout_seconds"] = timeout
+        if poll_interval is not None:
+            condition["poll_interval_seconds"] = poll_interval
         for key in ("ignore_case", "normalize_text", "min_confidence"):
             if step.get(key) is not None:
                 condition[key] = step[key]
@@ -511,6 +544,8 @@ def _merge_condition_into_step(
         step["expected_candidates"] = condition["expected_candidates"]
     if condition.get("timeout_seconds") is not None:
         step["timeout_seconds"] = condition["timeout_seconds"]
+    if condition.get("poll_interval_seconds") is not None:
+        step["poll_interval_seconds"] = condition["poll_interval_seconds"]
     for key in ("ignore_case", "normalize_text", "min_confidence"):
         if condition.get(key) is not None:
             step[key] = condition[key]

@@ -23,7 +23,13 @@ from smartaccess.shared.contracts.run_trace import (
     RunTraceRecord,
     WaitStrategyPayload,
 )
-from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowStep
+from smartaccess.shared.contracts.workflow import (
+    DEFAULT_ACTION_WAIT_SECONDS,
+    DEFAULT_OCR_POLL_INTERVAL_SECONDS,
+    DEFAULT_OCR_TIMEOUT_SECONDS,
+    WorkflowContract,
+    WorkflowStep,
+)
 from smartaccess.shared.events.runtime import RuntimeEventName
 
 from .executor import (
@@ -36,7 +42,6 @@ from .executor import (
 from .observer import Observation, Observer
 from .recovery import RecoveryEngine
 
-POLL_INTERVAL_SECONDS = 0.5
 PRECHECK_MAX_ATTEMPTS = 3
 PRECHECK_RETRY_INTERVAL_SECONDS = 0.5
 
@@ -204,6 +209,7 @@ class Orchestrator:
             value=step.value,
             wait_seconds=step.wait_seconds,
             timeout_seconds=step.timeout_seconds,
+            poll_interval_seconds=step.poll_interval_seconds,
             expected_text=step.expected_text,
             expected_candidates=step.expected_candidates,
             match_mode=step.match_mode,
@@ -532,7 +538,11 @@ class Orchestrator:
         if anchor is None:
             return Observation(), WaitStrategyPayload(type="none"), 1, 0.0, None, None
         if step.match_mode == "none":
-            wait_seconds = float(step.wait_seconds or anchor.default_wait_seconds or 0.0)
+            wait_seconds = float(
+                step.wait_seconds
+                if step.wait_seconds is not None
+                else DEFAULT_ACTION_WAIT_SECONDS
+            )
             start = time.monotonic()
             while time.monotonic() - start < wait_seconds:
                 detected = self._detect_exception_popup(session, profile, step)
@@ -557,33 +567,21 @@ class Orchestrator:
                 None,
                 None,
             )
-        timeout_seconds = float(step.timeout_seconds or anchor.default_wait_seconds or 2.0)
-        pre_wait_seconds = float(step.wait_seconds or 0.0)
-        wait_start = time.monotonic()
-        while time.monotonic() - wait_start < pre_wait_seconds:
-            if self._is_stopped(session, step.id):
-                break
-            time.sleep(
-                min(
-                    0.1,
-                    max(0.0, pre_wait_seconds - (time.monotonic() - wait_start)),
-                )
-            )
-        wait_elapsed = time.monotonic() - wait_start
-        if self._is_stopped(session, step.id):
-            return (
-                Observation(),
-                WaitStrategyPayload(
-                    type="ocr_poll",
-                    wait_seconds=pre_wait_seconds,
-                    timeout_seconds=timeout_seconds,
-                    poll_interval_seconds=POLL_INTERVAL_SECONDS,
-                ),
-                0,
-                wait_elapsed,
-                None,
-                None,
-            )
+        timeout_seconds = float(
+            step.timeout_seconds
+            if step.timeout_seconds is not None
+            else DEFAULT_OCR_TIMEOUT_SECONDS
+        )
+        poll_interval_seconds = float(
+            step.poll_interval_seconds
+            if step.poll_interval_seconds is not None
+            else DEFAULT_OCR_POLL_INTERVAL_SECONDS
+        )
+        post_wait_seconds = float(
+            step.wait_seconds
+            if step.wait_seconds is not None
+            else DEFAULT_ACTION_WAIT_SECONDS
+        )
         start = time.monotonic()
         attempts = 0
         last_observation = Observation()
@@ -596,12 +594,12 @@ class Orchestrator:
                     detected.observation,
                     WaitStrategyPayload(
                         type="ocr_poll",
-                        wait_seconds=pre_wait_seconds,
+                        wait_seconds=post_wait_seconds,
                         timeout_seconds=timeout_seconds,
-                        poll_interval_seconds=POLL_INTERVAL_SECONDS,
+                        poll_interval_seconds=poll_interval_seconds,
                     ),
                     attempts,
-                    wait_elapsed + (time.monotonic() - start),
+                    time.monotonic() - start,
                     detected.screenshot_path,
                     detected,
                 )
@@ -638,21 +636,53 @@ class Orchestrator:
                 reading,
                 **self._ocr_match_kwargs(step),
             )
+            post_wait_elapsed = 0.0
+            if matched and post_wait_seconds > 0:
+                post_wait_start = time.monotonic()
+                while time.monotonic() - post_wait_start < post_wait_seconds:
+                    detected = self._detect_exception_popup(session, profile, step)
+                    if detected is not None:
+                        return (
+                            detected.observation,
+                            WaitStrategyPayload(
+                                type="ocr_poll",
+                                wait_seconds=post_wait_seconds,
+                                timeout_seconds=timeout_seconds,
+                                poll_interval_seconds=poll_interval_seconds,
+                            ),
+                            attempts,
+                            elapsed + (time.monotonic() - post_wait_start),
+                            detected.screenshot_path,
+                            detected,
+                        )
+                    if self._is_stopped(session, step.id):
+                        break
+                    time.sleep(
+                        min(
+                            0.1,
+                            max(
+                                0.0,
+                                post_wait_seconds
+                                - (time.monotonic() - post_wait_start),
+                            ),
+                        )
+                    )
+                post_wait_elapsed = time.monotonic() - post_wait_start
             if matched or elapsed >= timeout_seconds or self._is_stopped(session, step.id):
                 return (
                     last_observation,
                     WaitStrategyPayload(
                         type="ocr_poll",
-                        wait_seconds=pre_wait_seconds,
+                        wait_seconds=post_wait_seconds,
                         timeout_seconds=timeout_seconds,
-                        poll_interval_seconds=POLL_INTERVAL_SECONDS,
+                        poll_interval_seconds=poll_interval_seconds,
                     ),
                     attempts,
-                    wait_elapsed + elapsed,
+                    elapsed + post_wait_elapsed,
                     last_screenshot_path,
                     None,
                 )
-            time.sleep(POLL_INTERVAL_SECONDS)
+            time.sleep(poll_interval_seconds)
 
     def _run_with_recovery(
         self,
