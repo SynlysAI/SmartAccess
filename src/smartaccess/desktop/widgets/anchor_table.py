@@ -26,6 +26,10 @@ PRECHECK_OPTIONS = [
     ("text", "文字一致"),
     ("image_text", "图像 + 文字"),
 ]
+VALIDATION_REGION_OPTIONS = [
+    ("target", "与目标区域一致"),
+    ("custom", "自定义区域"),
+]
 
 
 @dataclass(slots=True)
@@ -44,6 +48,7 @@ class AnchorTable(QTableWidget):
 
     row_delete_requested = pyqtSignal(int)
     row_precheck_changed = pyqtSignal(int, str)
+    row_validation_region_changed = pyqtSignal(int, bool)
     row_changed = pyqtSignal(int)
 
     def __init__(self, parent=None) -> None:
@@ -84,12 +89,15 @@ class AnchorTable(QTableWidget):
             新增行号。
         """
 
+        if row_data.precheck_mode != "none" and not row_data.validation_roi:
+            row_data.validation_roi = row_data.target_roi
         row = self.rowCount()
         self.insertRow(row)
         self._set_item(row, 0, row_data.anchor_id)
         self._set_item(row, 1, row_data.target_roi)
         self.setCellWidget(row, 2, self._precheck_combo(row_data.precheck_mode))
         self._set_item(row, 3, row_data.validation_roi)
+        self.setCellWidget(row, 3, self._validation_region_combo(row_data))
         delete_btn = QPushButton("×")
         delete_btn.setObjectName("TableDanger")
         delete_btn.setToolTip("删除锚点")
@@ -194,6 +202,34 @@ class AnchorTable(QTableWidget):
         if 0 <= row < self.rowCount():
             self._set_item(row, 3, roi_name)
             self._stash_roi_name(row, 3, roi_name)
+            combo = self.cellWidget(row, 3)
+            if isinstance(combo, QComboBox):
+                target_roi = self._roi_name(row, 1)
+                mode = "target" if roi_name == target_roi else "custom"
+                index = combo.findData(mode)
+                combo.blockSignals(True)
+                combo.setCurrentIndex(max(0, index))
+                combo.blockSignals(False)
+
+    def set_validation_region_enabled(self, row: int, enabled: bool) -> None:
+        """设置校验区域选择器的可用状态。
+
+        Args:
+            row: 表格行号。
+            enabled: 是否启用选择器。
+        """
+
+        combo = self.cellWidget(row, 3)
+        if isinstance(combo, QComboBox):
+            if enabled:
+                self._set_validation_region_options(
+                    combo,
+                    self._roi_name(row, 3),
+                    self._roi_name(row, 1),
+                )
+            else:
+                self._set_validation_region_options(combo)
+            combo.setEnabled(enabled)
 
     def remove_rows_by_roi(self, roi_name: str) -> None:
         """根据 ROI 名称删除或清理相关锚点行。"""
@@ -235,6 +271,17 @@ class AnchorTable(QTableWidget):
                         current_combo
                     )
                 )
+            validation_combo = self.cellWidget(row, 3)
+            if isinstance(validation_combo, QComboBox):
+                try:
+                    validation_combo.currentIndexChanged.disconnect()
+                except TypeError:
+                    pass
+                validation_combo.currentIndexChanged.connect(
+                    lambda _index, current_combo=validation_combo: (
+                        self._emit_validation_region_changed(current_combo)
+                    )
+                )
 
     def _precheck_combo(self, mode: str) -> QComboBox:
         """创建执行前校验方式下拉框。"""
@@ -253,12 +300,75 @@ class AnchorTable(QTableWidget):
         )
         return combo
 
+    def _validation_region_combo(self, row_data: AnchorRow) -> QComboBox:
+        """创建校验区域范围选择器。
+
+        Args:
+            row_data: 当前锚点行模型。
+
+        Returns:
+            校验区域范围下拉框。
+        """
+
+        combo = NoWheelComboBox()
+        combo.setObjectName("TableComboBox")
+        set_embedded_editor_height(combo)
+        if row_data.precheck_mode == "none":
+            self._set_validation_region_options(combo)
+        else:
+            self._set_validation_region_options(
+                combo,
+                row_data.validation_roi,
+                row_data.target_roi,
+            )
+        combo.setEnabled(row_data.precheck_mode != "none")
+        combo.currentIndexChanged.connect(
+            lambda _index, current_combo=combo: (
+                self._emit_validation_region_changed(current_combo)
+            )
+        )
+        return combo
+
+    @staticmethod
+    def _set_validation_region_options(
+        combo: QComboBox,
+        validation_roi: str = "",
+        target_roi: str = "",
+    ) -> None:
+        """根据校验启用状态刷新校验区域下拉选项。
+
+        Args:
+            combo: 待更新的校验区域下拉框。
+            validation_roi: 当前校验 ROI 名称。
+            target_roi: 当前目标 ROI 名称。
+        """
+
+        combo.blockSignals(True)
+        combo.clear()
+        if not target_roi:
+            combo.addItem("无", "none")
+        else:
+            for key, label in VALIDATION_REGION_OPTIONS:
+                combo.addItem(label, key)
+            uses_target = not validation_roi or validation_roi == target_roi
+            combo.setCurrentIndex(0 if uses_target else 1)
+        combo.blockSignals(False)
+
     def _emit_precheck_changed(self, combo: QComboBox) -> None:
         """执行前校验方式变化时发出信号。"""
 
         row = self.indexAt(combo.pos()).row()
         if row >= 0:
             self.row_precheck_changed.emit(row, str(combo.currentData() or "none"))
+            self.row_changed.emit(row)
+
+    def _emit_validation_region_changed(self, combo: QComboBox) -> None:
+        """校验区域范围变化时发出信号。"""
+
+        row = self.indexAt(combo.pos()).row()
+        if row >= 0:
+            uses_target = str(combo.currentData() or "target") == "target"
+            self.row_validation_region_changed.emit(row, uses_target)
             self.row_changed.emit(row)
 
     def _set_item(self, row: int, column: int, text: str) -> None:
