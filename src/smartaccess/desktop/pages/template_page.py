@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFormLayout,
@@ -315,6 +317,24 @@ class TemplatePage(QWidget):
             record.status.value,
             record.anchor_profile,
             record.source,
-            record.published_at,
+            TemplatePage._format_published_at(record.published_at),
             record.error,
         )
+
+    @staticmethod
+    def _format_published_at(value: str) -> str:
+        """将发布时间格式化为模板列表使用的简短显示文本。
+
+        Args:
+            value: 原始 ISO 格式发布时间。
+
+        Returns:
+            格式化后的 `YYYY-MM-DD HH:mm` 文本；无法解析时保留原值。
+        """
+
+        if not value:
+            return ""
+        try:
+            return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return value
