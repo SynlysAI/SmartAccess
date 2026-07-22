@@ -584,6 +584,7 @@ class Orchestrator:
         )
         start = time.monotonic()
         attempts = 0
+        last_retry_log_elapsed = -1.0
         last_observation = Observation()
         last_screenshot_path = None
         while True:
@@ -682,7 +683,71 @@ class Orchestrator:
                     last_screenshot_path,
                     None,
                 )
+            if attempts == 1 or elapsed - last_retry_log_elapsed >= 1.0:
+                self._emit_ocr_retry_event(
+                    session=session,
+                    step=step,
+                    reading=reading,
+                    matched=matched,
+                    attempts=attempts,
+                    elapsed_seconds=elapsed,
+                    timeout_seconds=timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                )
+                last_retry_log_elapsed = elapsed
             time.sleep(poll_interval_seconds)
+
+    def _emit_ocr_retry_event(
+        self,
+        *,
+        session: RunSession,
+        step: WorkflowStep,
+        reading: OcrReading | None,
+        matched: bool | None,
+        attempts: int,
+        elapsed_seconds: float,
+        timeout_seconds: float,
+        poll_interval_seconds: float,
+    ) -> None:
+        """发送节流后的 OCR 不匹配重试进度事件。
+
+        Args:
+            session: 当前运行会话。
+            step: 当前 OCR 步骤。
+            reading: 本次 OCR 识别结果。
+            matched: 当前匹配结论。
+            attempts: 已完成的识别次数。
+            elapsed_seconds: 当前累计耗时。
+            timeout_seconds: OCR 超时时间。
+            poll_interval_seconds: 下次重试前等待时间。
+        """
+
+        reason = (
+            "OCR 置信度不足"
+            if matched is None
+            else "OCR 结果未满足期望"
+        )
+        self._run_sessions.emit_event(
+            session,
+            RuntimeEventName.RUN_STEP_OCR_RETRYING,
+            step_id=step.id,
+            action=step.action,
+            detail=f"{reason}，{poll_interval_seconds:g}s 后重试",
+            anchor_id=step.anchor_id,
+            expected_text=step.expected_text,
+            expected_candidates=step.expected_candidates,
+            actual_text=reading.text if reading else None,
+            confidence=reading.confidence if reading else None,
+            match_mode=step.match_mode,
+            ignore_case=step.ignore_case,
+            normalize_text=step.normalize_text,
+            min_confidence=step.min_confidence,
+            matched=matched,
+            attempts=attempts,
+            elapsed_seconds=elapsed_seconds,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
 
     def _run_with_recovery(
         self,

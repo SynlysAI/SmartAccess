@@ -145,10 +145,13 @@ class WorkflowPage(QWidget):
 
         self._workflow_id = QLineEdit()
         self._workflow_id.setPlaceholderText("wf_new_experiment")
+        self._workflow_id.setMaximumWidth(260)
         self._workflow_id.textChanged.connect(lambda _text: self._refresh_increment_context())
         self._anchor_profile = NoWheelComboBox()
+        self._anchor_profile.setMinimumWidth(320)
         self._anchor_profile.currentIndexChanged.connect(self._on_profile_changed)
         self._author = QLineEdit("smartaccess")
+        self._author.setMaximumWidth(260)
         self._author.textChanged.connect(lambda _text: self._refresh_increment_context())
         self._lifecycle = NoWheelComboBox()
         for state in ("Draft", "Standardized", "Published"):
@@ -156,6 +159,8 @@ class WorkflowPage(QWidget):
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 0)
+        grid.setColumnStretch(3, 1)
         grid.addWidget(QLabel("工作流 ID"), 0, 0)
         grid.addWidget(self._workflow_id, 0, 1)
         grid.addWidget(QLabel("设备"), 0, 2)

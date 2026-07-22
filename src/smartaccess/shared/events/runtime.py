@@ -17,6 +17,7 @@ class RuntimeEventName(StrEnum):
     RUN_STEP_PRECHECK_PASSED = "run.step.precheck.passed"
     RUN_STEP_PRECHECK_FAILED = "run.step.precheck.failed"
     RUN_STEP_OBSERVED = "run.step.observed"
+    RUN_STEP_OCR_RETRYING = "run.step.ocr.retrying"
     RUN_STEP_SUCCEEDED = "run.step.succeeded"
     RUN_BLOCKED = "run.blocked"
     RUN_RECOVERED = "run.recovered"

@@ -69,12 +69,13 @@ def validate_workflow_against_anchors(
 
     for step in workflow.steps:
         is_wait = step.action == "wait"
+        is_ocr = step.action == "ocr"
         if is_wait and step.match_mode == "none" and not step.anchor_id:
             _validate_wait_step(step.id, step.wait_seconds, issues)
             continue
         if is_wait and step.wait_seconds is not None:
             _validate_wait_step(step.id, step.wait_seconds, issues)
-        if not is_wait and step.action not in EXECUTABLE_WORKFLOW_ACTIONS:
+        if not (is_wait or is_ocr) and step.action not in EXECUTABLE_WORKFLOW_ACTIONS:
             issues.append(f"step {step.id}: unsupported action '{step.action}'")
             continue
         if not step.anchor_id:
@@ -90,11 +91,11 @@ def validate_workflow_against_anchors(
             else:
                 issues.append(f"step {step.id}: unknown anchor_id '{step.anchor_id}'")
             continue
-        if step.action != "ocr" and step.match_mode != "none":
+        if not is_ocr and step.match_mode != "none":
             issues.append(
                 f"step {step.id}: OCR match fields are only allowed for action 'ocr'"
             )
-        if step.action == "ocr":
+        if is_ocr:
             _validate_text_expectation(
                 step.id,
                 step.match_mode,
