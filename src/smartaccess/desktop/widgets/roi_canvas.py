@@ -228,6 +228,8 @@ class RoiCanvas(QGraphicsView):
         rect = QRectF(0, 0, pixmap.width(), pixmap.height())
         self._scene.setSceneRect(rect)
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self._update_pan_bounds()
+        self.centerOn(rect.center())
 
     def load_placeholder(self, message: str) -> None:
         """显示占位提示。"""
@@ -376,8 +378,26 @@ class RoiCanvas(QGraphicsView):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
             self.scale(factor, factor)
+            self._update_pan_bounds()
             return
         super().wheelEvent(event)
+
+    def resizeEvent(self, event):  # noqa: N802
+        """窗口尺寸变化时更新画布可平移边界。
+
+        Args:
+            event: Qt 尺寸变化事件。
+        """
+
+        center = (
+            self.mapToScene(self.viewport().rect().center())
+            if self._image_item is not None
+            else None
+        )
+        super().resizeEvent(event)
+        self._update_pan_bounds()
+        if center is not None:
+            self.centerOn(center)
 
     @staticmethod
     def _find_roi_item(item) -> _RoiItem | None:
@@ -388,6 +408,19 @@ class RoiCanvas(QGraphicsView):
                 return item
             item = item.parentItem()
         return None
+
+    def _update_pan_bounds(self) -> None:
+        """扩展画布边界，使截图任意边缘可移动到窗口中心。"""
+
+        if self._image_item is None:
+            return
+        image_rect = self._image_item.sceneBoundingRect()
+        visible_rect = self.mapToScene(self.viewport().rect()).boundingRect()
+        margin_x = max(1.0, visible_rect.width() / 2)
+        margin_y = max(1.0, visible_rect.height() / 2)
+        self._scene.setSceneRect(
+            image_rect.adjusted(-margin_x, -margin_y, margin_x, margin_y)
+        )
 
     def _clear_background(self) -> None:
         """清除背景截图或占位符。"""
