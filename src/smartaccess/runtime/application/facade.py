@@ -56,7 +56,7 @@ class RuntimeStatus:
 
     workspace_dir: Path
     automation_provider: str
-    vision_provider: str
+    ocr_mode: str
     platform_provider: str
     ai_text_provider: str
     ai_vision_provider: str
@@ -144,7 +144,7 @@ class RuntimeFacade:
         return RuntimeStatus(
             workspace_dir=Path(self._settings.workspace_dir),
             automation_provider=self._settings.automation_provider,
-            vision_provider=self._settings.vision_provider,
+            ocr_mode=self._settings.ocr_mode,
             platform_provider=self._settings.platform_provider,
             ai_text_provider=self._settings.ai_text_provider,
             ai_vision_provider=self._settings.ai_vision_provider,

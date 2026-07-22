@@ -442,11 +442,36 @@ class StepRow:
     requires_confirmation: bool = False
 
 
-def _parameter_summary(step: StepRow) -> str:
+def _renumber_steps(steps: list[StepRow]) -> list[StepRow]:
+    """按照当前表格顺序重新生成连续步骤 ID。
+
+    Args:
+        steps: 当前工作流步骤列表。
+
+    Returns:
+        步骤 ID 已更新为连续编号的新列表。
+    """
+
+    return [
+        replace(step, step_id=f"step_{index}")
+        for index, step in enumerate(steps, start=1)
+    ]
+
+
+def _parameter_summary(
+    step: StepRow,
+    *,
+    default_action_wait_seconds: float = DEFAULT_ACTION_WAIT_SECONDS,
+    default_ocr_timeout_seconds: float = DEFAULT_OCR_TIMEOUT_SECONDS,
+    default_ocr_poll_interval_seconds: float = DEFAULT_OCR_POLL_INTERVAL_SECONDS,
+) -> str:
     """生成动作专属参数摘要。
 
     Args:
         step: 工作流步骤行。
+        default_action_wait_seconds: 默认动作后等待秒数。
+        default_ocr_timeout_seconds: 默认 OCR 超时秒数。
+        default_ocr_poll_interval_seconds: 默认 OCR 轮询间隔秒数。
 
     Returns:
         适合在表格中展示的简短摘要。
@@ -472,12 +497,12 @@ def _parameter_summary(step: StepRow) -> str:
         timeout = (
             step.timeout_seconds
             if step.timeout_seconds is not None
-            else DEFAULT_OCR_TIMEOUT_SECONDS
+            else default_ocr_timeout_seconds
         )
         poll_interval = (
             step.poll_interval_seconds
             if step.poll_interval_seconds is not None
-            else DEFAULT_OCR_POLL_INTERVAL_SECONDS
+            else default_ocr_poll_interval_seconds
         )
         return (
             f"{mode_labels.get(step.match_mode, step.match_mode)}：{expected}；"
@@ -487,7 +512,7 @@ def _parameter_summary(step: StepRow) -> str:
         duration = (
             step.wait_seconds
             if step.wait_seconds is not None
-            else DEFAULT_ACTION_WAIT_SECONDS
+            else default_action_wait_seconds
         )
         return f"等待 {duration:g}s"
     return "无额外参数"
@@ -502,6 +527,9 @@ class ActionParameterDialog(QDialog):
         *,
         context: dict[str, str] | None = None,
         preview_counter: Callable[[dict[str, Any]], int | None] | None = None,
+        default_action_wait_seconds: float = DEFAULT_ACTION_WAIT_SECONDS,
+        default_ocr_timeout_seconds: float = DEFAULT_OCR_TIMEOUT_SECONDS,
+        default_ocr_poll_interval_seconds: float = DEFAULT_OCR_POLL_INTERVAL_SECONDS,
         parent: QWidget | None = None,
     ) -> None:
         """初始化动作参数弹窗。
@@ -510,6 +538,9 @@ class ActionParameterDialog(QDialog):
             step: 当前工作流步骤。
             context: 递增输入预览上下文。
             preview_counter: 递增计数预览回调。
+            default_action_wait_seconds: 默认动作后等待秒数。
+            default_ocr_timeout_seconds: 默认 OCR 超时秒数。
+            default_ocr_poll_interval_seconds: 默认 OCR 轮询间隔秒数。
             parent: Qt 父组件。
         """
 
@@ -520,6 +551,9 @@ class ActionParameterDialog(QDialog):
         self._hotkey: QLineEdit | None = None
         self._condition: ConditionEditor | None = None
         self._wait_duration: QDoubleSpinBox | None = None
+        self._default_action_wait_seconds = default_action_wait_seconds
+        self._default_ocr_timeout_seconds = default_ocr_timeout_seconds
+        self._default_ocr_poll_interval_seconds = default_ocr_poll_interval_seconds
         self.setWindowTitle("动作参数配置")
         self.setMinimumWidth(640)
 
@@ -560,12 +594,12 @@ class ActionParameterDialog(QDialog):
                 timeout_seconds=(
                     step.timeout_seconds
                     if step.timeout_seconds is not None
-                    else DEFAULT_OCR_TIMEOUT_SECONDS
+                    else self._default_ocr_timeout_seconds
                 ),
                 poll_interval_seconds=(
                     step.poll_interval_seconds
                     if step.poll_interval_seconds is not None
-                    else DEFAULT_OCR_POLL_INTERVAL_SECONDS
+                    else self._default_ocr_poll_interval_seconds
                 ),
             )
             form.addRow("OCR条件", self._condition)
@@ -579,7 +613,7 @@ class ActionParameterDialog(QDialog):
                 float(
                     step.wait_seconds
                     if step.wait_seconds is not None
-                    else DEFAULT_ACTION_WAIT_SECONDS
+                    else self._default_action_wait_seconds
                 )
             )
             form.addRow("等待时长", self._wait_duration)
@@ -625,12 +659,12 @@ class ActionParameterDialog(QDialog):
             step.timeout_seconds = (
                 float(condition["timeout_seconds"])
                 if condition.get("timeout_seconds") is not None
-                else DEFAULT_OCR_TIMEOUT_SECONDS
+                else self._default_ocr_timeout_seconds
             )
             step.poll_interval_seconds = (
                 float(condition["poll_interval_seconds"])
                 if condition.get("poll_interval_seconds") is not None
-                else DEFAULT_OCR_POLL_INTERVAL_SECONDS
+                else self._default_ocr_poll_interval_seconds
             )
         elif step.action == "wait" and self._wait_duration:
             step.wait_seconds = float(self._wait_duration.value())
@@ -651,9 +685,12 @@ class WorkflowStepTable(QTableWidget):
         self._view_ids: list[str] = ["main"]
         self._increment_context: dict[str, str] = {}
         self._preview_counter: Callable[[dict[str, Any]], int | None] | None = None
+        self._default_action_wait_seconds = DEFAULT_ACTION_WAIT_SECONDS
+        self._default_ocr_timeout_seconds = DEFAULT_OCR_TIMEOUT_SECONDS
+        self._default_ocr_poll_interval_seconds = DEFAULT_OCR_POLL_INTERVAL_SECONDS
         self.setHorizontalHeaderLabels(
             [
-                "步骤 ID",
+                "步骤",
                 "动作",
                 "视图",
                 "锚点",
@@ -668,9 +705,9 @@ class WorkflowStepTable(QTableWidget):
         configure_data_table(self, row_height=38)
         interactive_header(self)
         self.setMinimumHeight(120)
-        self.setColumnHidden(0, True)
         self.setColumnHidden(5, True)
         self.setColumnHidden(7, True)
+        self.setColumnWidth(0, 100)
         self.setColumnWidth(1, 118)
         self.setColumnWidth(2, 110)
         self.setColumnWidth(3, 180)
@@ -679,6 +716,25 @@ class WorkflowStepTable(QTableWidget):
         self.setColumnWidth(8, 86)
         self.setColumnWidth(9, 148)
         self.cellDoubleClicked.connect(self._cell_double_clicked)
+
+    def configure_defaults(
+        self,
+        *,
+        action_wait_seconds: float,
+        ocr_timeout_seconds: float,
+        ocr_poll_interval_seconds: float,
+    ) -> None:
+        """设置新建步骤使用的工作流参数默认值。
+
+        Args:
+            action_wait_seconds: 默认动作后等待秒数。
+            ocr_timeout_seconds: 默认 OCR 超时秒数。
+            ocr_poll_interval_seconds: 默认 OCR 轮询间隔秒数。
+        """
+
+        self._default_action_wait_seconds = action_wait_seconds
+        self._default_ocr_timeout_seconds = ocr_timeout_seconds
+        self._default_ocr_poll_interval_seconds = ocr_poll_interval_seconds
 
     def set_steps(
         self,
@@ -719,7 +775,7 @@ class WorkflowStepTable(QTableWidget):
         """新增步骤行。"""
 
         if step.wait_seconds is None:
-            step = replace(step, wait_seconds=DEFAULT_ACTION_WAIT_SECONDS)
+            step = replace(step, wait_seconds=self._default_action_wait_seconds)
         row = self.rowCount()
         self.insertRow(row)
         self._set_row_model(row, step)
@@ -771,10 +827,11 @@ class WorkflowStepTable(QTableWidget):
                 action="click",
                 view_id=view_id,
                 anchor_id=anchor_id,
-                wait_seconds=DEFAULT_ACTION_WAIT_SECONDS,
+                wait_seconds=self._default_action_wait_seconds,
                 match_mode="none",
             ),
         )
+        rows = _renumber_steps(rows)
         self.set_steps(
             rows,
             self._anchor_ids,
@@ -793,9 +850,10 @@ class WorkflowStepTable(QTableWidget):
             StepRow(
                 step_id=self._next_step_id("wait"),
                 action="wait",
-                wait_seconds=DEFAULT_ACTION_WAIT_SECONDS,
+                wait_seconds=self._default_action_wait_seconds,
             ),
         )
+        rows = _renumber_steps(rows)
         self.set_steps(
             rows,
             self._anchor_ids,
@@ -830,7 +888,7 @@ class WorkflowStepTable(QTableWidget):
                     wait_seconds=(
                         float(wait_seconds)
                         if wait_seconds is not None
-                        else DEFAULT_ACTION_WAIT_SECONDS
+                        else self._default_action_wait_seconds
                     ),
                     requires_confirmation=bool(confirm),
                 )
@@ -965,7 +1023,7 @@ class WorkflowStepTable(QTableWidget):
                     wait_seconds=(
                         float(current_wait)
                         if current_wait is not None
-                        else DEFAULT_ACTION_WAIT_SECONDS
+                        else self._default_action_wait_seconds
                     ),
                     requires_confirmation=self._checkbox_value(row, 8),
                 )
@@ -1001,7 +1059,7 @@ class WorkflowStepTable(QTableWidget):
                     float(
                         stored.wait_seconds
                         if stored is not None and stored.wait_seconds is not None
-                        else DEFAULT_ACTION_WAIT_SECONDS
+                        else self._default_action_wait_seconds
                     )
                 )
         stored = self._row_model(row)
@@ -1033,6 +1091,11 @@ class WorkflowStepTable(QTableWidget):
             step,
             context=self._increment_context,
             preview_counter=self._preview_counter,
+            default_action_wait_seconds=self._default_action_wait_seconds,
+            default_ocr_timeout_seconds=self._default_ocr_timeout_seconds,
+            default_ocr_poll_interval_seconds=(
+                self._default_ocr_poll_interval_seconds
+            ),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1070,19 +1133,18 @@ class WorkflowStepTable(QTableWidget):
             wait_seconds=(
                 float(wait_seconds)
                 if wait_seconds is not None
-                else DEFAULT_ACTION_WAIT_SECONDS
+                else self._default_action_wait_seconds
             ),
             requires_confirmation=self._checkbox_value(row, 8),
         )
 
-    @staticmethod
-    def _step_for_action(step: StepRow, action: str) -> StepRow:
+    def _step_for_action(self, step: StepRow, action: str) -> StepRow:
         """切换动作时清理不适用参数并生成默认配置。"""
 
         wait_seconds = (
             step.wait_seconds
             if step.action != "wait" and action != "wait"
-            else DEFAULT_ACTION_WAIT_SECONDS
+            else self._default_action_wait_seconds
         )
         updated = StepRow(
             step_id=step.step_id,
@@ -1094,8 +1156,8 @@ class WorkflowStepTable(QTableWidget):
         )
         if action == "ocr":
             updated.match_mode = "not_empty"
-            updated.timeout_seconds = DEFAULT_OCR_TIMEOUT_SECONDS
-            updated.poll_interval_seconds = DEFAULT_OCR_POLL_INTERVAL_SECONDS
+            updated.timeout_seconds = self._default_ocr_timeout_seconds
+            updated.poll_interval_seconds = self._default_ocr_poll_interval_seconds
         return updated
 
     def _set_row_model(self, row: int, step: StepRow) -> None:
@@ -1119,7 +1181,14 @@ class WorkflowStepTable(QTableWidget):
     def _set_parameter_summary(self, row: int, step: StepRow) -> None:
         """刷新步骤参数摘要。"""
 
-        summary = _parameter_summary(step)
+        summary = _parameter_summary(
+            step,
+            default_action_wait_seconds=self._default_action_wait_seconds,
+            default_ocr_timeout_seconds=self._default_ocr_timeout_seconds,
+            default_ocr_poll_interval_seconds=(
+                self._default_ocr_poll_interval_seconds
+            ),
+        )
         item = self.item(row, 4) or QTableWidgetItem()
         item.setText(summary)
         item.setToolTip(summary)
@@ -1134,6 +1203,7 @@ class WorkflowStepTable(QTableWidget):
             return
         rows = self.rows()
         rows[row], rows[target] = rows[target], rows[row]
+        rows = _renumber_steps(rows)
         self.set_steps(
             rows,
             self._anchor_ids,
@@ -1146,9 +1216,16 @@ class WorkflowStepTable(QTableWidget):
         """删除行。"""
 
         if 0 <= row < self.rowCount():
-            self.removeRow(row)
-            self._rebind_buttons()
-            self.rows_changed.emit()
+            rows = self.rows()
+            rows.pop(row)
+            self.set_steps(
+                _renumber_steps(rows),
+                self._anchor_ids,
+                self._view_ids,
+                anchors_by_view=self._anchors_by_view,
+            )
+            if self.rowCount() > 0:
+                self.selectRow(min(row, self.rowCount() - 1))
 
     def _rebind_buttons(self) -> None:
         """重新绑定行按钮。"""

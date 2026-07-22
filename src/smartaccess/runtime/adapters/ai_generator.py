@@ -23,6 +23,7 @@ except Exception:  # noqa: BLE001
 from smartaccess.shared.config.settings import DEFAULT_AI_USER_AGENT
 from smartaccess.shared.contracts.anchors import AnchorsContract
 from smartaccess.shared.contracts.workflow import (
+    DEFAULT_ACTION_WAIT_SECONDS,
     DEFAULT_OCR_POLL_INTERVAL_SECONDS,
     DEFAULT_OCR_TIMEOUT_SECONDS,
     WorkflowContract,
@@ -49,6 +50,10 @@ class SmartAccessAiGenerator:
         timeout_seconds: float = 30.0,
         user_agent: str | None = None,
         enable_thinking: bool = False,
+        default_action_wait_seconds: float = DEFAULT_ACTION_WAIT_SECONDS,
+        default_ocr_timeout_seconds: float = DEFAULT_OCR_TIMEOUT_SECONDS,
+        default_ocr_poll_interval_seconds: float = DEFAULT_OCR_POLL_INTERVAL_SECONDS,
+        default_precheck_image_threshold: float = 0.8,
     ) -> None:
         """初始化 AI 生成器。
 
@@ -60,6 +65,10 @@ class SmartAccessAiGenerator:
             timeout_seconds: 请求超时时间。
             user_agent: 可选 User-Agent。
             enable_thinking: 是否启用模型思考模式。
+            default_action_wait_seconds: 默认动作后等待秒数。
+            default_ocr_timeout_seconds: 默认 OCR 超时秒数。
+            default_ocr_poll_interval_seconds: 默认 OCR 轮询间隔秒数。
+            default_precheck_image_threshold: 默认执行前图像相似度阈值。
         """
 
         self._api_key = api_key
@@ -73,6 +82,10 @@ class SmartAccessAiGenerator:
             else (user_agent or DEFAULT_AI_USER_AGENT)
         )
         self._enable_thinking = enable_thinking
+        self._default_action_wait_seconds = default_action_wait_seconds
+        self._default_ocr_timeout_seconds = default_ocr_timeout_seconds
+        self._default_ocr_poll_interval_seconds = default_ocr_poll_interval_seconds
+        self._default_precheck_image_threshold = default_precheck_image_threshold
         self.last_error = ""
         self.last_reasoning = ""
 
@@ -117,7 +130,14 @@ class SmartAccessAiGenerator:
                 else self._timeout
             )
             content = self._send(payload, timeout_seconds=timeout_seconds)
-            workflow_data = self._normalize_workflow(self._extract_structured(content))
+            workflow_data = self._normalize_workflow(
+                self._extract_structured(content),
+                default_action_wait_seconds=self._default_action_wait_seconds,
+                default_ocr_timeout_seconds=self._default_ocr_timeout_seconds,
+                default_ocr_poll_interval_seconds=(
+                    self._default_ocr_poll_interval_seconds
+                ),
+            )
             self.last_reasoning = self._workflow_reasoning(workflow_data, prompt, context)
             return WorkflowContract.model_validate(workflow_data)
         except Exception as exc:  # noqa: BLE001
@@ -156,6 +176,9 @@ class SmartAccessAiGenerator:
             profile_data = self._normalize_anchor_profile(
                 self._extract_structured(content),
                 context,
+                default_precheck_image_threshold=(
+                    self._default_precheck_image_threshold
+                ),
             )
             self.last_reasoning = self._instrument_reasoning(profile_data, prompt, context)
             return AnchorsContract.model_validate(profile_data)
@@ -262,11 +285,14 @@ class SmartAccessAiGenerator:
             '"preconditions":[{"description":"..."}],'
             '"steps":[{"id":"step_1",'
             '"action":"click","view_id":"main","anchor_id":"anchor_id","value":null,'
-            '"wait_seconds":1.0,"match_mode":"none","requires_confirmation":false},'
+            f'"wait_seconds":{self._default_action_wait_seconds:g},'
+            '"match_mode":"none","requires_confirmation":false},'
             '{"id":"step_2","action":"ocr","view_id":"main",'
             '"anchor_id":"status_anchor","match_mode":"contains",'
-            '"expected_text":"ready","timeout_seconds":10.0,'
-            '"poll_interval_seconds":0.5,"wait_seconds":1.0},'
+            '"expected_text":"ready",'
+            f'"timeout_seconds":{self._default_ocr_timeout_seconds:g},'
+            f'"poll_interval_seconds":{self._default_ocr_poll_interval_seconds:g},'
+            f'"wait_seconds":{self._default_action_wait_seconds:g}}},'
             '{"id":"step_3","action":"type","view_id":"main",'
             '"anchor_id":"anchor_id","value":null,"input_mode":"incrementing",'
             '"increment_rule":{"pattern":"{device_id}-{date}-{counter:03d}",'
@@ -280,11 +306,13 @@ class SmartAccessAiGenerator:
             "Allowed actions: click, type, hotkey, press_enter, ocr, wait.\n"
             "For action=ocr, the anchor's action_region is the OCR scan area; "
             "set match_mode and expected_text for OCR conditions. "
-            "timeout_seconds defaults to 10.0 seconds and poll_interval_seconds "
-            "defaults to 0.5 seconds.\n"
+            f"timeout_seconds defaults to {self._default_ocr_timeout_seconds:g} "
+            "seconds and poll_interval_seconds defaults to "
+            f"{self._default_ocr_poll_interval_seconds:g} seconds.\n"
             "For action=wait, omit anchor_id and set wait_seconds.\n"
             "For all non-wait actions, wait_seconds is the delay after the step succeeds; "
-            "default to 1.0 seconds, and 0 means no delay.\n"
+            f"default to {self._default_action_wait_seconds:g} seconds, and 0 means "
+            "no delay.\n"
             "Never place OCR match fields on click, type, hotkey, press_enter, or wait steps. "
             "Insert a separate action=ocr step immediately after the action that needs checking.\n"
             "Use requires_confirmation=true only when that exact step must ask for human "
@@ -324,7 +352,8 @@ class SmartAccessAiGenerator:
             '"precheck":{"mode":"image",'
             '"region":{"pixel":{"x":0,"y":0,"width":0,"height":0},'
             '"normalized":{"x":0,"y":0,"width":0,"height":0}},'
-            '"image_threshold":0.8}}]}]}\n'
+            f'"image_threshold":{self._default_precheck_image_threshold:g}'
+            '}}]}]}\n'
             "Anchors do not contain actions or manual-confirm settings.\n"
             "Each anchor has exactly one action_region used by workflow actions.\n"
             "precheck is optional. Allowed precheck modes: image, text, image_text.\n"
@@ -518,8 +547,24 @@ class SmartAccessAiGenerator:
         return stripped
 
     @staticmethod
-    def _normalize_workflow(workflow_data: dict[str, Any]) -> dict[str, Any]:
-        """归一化工作流草稿字段。"""
+    def _normalize_workflow(
+        workflow_data: dict[str, Any],
+        *,
+        default_action_wait_seconds: float = DEFAULT_ACTION_WAIT_SECONDS,
+        default_ocr_timeout_seconds: float = DEFAULT_OCR_TIMEOUT_SECONDS,
+        default_ocr_poll_interval_seconds: float = DEFAULT_OCR_POLL_INTERVAL_SECONDS,
+    ) -> dict[str, Any]:
+        """归一化工作流草稿字段。
+
+        Args:
+            workflow_data: AI 返回的工作流数据。
+            default_action_wait_seconds: 默认动作后等待秒数。
+            default_ocr_timeout_seconds: 默认 OCR 超时秒数。
+            default_ocr_poll_interval_seconds: 默认 OCR 轮询间隔秒数。
+
+        Returns:
+            标准化后的工作流数据。
+        """
 
         workflow_data.pop("roi_bindings", None)
         workflow_data.pop("outputs", None)
@@ -544,16 +589,16 @@ class SmartAccessAiGenerator:
                 if step.get("wait_seconds") is None and step.get("value") is not None:
                     step["wait_seconds"] = SmartAccessAiGenerator._seconds(step["value"])
                 if step.get("wait_seconds") is None:
-                    step["wait_seconds"] = 1.0
+                    step["wait_seconds"] = default_action_wait_seconds
             if action == "ocr":
                 if step.get("match_mode") in (None, "none"):
                     step["match_mode"] = "not_empty"
                 if step.get("timeout_seconds") is None:
-                    step["timeout_seconds"] = DEFAULT_OCR_TIMEOUT_SECONDS
+                    step["timeout_seconds"] = default_ocr_timeout_seconds
                 if step.get("poll_interval_seconds") is None:
-                    step[
-                        "poll_interval_seconds"
-                    ] = DEFAULT_OCR_POLL_INTERVAL_SECONDS
+                    step["poll_interval_seconds"] = (
+                        default_ocr_poll_interval_seconds
+                    )
                 step.pop("ignore_case", None)
                 step.pop("normalize_text", None)
                 step.pop("min_confidence", None)
@@ -567,7 +612,7 @@ class SmartAccessAiGenerator:
                 step.pop("ignore_case", None)
                 step.pop("normalize_text", None)
             if action != "wait" and step.get("wait_seconds") is None:
-                step["wait_seconds"] = 1.0
+                step["wait_seconds"] = default_action_wait_seconds
             for field in (
                 "wait_seconds",
                 "timeout_seconds",
@@ -603,8 +648,19 @@ class SmartAccessAiGenerator:
     def _normalize_anchor_profile(
         raw: dict[str, Any],
         context: dict[str, Any],
+        *,
+        default_precheck_image_threshold: float = 0.8,
     ) -> dict[str, Any]:
-        """归一化锚点配置草稿。"""
+        """归一化锚点配置草稿。
+
+        Args:
+            raw: AI 返回的锚点配置数据。
+            context: AI 辅助接入上下文。
+            default_precheck_image_threshold: 默认图像相似度阈值。
+
+        Returns:
+            标准化后的锚点配置数据。
+        """
 
         data = dict(raw)
         window_signature = dict(data.get("window_signature") or {})
@@ -648,7 +704,14 @@ class SmartAccessAiGenerator:
                 view_width = view_size.get("width") or width
                 view_height = view_size.get("height") or height
                 view_anchors = [
-                    SmartAccessAiGenerator._normalize_anchor(anchor, view_width, view_height)
+                    SmartAccessAiGenerator._normalize_anchor(
+                        anchor,
+                        view_width,
+                        view_height,
+                        default_precheck_image_threshold=(
+                            default_precheck_image_threshold
+                        ),
+                    )
                     for anchor in (view.get("anchors") or [])
                     if isinstance(anchor, dict)
                 ]
@@ -673,7 +736,14 @@ class SmartAccessAiGenerator:
             for anchor in data.get("anchors") or []:
                 if isinstance(anchor, dict):
                     normalized["anchors"].append(
-                        SmartAccessAiGenerator._normalize_anchor(anchor, width, height)
+                        SmartAccessAiGenerator._normalize_anchor(
+                            anchor,
+                            width,
+                            height,
+                            default_precheck_image_threshold=(
+                                default_precheck_image_threshold
+                            ),
+                        )
                     )
         if not normalized["views"]:
             normalized["views"].append(
@@ -692,8 +762,20 @@ class SmartAccessAiGenerator:
         anchor: dict[str, Any],
         width: int | float,
         height: int | float,
+        *,
+        default_precheck_image_threshold: float = 0.8,
     ) -> dict[str, Any]:
-        """归一化单个锚点草稿。"""
+        """归一化单个锚点草稿。
+
+        Args:
+            anchor: AI 返回的单个锚点数据。
+            width: 校准截图宽度。
+            height: 校准截图高度。
+            default_precheck_image_threshold: 默认图像相似度阈值。
+
+        Returns:
+            标准化后的锚点数据。
+        """
 
         action_region = anchor.get("action_region")
         if not action_region:
@@ -726,7 +808,9 @@ class SmartAccessAiGenerator:
                         ),
                     },
                     "image_threshold": float(
-                        precheck.get("image_threshold") or 0.8
+                        precheck.get("image_threshold")
+                        if precheck.get("image_threshold") is not None
+                        else default_precheck_image_threshold
                     ),
                 }
         return {

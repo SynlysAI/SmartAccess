@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QSize, Qt
+from PyQt6.QtGui import QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -25,6 +26,7 @@ from smartaccess.desktop.pages.calibration_page import CalibrationPage
 from smartaccess.desktop.pages.data_collection_page import DataCollectionPage
 from smartaccess.desktop.pages.dashboard_page import DashboardPage
 from smartaccess.desktop.pages.monitoring_page import MonitoringPage
+from smartaccess.desktop.pages.settings_page import SystemSettingsPage
 from smartaccess.desktop.pages.template_page import TemplatePage
 from smartaccess.desktop.pages.workflow_page import WorkflowPage
 from smartaccess.shared.config.settings import AppSettings
@@ -38,6 +40,7 @@ _NAV_ITEMS = [
     ("模板/平台", "模板发布、回滚和平台同步"),
     ("运行概览", "设备、模板、运行和异常概览"),
     ("数据采集", "配置本地目录监听并可靠上传至 SmartDataHub"),
+    ("系统设置", "配置 OCR、AI、平台、默认参数和消息服务"),
 ]
 
 
@@ -127,6 +130,8 @@ class MainWindow(QMainWindow):
                 self._stack.addWidget(TemplatePage(self._facade))
             elif title == "运行概览" and self._facade is not None:
                 self._stack.addWidget(DashboardPage(self._facade))
+            elif title == "系统设置" and self._facade is not None:
+                self._stack.addWidget(SystemSettingsPage(self._facade))
             else:
                 self._stack.addWidget(self._placeholder_page(title, hint))
         self._nav.currentRowChanged.connect(self._on_nav_changed)
@@ -208,10 +213,26 @@ class MainWindow(QMainWindow):
         ]
         for index, (title, hint) in enumerate(_NAV_ITEMS):
             item = QListWidgetItem(title)
-            item.setIcon(self.style().standardIcon(icons[index]))
+            if title == "系统设置":
+                item.setIcon(self._settings_icon())
+            else:
+                item.setIcon(self.style().standardIcon(icons[index]))
             item.setToolTip(hint)
             self._nav.addItem(item)
         return self._nav
+
+    def _settings_icon(self) -> QIcon:
+        """创建与导航栏尺寸一致的齿轮设置图标。"""
+
+        pixmap = QPixmap(18, 18)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setPen(self.palette().text().color())
+        painter.setFont(QFont("Segoe UI Symbol", 14))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "⚙")
+        painter.end()
+        return QIcon(pixmap)
 
     def _build_right_panel(self) -> QWidget:
         """构建右侧系统状态栏。
@@ -310,7 +331,7 @@ class MainWindow(QMainWindow):
             f"执行端: {self._settings.device_id or '未配置'}\n"
             f"登录用户: {self._settings.speclabos_username or '未登录'}\n"
             f"自动化: {status.automation_provider}\n"
-            f"视觉: {status.vision_provider}\n"
+            f"OCR: {status.ocr_mode}\n"
             f"平台: {status.platform_provider}\n"
             f"AI 文字: {status.ai_text_provider}\n"
             f"AI 多模态: {status.ai_vision_provider}\n"

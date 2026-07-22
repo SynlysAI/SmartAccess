@@ -396,6 +396,14 @@ def _build_text_ai_generator(settings: AppSettings) -> SmartAccessAiGenerator | 
         provider=provider,
         timeout_seconds=settings.ai_text_timeout_seconds,
         user_agent=settings.ai_user_agent,
+        default_action_wait_seconds=settings.default_action_wait_seconds,
+        default_ocr_timeout_seconds=settings.default_ocr_timeout_seconds,
+        default_ocr_poll_interval_seconds=(
+            settings.default_ocr_poll_interval_seconds
+        ),
+        default_precheck_image_threshold=(
+            settings.default_precheck_image_threshold
+        ),
     )
 
 
@@ -425,4 +433,12 @@ def _build_vision_ai_generator(settings: AppSettings) -> SmartAccessAiGenerator 
         timeout_seconds=settings.ai_vision_timeout_seconds,
         user_agent=settings.ai_user_agent,
         enable_thinking=settings.ai_vision_enable_thinking,
+        default_action_wait_seconds=settings.default_action_wait_seconds,
+        default_ocr_timeout_seconds=settings.default_ocr_timeout_seconds,
+        default_ocr_poll_interval_seconds=(
+            settings.default_ocr_poll_interval_seconds
+        ),
+        default_precheck_image_threshold=(
+            settings.default_precheck_image_threshold
+        ),
     )

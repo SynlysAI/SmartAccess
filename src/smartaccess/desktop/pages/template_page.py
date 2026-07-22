@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -18,7 +17,10 @@ from PyQt6.QtWidgets import (
 )
 
 from smartaccess.desktop.widgets.cards import create_card
-from smartaccess.desktop.widgets.table_style import configure_data_table
+from smartaccess.desktop.widgets.table_style import (
+    NoWheelComboBox,
+    configure_data_table,
+)
 from smartaccess.desktop.viewmodels.template_vm import (
     DEFAULT_TEMPLATE_VERSION,
     TemplateViewModel,
@@ -76,12 +78,12 @@ class TemplatePage(QWidget):
         row.addWidget(title)
         row.addStretch(1)
         row.addWidget(QLabel("设备:"))
-        self._anchor_combo = QComboBox()
+        self._anchor_combo = NoWheelComboBox()
         self._anchor_combo.setMinimumWidth(180)
         self._anchor_combo.currentIndexChanged.connect(self._reload_workflows)
         row.addWidget(self._anchor_combo)
         row.addWidget(QLabel("工作流:"))
-        self._workflow_combo = QComboBox()
+        self._workflow_combo = NoWheelComboBox()
         self._workflow_combo.setMinimumWidth(280)
         row.addWidget(self._workflow_combo)
         row.addWidget(QLabel("模板ID:"))
@@ -114,7 +116,7 @@ class TemplatePage(QWidget):
         self._query = QLineEdit()
         self._query.setPlaceholderText("按模板、版本、设备、错误搜索")
         self._query.textChanged.connect(self._refresh)
-        self._status = QComboBox()
+        self._status = NoWheelComboBox()
         for label, value in (
             ("全部", ""),
             ("Draft", "draft"),

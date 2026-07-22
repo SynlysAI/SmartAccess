@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -36,6 +35,7 @@ from smartaccess.data_collection.models import TerminalFailureItem
 from smartaccess.desktop.viewmodels.data_collection_vm import DataCollectionViewModel
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.widgets.cards import create_card
+from smartaccess.desktop.widgets.spin_box import FocusWheelSpinBox
 from smartaccess.desktop.widgets.table_style import configure_data_table
 from smartaccess.runtime.application.facade import RuntimeFacade
 
@@ -475,7 +475,12 @@ class DataCollectionPage(QWidget):
         self._refresh_watcher_table()
 
     @staticmethod
-    def _create_spin_box(minimum: int, maximum: int, value: int, suffix: str) -> QSpinBox:
+    def _create_spin_box(
+        minimum: int,
+        maximum: int,
+        value: int,
+        suffix: str,
+    ) -> FocusWheelSpinBox:
         """创建统一样式的整数输入框。
 
         Args:
@@ -488,7 +493,7 @@ class DataCollectionPage(QWidget):
             已配置的整数输入框。
         """
 
-        spin_box = QSpinBox()
+        spin_box = FocusWheelSpinBox()
         spin_box.setRange(minimum, maximum)
         spin_box.setValue(value)
         spin_box.setSuffix(suffix)

@@ -27,6 +27,7 @@ from smartaccess.desktop.widgets.ai_dialogs import AiBusyOverlay, AiPromptDialog
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.widgets.cards import create_card
 from smartaccess.desktop.widgets.roi_canvas import RoiCanvas
+from smartaccess.desktop.widgets.table_style import NoWheelComboBox
 from smartaccess.runtime.adapters.window_scanner import (
     capture_error_reason,
     capture_metadata,
@@ -54,6 +55,7 @@ class CalibrationPage(QWidget):
         """
 
         super().__init__(parent)
+        self._facade = facade
         self._vm = CalibrationViewModel(facade, self)
         self._windows_data: list[dict] = []
         self._selected_hwnd: int | None = None
@@ -100,7 +102,7 @@ class CalibrationPage(QWidget):
         self._instruments.itemDoubleClicked.connect(self._load_instrument)
         self._instruments.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._instruments.customContextMenuRequested.connect(self._instrument_menu)
-        self._views.itemSelectionChanged.connect(self._on_view_selected)
+        self._views.currentIndexChanged.connect(self._on_view_selected)
 
         self._discover()
         self._refresh_instruments()
@@ -144,33 +146,11 @@ class CalibrationPage(QWidget):
         layout.addLayout(form)
         self._update_device_id_hint()
 
-        view_title = QLabel("视图")
-        view_title.setObjectName("PageHint")
-        layout.addWidget(view_title)
-        self._views = QListWidget()
-        self._views.setMaximumHeight(92)
-        layout.addWidget(self._views)
-        view_row = QHBoxLayout()
-        add_view_btn = QPushButton("新增视图")
-        add_view_btn.setObjectName("Secondary")
-        add_view_btn.clicked.connect(self._add_view)
-        view_row.addWidget(add_view_btn)
-        update_view_btn = QPushButton("保存当前视图")
-        update_view_btn.setObjectName("Secondary")
-        update_view_btn.clicked.connect(self._store_current_view)
-        view_row.addWidget(update_view_btn)
-        layout.addLayout(view_row)
-        delete_view_btn = QPushButton("删除视图")
-        delete_view_btn.setObjectName("Secondary")
-        delete_view_btn.clicked.connect(self._delete_current_view)
-        layout.addWidget(delete_view_btn)
-        self._refresh_views()
-
         window_title = QLabel("窗口")
         window_title.setObjectName("PageHint")
         layout.addWidget(window_title)
         self._windows = QListWidget()
-        layout.addWidget(self._windows, 1)
+        layout.addWidget(self._windows, 2)
         scan_row = QHBoxLayout()
         scan_btn = QPushButton("扫描")
         scan_btn.setObjectName("Secondary")
@@ -194,9 +174,28 @@ class CalibrationPage(QWidget):
 
         panel, layout = create_card(margins=(10, 10, 10, 10), spacing=8)
         panel.setMinimumSize(100, 100)
+        view_row = QHBoxLayout()
+        view_row.addWidget(QLabel("视图:"))
+        self._views = NoWheelComboBox()
+        self._views.setMinimumWidth(220)
+        view_row.addWidget(self._views, 1)
+        add_view_btn = QPushButton("新增视图")
+        add_view_btn.setObjectName("Secondary")
+        add_view_btn.clicked.connect(self._add_view)
+        view_row.addWidget(add_view_btn)
+        update_view_btn = QPushButton("保存当前视图")
+        update_view_btn.setObjectName("Secondary")
+        update_view_btn.clicked.connect(lambda: self._store_current_view())
+        view_row.addWidget(update_view_btn)
+        self._delete_view_btn = QPushButton("删除视图")
+        self._delete_view_btn.setObjectName("Danger")
+        self._delete_view_btn.clicked.connect(self._delete_current_view)
+        view_row.addWidget(self._delete_view_btn)
+        layout.addLayout(view_row)
         self._canvas = RoiCanvas()
         self._canvas.setMinimumSize(80, 80)
         layout.addWidget(self._canvas, 1)
+        self._refresh_views()
         return panel
 
     def _build_right_panel(self) -> QWidget:
@@ -398,7 +397,15 @@ class CalibrationPage(QWidget):
             QMessageBox.warning(self, "锚点重复", f"ROI 已存在：{name}")
             return
         self._canvas.add_roi(name)
-        self._table.add_anchor(AnchorRow(anchor_id=name, target_roi=name))
+        self._table.add_anchor(
+            AnchorRow(
+                anchor_id=name,
+                target_roi=name,
+                image_threshold=(
+                    self._facade.settings().default_precheck_image_threshold
+                ),
+            )
+        )
         self._refresh_all_roi_labels()
 
     def _delete_anchor_row(self, row: int) -> None:
@@ -537,6 +544,7 @@ class CalibrationPage(QWidget):
             QMessageBox.warning(self, "锚点未完成", str(exc))
             return
         self._store_current_view(anchors=current_anchors)
+        self._apply_default_image_thresholds()
         anchors = [
             anchor
             for state in self._view_states.values()
@@ -745,18 +753,18 @@ class CalibrationPage(QWidget):
         self._device_id.style().polish(self._device_id)
 
     def _refresh_views(self) -> None:
-        """刷新设备视图列表。"""
+        """刷新设备视图下拉框。"""
 
         current = self._current_view_id
         self._views.blockSignals(True)
         self._views.clear()
         for view_id in self._view_states:
-            item = QListWidgetItem(view_id)
-            item.setData(Qt.ItemDataRole.UserRole, view_id)
-            self._views.addItem(item)
-            if view_id == current:
-                self._views.setCurrentItem(item)
+            self._views.addItem(view_id, view_id)
+        index = self._views.findData(current)
+        if index >= 0:
+            self._views.setCurrentIndex(index)
         self._views.blockSignals(False)
+        self._delete_view_btn.setEnabled(current != DEFAULT_VIEW_ID)
 
     def _add_view(self) -> None:
         """新增一个被控软件视图。"""
@@ -786,19 +794,21 @@ class CalibrationPage(QWidget):
         self._latest_capture_metadata = {}
         self._refresh_views()
 
-    def _on_view_selected(self) -> None:
-        """视图切换时保存当前视图并加载目标视图。"""
+    def _on_view_selected(self, _index: int) -> None:
+        """视图切换时保存当前视图并加载目标视图。
 
-        item = self._views.currentItem()
-        if item is None:
-            return
-        view_id = item.data(Qt.ItemDataRole.UserRole)
+        Args:
+            _index: 当前下拉选项索引。
+        """
+
+        view_id = self._views.currentData()
         if not view_id or str(view_id) == self._current_view_id:
             return
         old_view_id = self._current_view_id
         self._store_current_view(view_id=old_view_id)
         self._current_view_id = str(view_id)
         self._load_view_state(self._current_view_id)
+        self._delete_view_btn.setEnabled(self._current_view_id != DEFAULT_VIEW_ID)
 
     def _delete_current_view(self) -> None:
         """删除当前非 main 视图并切回 main。"""
@@ -1058,7 +1068,9 @@ class CalibrationPage(QWidget):
                         "pixel": validation_rect,
                         "normalized": validation_norm,
                     },
-                    "image_threshold": 0.8,
+                    "image_threshold": (
+                        self._facade.settings().default_precheck_image_threshold
+                    ),
                     "ignore_case": True,
                     "normalize_text": True,
                 }
@@ -1087,8 +1099,17 @@ class CalibrationPage(QWidget):
         validation_name = ""
         precheck = anchor.get("precheck")
         precheck_mode = "none"
+        image_threshold = (
+            self._facade.settings().default_precheck_image_threshold
+        )
         if isinstance(precheck, dict):
             precheck_mode = str(precheck.get("mode") or "none")
+            threshold_value = precheck.get("image_threshold")
+            image_threshold = float(
+                threshold_value
+                if threshold_value is not None
+                else self._facade.settings().default_precheck_image_threshold
+            )
             validation_region = precheck.get("region") or {}
             validation = validation_region.get("pixel") or {}
             validation_name = f"{anchor_id}_validation"
@@ -1105,6 +1126,7 @@ class CalibrationPage(QWidget):
                 target_roi=anchor_id,
                 precheck_mode=precheck_mode,
                 validation_roi=validation_name,
+                image_threshold=image_threshold,
             )
         )
 
@@ -1226,6 +1248,9 @@ class CalibrationPage(QWidget):
             )
             validation_name = ""
             precheck_mode = "none"
+            image_threshold = (
+                self._facade.settings().default_precheck_image_threshold
+            )
             if anchor.precheck is not None:
                 precheck_mode = anchor.precheck.mode
                 validation_name = f"{anchor.id}_validation"
@@ -1243,9 +1268,24 @@ class CalibrationPage(QWidget):
                     target_roi=anchor.id,
                     precheck_mode=precheck_mode,
                     validation_roi=validation_name,
+                    image_threshold=image_threshold,
                 )
             )
         self._refresh_all_roi_labels()
+
+    def _apply_default_image_thresholds(self) -> None:
+        """将当前系统图像阈值应用到所有待保存视图的执行前校验。"""
+
+        threshold = self._facade.settings().default_precheck_image_threshold
+        for state in self._view_states.values():
+            anchors = state.get("anchors") or []
+            for anchor in anchors:
+                if not isinstance(anchor, dict):
+                    continue
+                precheck = anchor.get("precheck")
+                if not isinstance(precheck, dict):
+                    continue
+                precheck["image_threshold"] = threshold
 
     def _new_profile(self) -> None:
         """清空当前设备编辑状态。"""
