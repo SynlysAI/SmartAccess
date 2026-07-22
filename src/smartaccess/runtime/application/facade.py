@@ -41,6 +41,9 @@ from smartaccess.runtime.application.workspace_service import (
     DashboardProjection,
     WorkspaceService,
 )
+from smartaccess.runtime.application.workflow_input_resolver import (
+    resolve_runtime_input_placeholders,
+)
 from smartaccess.runtime.domain.run_session import RunSession, RunStep
 from smartaccess.runtime.orchestration import Orchestrator
 from smartaccess.shared.config.settings import AppSettings
@@ -628,12 +631,14 @@ class RuntimeFacade:
         workflow: WorkflowContract,
         *,
         background: bool = True,
+        runtime_inputs: dict[str, str] | None = None,
     ) -> RunSession:
         """启动工作流运行。
 
         Args:
             workflow: 待运行工作流。
             background: 是否在后台线程运行。
+            runtime_inputs: 运行前填写的输入步骤值。
 
         Returns:
             创建的运行会话。
@@ -643,18 +648,22 @@ class RuntimeFacade:
             raise RuntimeError("运行编排器未配置")
         self._logger.info("启动工作流运行: workflow_id=%s, 步骤数=%d, 后台=%s",
                           workflow.metadata.workflow_id, len(workflow.steps), background)
-        profile = self.get_instrument(workflow.metadata.anchor_profile)
+        runtime_workflow = resolve_runtime_input_placeholders(
+            workflow,
+            runtime_inputs,
+        )
+        profile = self.get_instrument(runtime_workflow.metadata.anchor_profile)
         session = self._run_sessions.create_session(
-            workflow.metadata.workflow_id,
+            runtime_workflow.metadata.workflow_id,
             steps=[
                 RunStep(step_id=step.id, action=step.action)
-                for step in workflow.steps
+                for step in runtime_workflow.steps
             ],
-            device_id=workflow.metadata.anchor_profile,
-            author=workflow.metadata.author,
-            workflow_name=workflow.metadata.workflow_id,
-            template_id=workflow.metadata.template_id,
-            template_version=workflow.metadata.template_version,
+            device_id=runtime_workflow.metadata.anchor_profile,
+            author=runtime_workflow.metadata.author,
+            workflow_name=runtime_workflow.metadata.workflow_id,
+            template_id=runtime_workflow.metadata.template_id,
+            template_version=runtime_workflow.metadata.template_version,
         )
 
         def _run() -> None:
@@ -663,7 +672,7 @@ class RuntimeFacade:
             # 启动前固定等待 1 秒，避免目标窗口弹出时与用户当前鼠标键盘操作冲突造成误触
             time.sleep(1.0)
             self._orchestrator.run(
-                workflow=workflow,
+                workflow=runtime_workflow,
                 profile=profile,
                 session=session,
             )

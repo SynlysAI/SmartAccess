@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from smartaccess.desktop.viewmodels.monitoring_vm import MonitoringViewModel
 from smartaccess.desktop.widgets.log_view import LogView
 from smartaccess.desktop.widgets import rich_text
+from smartaccess.desktop.widgets.runtime_input_dialog import RuntimeInputDialog
 from smartaccess.desktop.widgets.table_style import NoWheelComboBox
 from smartaccess.desktop.widgets.timeline import TimelineTable
 from smartaccess.runtime.application.facade import RuntimeFacade
@@ -241,9 +242,30 @@ class MonitoringPage(QWidget):
             QMessageBox.warning(self, "无法启动", "请先在工作流设计页保存工作流")
             return
         try:
-            self._vm.start_run(str(workflow_id))
+            runtime_inputs = self._collect_runtime_inputs(str(workflow_id))
+            if runtime_inputs is None:
+                return
+            self._vm.start_run(str(workflow_id), runtime_inputs)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "启动失败", str(exc))
+
+    def _collect_runtime_inputs(self, workflow_id: str) -> dict[str, str] | None:
+        """收集当前工作流运行前需要人工填写的输入。
+
+        Args:
+            workflow_id: 当前选择的工作流 ID。
+
+        Returns:
+            输入步骤值；用户取消时返回 None。
+        """
+
+        fields = self._vm.runtime_input_fields(workflow_id)
+        if not fields:
+            return {}
+        dialog = RuntimeInputDialog(fields, self)
+        if dialog.exec() != RuntimeInputDialog.DialogCode.Accepted:
+            return None
+        return dialog.values()
 
     def _stop(self) -> None:
         """请求停止当前运行。"""

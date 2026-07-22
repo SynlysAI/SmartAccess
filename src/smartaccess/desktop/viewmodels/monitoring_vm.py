@@ -10,6 +10,10 @@ from PyQt6.QtCore import pyqtSignal
 from smartaccess.desktop.viewmodels.base import EventRelay, ViewModel
 from smartaccess.desktop.widgets import rich_text
 from smartaccess.runtime.domain.run_session import RunSession
+from smartaccess.runtime.application.workflow_input_resolver import (
+    RuntimeInputField,
+    runtime_input_fields,
+)
 from smartaccess.shared.contracts.workflow import WorkflowContract
 from smartaccess.shared.events.bus import RuntimeEvent
 
@@ -81,11 +85,31 @@ class MonitoringViewModel(ViewModel):
 
         return self._facade.recent_sessions(50)
 
-    def start_run(self, workflow_id: str) -> RunSession:
+    def runtime_input_fields(self, workflow_id: str) -> list[RuntimeInputField]:
+        """返回指定工作流在运行前需要人工填写的字段。
+
+        Args:
+            workflow_id: 工作流 ID。
+
+        Returns:
+            运行前人工输入字段列表。
+        """
+
+        workflow = self._facade.get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"工作流不存在: {workflow_id}")
+        return runtime_input_fields(workflow)
+
+    def start_run(
+        self,
+        workflow_id: str,
+        runtime_inputs: dict[str, str] | None = None,
+    ) -> RunSession:
         """启动指定工作流。
 
         Args:
             workflow_id: 工作流 ID。
+            runtime_inputs: 运行前填写的输入步骤值。
 
         Returns:
             新建运行会话。
@@ -94,7 +118,11 @@ class MonitoringViewModel(ViewModel):
         workflow = self._facade.get_workflow(workflow_id)
         if workflow is None:
             raise ValueError(f"工作流不存在: {workflow_id}")
-        session = self._facade.start_run(workflow, background=True)
+        session = self._facade.start_run(
+            workflow,
+            background=True,
+            runtime_inputs=runtime_inputs,
+        )
         self._active_session_id = session.session_id
         self.changed.emit()
         return session
@@ -244,7 +272,12 @@ class MonitoringViewModel(ViewModel):
             if action:
                 message = f"{message} / {action}"
             if (
-                event.name.value in {"run.step.observed", "run.failed"}
+                event.name.value
+                in {
+                    "run.step.observed",
+                    "run.step.ocr.retrying",
+                    "run.failed",
+                }
                 and _has_ocr_payload(payload)
             ):
                 message = MonitoringViewModel._append_ocr_detail(message, payload)
@@ -309,7 +342,8 @@ class MonitoringViewModel(ViewModel):
         actual_text = payload.get("actual_text") or "-"
         return (
             f"{message} / OCR规则: {rule} / OCR实际: {actual_text} / "
-            f"匹配: {payload.get('matched')} / 尝试: {payload.get('attempts')}"
+            f"匹配: {payload.get('matched')} / 尝试: {payload.get('attempts')} / "
+            f"耗时: {float(payload.get('elapsed_seconds') or 0):.1f}s"
         )
 
     @staticmethod
