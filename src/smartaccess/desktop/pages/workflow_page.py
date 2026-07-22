@@ -51,6 +51,7 @@ class WorkflowPage(QWidget):
         """初始化工作流页面。"""
 
         super().__init__(parent)
+        self._facade = facade
         self._vm = WorkflowViewModel(facade, self)
         self._current: WorkflowContract | None = None
         self._anchor_ids: list[str] = []
@@ -70,14 +71,28 @@ class WorkflowPage(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([240, 740])
         root.addWidget(splitter, 1)
+        self._refresh_step_defaults()
         self._reload_profiles()
         self._reload_workflows()
 
     def on_show(self) -> None:
         """页面显示时刷新列表。"""
 
+        self._refresh_step_defaults()
         self._reload_profiles()
         self._reload_workflows()
+
+    def _refresh_step_defaults(self) -> None:
+        """同步系统设置中的新建步骤默认参数。"""
+
+        settings = self._facade.settings()
+        self._steps.configure_defaults(
+            action_wait_seconds=settings.default_action_wait_seconds,
+            ocr_timeout_seconds=settings.default_ocr_timeout_seconds,
+            ocr_poll_interval_seconds=(
+                settings.default_ocr_poll_interval_seconds
+            ),
+        )
 
     def _build_header(self) -> QHBoxLayout:
         """构建顶部按钮区。"""

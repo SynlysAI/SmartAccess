@@ -260,20 +260,22 @@ QDoubleSpinBox#ConditionTimeout,
 QDoubleSpinBox#ConditionConfidence {{
     padding: 2px 2px 2px 6px;
 }}
+QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
     subcontrol-origin: border;
     width: 18px;
     background: {SURFACE_ALT};
     border-left: 1px solid {BORDER};
 }}
-QDoubleSpinBox::up-button {{
+QSpinBox::up-button, QDoubleSpinBox::up-button {{
     subcontrol-position: top right;
     border-top-right-radius: 6px;
 }}
-QDoubleSpinBox::down-button {{
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
     subcontrol-position: bottom right;
     border-bottom-right-radius: 6px;
 }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover,
 QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
     background: {PRIMARY_SOFT};
 }}

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -20,6 +19,7 @@ from PyQt6.QtWidgets import (
 from smartaccess.desktop.viewmodels.monitoring_vm import MonitoringViewModel
 from smartaccess.desktop.widgets.log_view import LogView
 from smartaccess.desktop.widgets import rich_text
+from smartaccess.desktop.widgets.table_style import NoWheelComboBox
 from smartaccess.desktop.widgets.timeline import TimelineTable
 from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.shared.events.bus import RuntimeEvent
@@ -82,7 +82,7 @@ class MonitoringPage(QWidget):
         row.addWidget(title)
         row.addStretch(1)
         row.addWidget(QLabel("工作流:"))
-        self._workflow_combo = QComboBox()
+        self._workflow_combo = NoWheelComboBox()
         self._workflow_combo.setMinimumWidth(260)
         self._workflow_combo.currentIndexChanged.connect(self._refresh_workflow_info)
         row.addWidget(self._workflow_combo)
@@ -282,17 +282,50 @@ class MonitoringPage(QWidget):
         if not session_id or not step_id:
             return
         reason = str(payload.get("reason") or payload.get("detail") or "该步骤需要人工确认")
-        reply = QMessageBox.question(
-            self,
-            "人工确认",
-            f"{reason}\n\n确认后继续运行，取消后工作流保持阻塞。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
+        confirmed = self._ask_manual_confirmation(reason)
         self._vm.resolve_confirmation(
             session_id,
             step_id,
-            reply == QMessageBox.StandardButton.Yes,
+            confirmed,
+        )
+
+    def _ask_manual_confirmation(self, reason: str) -> bool:
+        """激活主窗口并显示置顶的人工确认弹窗。
+
+        Args:
+            reason: 当前步骤需要人工确认的原因。
+
+        Returns:
+            用户确认继续时返回 True。
+        """
+
+        window = self.window()
+        if window.isMinimized():
+            window.showNormal()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+        message_box = QMessageBox(window)
+        message_box.setIcon(QMessageBox.Icon.Question)
+        message_box.setWindowTitle("人工确认")
+        message_box.setText(
+            f"{reason}\n\n确认后继续运行，取消后工作流保持阻塞。"
+        )
+        message_box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        message_box.setDefaultButton(QMessageBox.StandardButton.No)
+        message_box.setEscapeButton(QMessageBox.StandardButton.No)
+        message_box.setWindowModality(Qt.WindowModality.ApplicationModal)
+        message_box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        message_box.show()
+        message_box.raise_()
+        message_box.activateWindow()
+        message_box.exec()
+        return (
+            message_box.standardButton(message_box.clickedButton())
+            == QMessageBox.StandardButton.Yes
         )
 
     def _show_window_missing_warning(self, payload: dict) -> None:

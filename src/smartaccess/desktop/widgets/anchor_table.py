@@ -36,6 +36,7 @@ class AnchorRow:
     target_roi: str
     precheck_mode: str = "none"
     validation_roi: str = ""
+    image_threshold: float = 0.8
 
 
 class AnchorTable(QTableWidget):
@@ -122,11 +123,20 @@ class AnchorTable(QTableWidget):
         validation_roi = self._roi_name(row, 3)
         if not anchor_id or not target_roi:
             return None
+        stored_item = self.item(row, 0)
+        stored = (
+            stored_item.data(Qt.ItemDataRole.UserRole)
+            if stored_item is not None
+            else None
+        )
         return AnchorRow(
             anchor_id=anchor_id,
             target_roi=target_roi,
             precheck_mode=self._combo_data(row, 2) or "none",
             validation_roi=validation_roi,
+            image_threshold=(
+                stored.image_threshold if isinstance(stored, AnchorRow) else 0.8
+            ),
         )
 
     def row_models(self) -> list[AnchorRow]:
