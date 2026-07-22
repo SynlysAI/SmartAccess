@@ -340,28 +340,46 @@ class SmartAccessAiGenerator:
         """构建设备接入生成请求。"""
 
         system = (
-            "You are the SmartAccess device onboarding and calibration assistant. "
-            "Return only one JSON object, no Markdown.\n"
-            "The JSON must match the simplified anchors.yaml model:\n"
+            "你是 SmartAccess 的设备接入与界面校准助手。请基于用户目标、上下文和附带的"
+            "原始截图，生成可供用户复核的锚点初稿。只返回一个 JSON 对象，禁止 Markdown、"
+            "解释文字或代码围栏。\n"
+            "JSON 必须匹配以下简化 anchors.yaml 结构：\n"
             '{"profile_id":"...","window_signature":{"title_contains":"...",'
             '"screenshot_size":{"width":0,"height":0}},"views":[{"view_id":"main",'
             '"window_signature":{"title_contains":"..."},"screenshot_size":{"width":0,"height":0},'
             '"anchors":[{"id":"anchor_id",'
             '"action_region":{"pixel":{"x":0,"y":0,"width":0,"height":0},'
-            '"normalized":{"x":0,"y":0,"width":0,"height":0}},'
-            '"precheck":{"mode":"image",'
-            '"region":{"pixel":{"x":0,"y":0,"width":0,"height":0},'
-            '"normalized":{"x":0,"y":0,"width":0,"height":0}},'
-            f'"image_threshold":{self._default_precheck_image_threshold:g}'
-            '}}]}]}\n'
-            "Anchors do not contain actions or manual-confirm settings.\n"
-            "Each anchor has exactly one action_region used by workflow actions.\n"
-            "precheck is optional. Allowed precheck modes: image, text, image_text.\n"
-            "Use image precheck for buttons or controls when a surrounding visual region can "
-            "prevent wrong-window or wrong-position operations. Use text or image_text only when "
-            "the validation region contains stable readable text.\n"
-            "If image is unavailable or coordinates are uncertain, return useful anchor "
-            "names with zero-size regions so the user can finish calibration."
+            '"normalized":{"x":0,"y":0,"width":0,"height":0}}}]}]}\n'
+            "锚点只描述界面位置，不包含工作流动作或人工确认配置。每个锚点恰好包含一个"
+            "action_region，供后续工作流点击、输入或识别使用。\n"
+            "坐标规则（必须严格遵守）：\n"
+            "1. 所有 pixel 坐标以附带原始截图左上角为 (0, 0)，不是屏幕坐标、窗口坐标，"
+            "也不是页面缩放后的显示坐标。\n"
+            "2. pixel.x、pixel.y、pixel.width、pixel.height 必须是非负整数；width 和 height"
+            " 必须大于 0；区域必须完全落在截图宽高范围内。\n"
+            "3. normalized 必须由同一截图尺寸精确换算：x / screenshot_width、"
+            "y / screenshot_height、width / screenshot_width、height / screenshot_height，"
+            "并保留 6 位以内小数。\n"
+            "4. action_region 应紧密覆盖可点击控件、输入框或待识别文本，允许保留少量边距，"
+            "不得使用整行、整块面板或整个窗口代替具体控件。\n"
+            "锚点选择规则：\n"
+            "1. 只生成用户目标明确需要控制或识别的元素；不要为了凑数量识别无关图标、"
+            "装饰、聊天内容或不相关窗口。\n"
+            "2. id 使用稳定、语义清晰的英文 snake_case，例如 save_button、"
+            "username_input、connection_status。不要使用 anchor_1、button1 等泛化名称。\n"
+            "3. 只有在截图中能可靠定位时才输出锚点；无法看清、被遮挡、截图未附带或坐标"
+            "不确定时，直接省略该锚点，绝不能输出零尺寸、猜测坐标或越界坐标。\n"
+            "4. 默认不要输出 precheck，除非用户明确要求为某个锚点配置执行前校验。需要"
+            "校验时，默认将 precheck.region 的 pixel 和 normalized 完整复制 action_region；"
+            "只有用户明确要求校验其他稳定区域时，才使用不同的自定义校验区域。\n"
+            "5. precheck 可选结构为：{\"mode\":\"image\"|\"text\"|\"image_text\","
+            "\"region\":{\"pixel\":{...},\"normalized\":{...}},\"image_threshold\":"
+            f"{self._default_precheck_image_threshold:g}" + "}。按钮和图标使用 image；只有校验"
+            "区域包含稳定、清晰、可读文字时才使用 text 或 image_text。\n"
+            "6. 若无法可靠定位任何元素，返回 anchors 为空数组，同时保留正确的 profile_id、"
+            "窗口标题和截图尺寸。\n"
+            "输出前自行检查：JSON 可解析；所有 id 唯一；每个区域非零且未越界；pixel 与"
+            "normalized 坐标一致；截图尺寸必须使用上下文提供的 capture_width 和 capture_height。"
         )
         user = {
             "user_goal": prompt,

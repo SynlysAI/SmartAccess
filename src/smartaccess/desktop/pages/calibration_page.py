@@ -96,6 +96,9 @@ class CalibrationPage(QWidget):
         self._canvas.roi_removed.connect(self._on_roi_removed)
         self._table.row_delete_requested.connect(self._delete_anchor_row)
         self._table.row_precheck_changed.connect(self._on_precheck_changed)
+        self._table.row_validation_region_changed.connect(
+            self._on_validation_region_changed
+        )
         self._table.row_changed.connect(self._on_anchor_row_changed)
         self._windows.itemSelectionChanged.connect(self._on_window_selected)
         self._windows.itemChanged.connect(self._on_window_checked)
@@ -415,7 +418,7 @@ class CalibrationPage(QWidget):
         if row_data is None:
             return
         self._canvas.remove_roi(row_data.target_roi, emit_signal=False)
-        if row_data.validation_roi:
+        if row_data.validation_roi != row_data.target_roi:
             self._canvas.remove_roi(row_data.validation_roi, emit_signal=False)
         self._refresh_all_roi_labels()
 
@@ -431,36 +434,71 @@ class CalibrationPage(QWidget):
         if row_data is None:
             return
         if mode != "none":
-            validation_name = (
-                row_data.validation_roi or f"{row_data.anchor_id}_validation"
-            )
-            if validation_name not in self._canvas.roi_names():
-                rect = self._canvas.roi_rect(row_data.target_roi) or {
-                    "x": 60,
-                    "y": 80,
-                    "width": 180,
-                    "height": 70,
-                }
-                self._canvas.add_roi(
-                    validation_name,
-                    rect["x"],
-                    rect["y"],
-                    rect["width"],
-                    rect["height"],
-                )
-            self._table.set_validation_roi(row, validation_name)
-            self._table.update_roi_label(
-                validation_name,
-                self._roi_label(validation_name),
-            )
+            self._table.set_validation_region_enabled(row, True)
+            if not row_data.validation_roi or (
+                row_data.validation_roi == row_data.target_roi
+            ):
+                self._table.set_validation_roi(row, row_data.target_roi)
+            else:
+                self._ensure_custom_validation_roi(row, row_data)
         else:
             removed = self._table.clear_validation_roi(row)
-            if removed:
+            self._table.set_validation_region_enabled(row, False)
+            if removed and removed != row_data.target_roi:
                 self._canvas.remove_roi(removed, emit_signal=False)
             fallback_name = f"{row_data.anchor_id}_validation"
-            if fallback_name != removed:
+            if fallback_name != removed and fallback_name != row_data.target_roi:
                 self._canvas.remove_roi(fallback_name, emit_signal=False)
         self._refresh_all_roi_labels()
+
+    def _on_validation_region_changed(self, row: int, uses_target: bool) -> None:
+        """切换校验区域与目标区域的一致或自定义状态。
+
+        Args:
+            row: 锚点表格行号。
+            uses_target: 是否复用目标区域作为校验区域。
+        """
+
+        row_data = self._table.row_model(row)
+        if row_data is None or row_data.precheck_mode == "none":
+            return
+        if uses_target:
+            previous_validation = row_data.validation_roi
+            self._table.set_validation_roi(row, row_data.target_roi)
+            if previous_validation and previous_validation != row_data.target_roi:
+                self._canvas.remove_roi(previous_validation, emit_signal=False)
+        else:
+            self._ensure_custom_validation_roi(row, row_data)
+        self._refresh_all_roi_labels()
+
+    def _ensure_custom_validation_roi(self, row: int, row_data: AnchorRow) -> None:
+        """创建或恢复当前锚点的自定义校验 ROI。
+
+        Args:
+            row: 锚点表格行号。
+            row_data: 当前锚点行模型。
+        """
+
+        validation_name = f"{row_data.anchor_id}_validation"
+        if validation_name not in self._canvas.roi_names():
+            rect = self._canvas.roi_rect(row_data.target_roi) or {
+                "x": 60,
+                "y": 80,
+                "width": 180,
+                "height": 70,
+            }
+            self._canvas.add_roi(
+                validation_name,
+                rect["x"],
+                rect["y"],
+                rect["width"],
+                rect["height"],
+            )
+        self._table.set_validation_roi(row, validation_name)
+        self._table.update_roi_label(
+            validation_name,
+            self._roi_label(validation_name),
+        )
 
     def _on_anchor_row_changed(self, row: int) -> None:
         """锚点 ID 变更时同步画布 ROI 名称。
@@ -483,16 +521,22 @@ class CalibrationPage(QWidget):
         if old_id in self._canvas.roi_names():
             self._canvas.rename_roi(old_id, new_id)
 
-        old_validation = f"{old_id}_validation"
+        old_validation = self._table._roi_name(row, 3)
         new_validation = f"{new_id}_validation"
-        if old_validation in self._canvas.roi_names():
+        if old_validation == old_id:
+            self._table.set_validation_roi(row, new_id)
+        elif old_validation in self._canvas.roi_names():
             self._canvas.rename_roi(old_validation, new_validation)
-            validation_item = self._table.item(row, 3)
-            if validation_item is not None:
-                validation_item.setData(Qt.ItemDataRole.UserRole, new_validation)
+            self._table.set_validation_roi(row, new_validation)
 
         stored.anchor_id = new_id
         stored.target_roi = new_id
+        if old_validation == old_id:
+            stored.validation_roi = new_id
+        elif old_validation:
+            stored.validation_roi = new_validation
+        else:
+            stored.validation_roi = ""
         item.setData(Qt.ItemDataRole.UserRole, stored)
         action_item = self._table.item(row, 1)
         if action_item is not None:
@@ -1112,14 +1156,17 @@ class CalibrationPage(QWidget):
             )
             validation_region = precheck.get("region") or {}
             validation = validation_region.get("pixel") or {}
-            validation_name = f"{anchor_id}_validation"
-            self._canvas.add_roi(
-                validation_name,
-                float(validation.get("x") or 0),
-                float(validation.get("y") or 0),
-                float(validation.get("width") or 80),
-                float(validation.get("height") or 32),
-            )
+            if self._regions_match(pixel, validation):
+                validation_name = anchor_id
+            else:
+                validation_name = f"{anchor_id}_validation"
+                self._canvas.add_roi(
+                    validation_name,
+                    float(validation.get("x") or 0),
+                    float(validation.get("y") or 0),
+                    float(validation.get("width") or 80),
+                    float(validation.get("height") or 32),
+                )
         self._table.add_anchor(
             AnchorRow(
                 anchor_id=anchor_id,
@@ -1128,6 +1175,31 @@ class CalibrationPage(QWidget):
                 validation_roi=validation_name,
                 image_threshold=image_threshold,
             )
+        )
+
+    @staticmethod
+    def _regions_match(
+        target_region: dict,
+        validation_region: dict,
+        tolerance: float = 0.5,
+    ) -> bool:
+        """判断目标区域与校验区域是否表示同一位置。
+
+        Args:
+            target_region: 目标区域像素坐标。
+            validation_region: 校验区域像素坐标。
+            tolerance: 各坐标允许的最大差值。
+
+        Returns:
+            两个区域在允许误差内完全一致时返回 True。
+        """
+
+        return all(
+            abs(
+                float(target_region.get(key) or 0)
+                - float(validation_region.get(key) or 0)
+            ) <= tolerance
+            for key in ("x", "y", "width", "height")
         )
 
     def _refresh_instruments(self) -> None:
