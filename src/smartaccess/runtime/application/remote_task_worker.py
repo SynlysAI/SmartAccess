@@ -94,7 +94,20 @@ class RemoteTaskWorker:
                 {"error": str(exc), "error_type": exc.__class__.__name__},
             )
             return "rejected"
-        session = self._facade.start_run(workflow, background=True)
+        try:
+            session = self._facade.start_run(workflow, background=True)
+        except Exception as exc:  # noqa: BLE001 - 远程任务启动异常必须回传平台
+            self._uploader.upload_event(
+                run_id,
+                "run.rejected",
+                "rejected",
+                {
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                    "workflow_id": workflow.metadata.workflow_id,
+                },
+            )
+            return "rejected"
         self._run_map[session.session_id] = run_id
         self._step_index_map[run_id] = {
             step.id: idx for idx, step in enumerate(workflow.steps)
