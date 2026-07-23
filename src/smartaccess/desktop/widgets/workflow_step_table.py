@@ -582,6 +582,12 @@ class ActionParameterDialog(QDialog):
             )
             form.addRow("输入模式", self._input_mode)
             form.addRow("输入内容", self._value_editor)
+            placeholder_hint = QLabel(
+                "自由输入模式支持占位符：{input}（运行前填写）和 {date}（自动替换为唯一时间标识）。"
+            )
+            placeholder_hint.setObjectName("PageHint")
+            placeholder_hint.setWordWrap(True)
+            form.addRow("", placeholder_hint)
         elif step.action == "hotkey":
             self._hotkey = QLineEdit(str(step.value or ""))
             self._hotkey.setPlaceholderText("例如：ctrl+v")

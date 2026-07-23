@@ -27,15 +27,24 @@ echo     SmartAccess Nuitka Build
 echo ==========================================
 echo.
 
+call conda activate smartaccess
+if errorlevel 1 (
+    echo [ERROR] Failed to activate conda environment 'smartaccess'
+    pause
+    exit /b 1
+)
+
 where python >nul 2>nul
 if errorlevel 1 (
     echo [ERROR] Python not found, please activate smartaccess env
+    pause
     exit /b 1
 )
 
 python -m nuitka --version >nul 2>nul
 if errorlevel 1 (
     echo [ERROR] Nuitka not installed, run: pip install nuitka ordered-set zstandard
+    pause
     exit /b 1
 )
 
@@ -80,6 +89,7 @@ if errorlevel 1 (
     echo.
     echo [ERROR] Build failed
     call :show_duration
+    pause
     exit /b 1
 )
 
@@ -104,6 +114,7 @@ echo   1. Copy .envexample to .env
 echo   2. Edit .env with your API keys
 echo   3. Run run_desktop.exe
 echo.
+pause
 exit /b 0
 
 :show_help
