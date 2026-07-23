@@ -13,23 +13,28 @@ from smartaccess.shared.logging import get_logger
 
 
 def _resolve_icon_path() -> Path | None:
-    """解析应用图标路径，兼容开发环境和 PyInstaller 打包。
+    """解析应用图标路径，兼容开发环境和 PyInstaller/Nuitka 打包。
 
     Returns:
         图标文件路径；未找到时返回 None。
     """
 
+    candidates: list[Path] = []
+
     # PyInstaller onefile 打包：sys._MEIPASS 指向临时解压目录
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
-        candidate = Path(meipass) / "resource" / "icon.png"
-        if candidate.exists():
-            return candidate
+        candidates.append(Path(meipass) / "resource" / "icon.png")
+
+    # Nuitka standalone / PyInstaller 目录模式：可执行文件同级 resource 目录
+    candidates.append(Path(sys.argv[0]).resolve().parent / "resource" / "icon.png")
 
     # 开发环境：从源文件路径向上查找项目根目录
-    candidate = Path(__file__).resolve().parents[4] / "resource" / "icon.png"
-    if candidate.exists():
-        return candidate
+    candidates.append(Path(__file__).resolve().parents[4] / "resource" / "icon.png")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
     return None
 
 
