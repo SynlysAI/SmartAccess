@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QGraphicsItem,
@@ -202,11 +202,13 @@ class RoiCanvas(QGraphicsView):
         self.setBackgroundBrush(QBrush(QColor("#F0F3F8")))
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self._image_item: QGraphicsPixmapItem | None = None
         self._placeholder: QGraphicsRectItem | None = None
         self._placeholder_text: QGraphicsTextItem | None = None
         self._rois: dict[str, _RoiItem] = {}
         self._color_index = 0
+        self._resize_generation = 0
         self._source_size = (PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
         self._show_placeholder("截图后在此编辑 ROI")
 
@@ -389,15 +391,16 @@ class RoiCanvas(QGraphicsView):
             event: Qt 尺寸变化事件。
         """
 
-        center = (
-            self.mapToScene(self.viewport().rect().center())
-            if self._image_item is not None
-            else None
-        )
         super().resizeEvent(event)
+        if self._image_item is None:
+            return
+        self._resize_generation += 1
+        resize_generation = self._resize_generation
         self._update_pan_bounds()
-        if center is not None:
-            self.centerOn(center)
+        QTimer.singleShot(
+            0,
+            lambda: self._restore_image_center(resize_generation),
+        )
 
     @staticmethod
     def _find_roi_item(item) -> _RoiItem | None:
@@ -421,6 +424,18 @@ class RoiCanvas(QGraphicsView):
         self._scene.setSceneRect(
             image_rect.adjusted(-margin_x, -margin_y, margin_x, margin_y)
         )
+
+    def _restore_image_center(self, resize_generation: int) -> None:
+        """在滚动条完成布局后恢复截图居中显示。
+
+        Args:
+            resize_generation: 触发恢复操作的窗口缩放序号。
+        """
+
+        if resize_generation != self._resize_generation or self._image_item is None:
+            return
+        self._update_pan_bounds()
+        self.centerOn(self._image_item.sceneBoundingRect().center())
 
     def _clear_background(self) -> None:
         """清除背景截图或占位符。"""
