@@ -8,6 +8,7 @@ from pathlib import Path
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
+from smartaccess import APP_NAME, __version__
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.logging import get_logger
 
@@ -50,6 +51,18 @@ def _load_app_icon() -> QIcon | None:
         return None
     icon = QIcon(str(icon_path))
     return icon if not icon.isNull() else None
+
+
+def _configure_app_metadata(app: QApplication) -> None:
+    """配置 Qt 应用名称和版本元数据。
+
+    Args:
+        app: Qt 应用实例。
+    """
+
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setApplicationVersion(__version__)
 
 
 def _set_windows_app_id() -> None:
@@ -178,7 +191,6 @@ def show_login_dialog(settings: AppSettings) -> bool:
         QHBoxLayout,
         QLabel,
         QLineEdit,
-        QMessageBox,
         QPushButton,
         QVBoxLayout,
         QWidget,
@@ -186,7 +198,7 @@ def show_login_dialog(settings: AppSettings) -> bool:
 
     app = QApplication.instance() or QApplication(sys.argv)
     _set_windows_app_id()
-    app.setApplicationDisplayName("SmartAccess")
+    _configure_app_metadata(app)
     icon = _load_app_icon()
     if icon is not None:
         app.setWindowIcon(icon)
@@ -211,11 +223,13 @@ def show_login_dialog(settings: AppSettings) -> bool:
     password_edit.setPlaceholderText("请输入密码")
 
     status_label = QLabel("")
-    status_label.setObjectName("PageHint")
+    status_label.setObjectName("FormError")
     status_label.setWordWrap(True)
+    status_label.setVisible(False)
 
     login_btn = QPushButton("登录")
-    login_btn.setDefault(True)
+    login_btn.setDefault(False)
+    login_btn.setAutoDefault(False)
 
     # ---- 构建 UI ----
     root = QVBoxLayout(dialog)
@@ -274,6 +288,7 @@ def show_login_dialog(settings: AppSettings) -> bool:
     actions.addStretch(1)
     cancel_btn = QPushButton("取消")
     cancel_btn.setObjectName("Secondary")
+    cancel_btn.setAutoDefault(False)
     cancel_btn.clicked.connect(dialog.reject)
     actions.addWidget(cancel_btn)
     actions.addWidget(login_btn)
@@ -281,7 +296,6 @@ def show_login_dialog(settings: AppSettings) -> bool:
 
     root.addWidget(card)
     username_edit.setFocus()
-    password_edit.returnPressed.connect(login_btn.click)
 
     # ---- 登录逻辑 ----
     auth_result: dict | None = None
@@ -292,7 +306,24 @@ def show_login_dialog(settings: AppSettings) -> bool:
         password_edit.setEnabled(not busy)
         login_btn.setEnabled(not busy)
         login_btn.setText("登录中..." if busy else "登录")
-        status_label.setText("正在连接 SpecLabOS 统一门户..." if busy else "")
+        if busy:
+            status_label.setText("正在连接 SpecLabOS 统一门户...")
+            status_label.setVisible(True)
+        elif not status_label.text():
+            status_label.setVisible(False)
+
+    def _show_login_error(message: str) -> None:
+        """在登录卡片中显示错误，并保留窗口供用户重试。
+
+        Args:
+            message: 需要展示给用户的错误信息。
+        """
+
+        _set_busy(False)
+        status_label.setText(message)
+        status_label.setVisible(True)
+        password_edit.clear()
+        password_edit.setFocus()
 
     def _do_login() -> None:
         """执行登录请求。"""
@@ -300,11 +331,11 @@ def show_login_dialog(settings: AppSettings) -> bool:
         username = username_edit.text().strip()
         password = password_edit.text()
         if not username:
-            QMessageBox.warning(dialog, "无法登录", "请输入用户名。")
+            _show_login_error("请输入用户名。")
             username_edit.setFocus()
             return
         if not password:
-            QMessageBox.warning(dialog, "无法登录", "请输入密码。")
+            _show_login_error("请输入密码。")
             password_edit.setFocus()
             return
 
@@ -318,26 +349,28 @@ def show_login_dialog(settings: AppSettings) -> bool:
                 timeout=settings.speclabos_timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001
-            _set_busy(False)
-            QMessageBox.critical(dialog, "登录失败", str(exc))
+            error_text = str(exc)
+            if "HTTP 401" in error_text or "HTTP 403" in error_text:
+                _show_login_error("用户名或密码错误，请重新输入。")
+            else:
+                get_logger().warning("SmartAccess 登录请求失败: %s", error_text)
+                _show_login_error("登录请求失败，请检查网络或服务配置后重试。")
             return
 
         data = resp.get("data") if isinstance(resp, dict) else None
         if not isinstance(data, dict):
-            _set_busy(False)
-            QMessageBox.critical(dialog, "登录失败", "登录响应格式不合法。")
+            _show_login_error("登录响应格式不合法，请稍后重试。")
             return
         token = str(data.get("token") or "").strip()
         user_payload = data.get("user")
         if not token or not isinstance(user_payload, dict):
-            _set_busy(False)
-            QMessageBox.critical(dialog, "登录失败", "登录响应缺少 token 或用户信息。")
+            _show_login_error("登录响应缺少必要信息，请稍后重试。")
             return
         try:
             _register_smartaccess_node(settings, token)
         except Exception as exc:  # noqa: BLE001
-            _set_busy(False)
-            QMessageBox.critical(dialog, "执行端 ID 冲突", str(exc))
+            get_logger().warning("SmartAccess 执行端注册失败: %s", exc)
+            _show_login_error(f"执行端注册失败：{exc}")
             return
 
         auth_result = {
@@ -349,6 +382,7 @@ def show_login_dialog(settings: AppSettings) -> bool:
         dialog.accept()
 
     login_btn.clicked.connect(_do_login)
+    password_edit.returnPressed.connect(_do_login)
     username_edit.returnPressed.connect(password_edit.setFocus)
 
     if dialog.exec() != QDialog.DialogCode.Accepted or auth_result is None:
@@ -377,7 +411,7 @@ def run_app(settings: AppSettings, facade: object | None = None) -> int:
     logger = get_logger()
     app = QApplication.instance() or QApplication(sys.argv)
     _set_windows_app_id()
-    app.setApplicationDisplayName("SmartAccess")
+    _configure_app_metadata(app)
     icon = _load_app_icon()
     if icon is not None:
         app.setWindowIcon(icon)

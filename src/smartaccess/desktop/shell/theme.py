@@ -43,7 +43,8 @@ QMainWindow, QMainWindow > QWidget {{
 QFrame#TopBar {{
     background-color: {SURFACE};
     border-bottom: 1px solid {BORDER_STRONG};
-}}QPushButton#Ghost {{
+}}
+QPushButton#Ghost {{
     background: transparent;
     color: {TEXT_SUBTLE};
     border: none;
@@ -83,6 +84,13 @@ QLabel#PageHint, QLabel#SectionTitle {{
     color: {TEXT_MUTED};
     background: transparent;
 }}
+QLabel#FormError {{
+    color: #B42318;
+    background: #FFF1F2;
+    border: 1px solid #FECDD3;
+    border-radius: 5px;
+    padding: 6px 8px;
+}}
 QLabel#AiBusyLabel {{
     background: {PRIMARY_SOFT};
     color: {PRIMARY_HOVER};
@@ -101,10 +109,13 @@ QLabel#AiBusyOverlayLabel {{
     color: {PRIMARY_HOVER};
     font-weight: 700;
 }}
+QFrame#NavPanel {{
+    background: {SURFACE};
+    border-right: 1px solid {BORDER};
+}}
 QListWidget#NavList {{
     background: {SURFACE};
     border: none;
-    border-right: 1px solid {BORDER};
     padding: 8px 8px;
     outline: 0;
 }}
@@ -125,6 +136,21 @@ QListWidget#NavList::item:selected {{
     color: {PRIMARY_HOVER};
     border-left: 3px solid {PRIMARY};
     font-weight: 700;
+}}
+QPushButton#VersionButton {{
+    background: transparent;
+    color: {TEXT_SUBTLE};
+    border: none;
+    border-radius: 4px;
+    padding: 3px 12px;
+    min-height: 14px;
+    font-size: 11px;
+    font-weight: 500;
+    text-align: left;
+}}
+QPushButton#VersionButton:hover {{
+    background: {SURFACE_MUTED};
+    color: {PRIMARY_HOVER};
 }}
 QPushButton {{
     background: {PRIMARY};

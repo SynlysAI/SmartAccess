@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from smartaccess import APP_NAME, RELEASE_CHANNEL, RELEASE_DATE, VERSION_DISPLAY
 from smartaccess.desktop.pages.calibration_page import CalibrationPage
 from smartaccess.desktop.pages.data_collection_page import DataCollectionPage
 from smartaccess.desktop.pages.dashboard_page import DashboardPage
@@ -69,7 +70,7 @@ class MainWindow(QMainWindow):
             Path(settings.workspace_dir) / "app_state" / "window_state.json"
         )
 
-        self.setWindowTitle("SmartAccess")
+        self.setWindowTitle(f"{APP_NAME} {VERSION_DISPLAY}")
         self.setMinimumSize(800, 500)
         self._nav = QListWidget()
         self._nav.setObjectName("NavList")
@@ -106,12 +107,13 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(center)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        nav_panel = self._build_nav()
         root.addWidget(self._build_top_bar())
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        body.addWidget(self._build_nav(), 0)
+        body.addWidget(nav_panel, 0)
         body.addWidget(self._stack, 1)
         body.addWidget(self._right_panel, 0)
         root.addLayout(body, 1)
@@ -155,7 +157,7 @@ class MainWindow(QMainWindow):
         self._nav_toggle.setCheckable(True)
         self._nav_toggle.setChecked(True)
         self._nav_toggle.setToolTip("显示或隐藏导航栏")
-        self._nav_toggle.toggled.connect(self._nav.setVisible)
+        self._nav_toggle.toggled.connect(self._nav_panel.setVisible)
         nav_font = self._nav_toggle.font()
         nav_font.setBold(True)
         self._nav_toggle.setFont(nav_font)
@@ -194,14 +196,36 @@ class MainWindow(QMainWindow):
         role = self._settings.speclabos_user_role.strip()
         return f"{username} · {role}" if role else username
 
-    def _build_nav(self) -> QListWidget:
+    def _show_about(self) -> None:
+        """显示 SmartAccess 版本和发布信息。"""
+
+        QMessageBox.about(
+            self,
+            f"关于 {APP_NAME}",
+            (
+                f"{APP_NAME}\n\n"
+                f"版本：{VERSION_DISPLAY}\n"
+                f"发布阶段：{RELEASE_CHANNEL}\n"
+                f"发布日期：{RELEASE_DATE}\n\n"
+                "首个功能完善的内部测试版本。"
+            ),
+        )
+
+    def _build_nav(self) -> QWidget:
         """构建左侧导航。
 
         Returns:
-            导航列表部件。
+            包含导航列表和版本入口的导航面板。
         """
 
-        self._nav.setFixedWidth(200)
+        panel = QFrame()
+        panel.setObjectName("NavPanel")
+        panel.setFixedWidth(200)
+        self._nav_panel = panel
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setSpacing(0)
+
         self._nav.setIconSize(QSize(18, 18))
         icons = [
             QStyle.StandardPixmap.SP_ComputerIcon,
@@ -219,7 +243,19 @@ class MainWindow(QMainWindow):
                 item.setIcon(self.style().standardIcon(icons[index]))
             item.setToolTip(hint)
             self._nav.addItem(item)
-        return self._nav
+        layout.addWidget(self._nav, 1)
+
+        version_button = QPushButton(VERSION_DISPLAY)
+        version_button.setObjectName("VersionButton")
+        version_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        version_button.setToolTip(f"查看关于 {APP_NAME}")
+        version_button.clicked.connect(self._show_about)
+        layout.addWidget(
+            version_button,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+        )
+        return panel
 
     def _settings_icon(self) -> QIcon:
         """创建与导航栏尺寸一致的齿轮设置图标。"""
@@ -370,7 +406,7 @@ class MainWindow(QMainWindow):
             "width": self.width(),
             "height": self.height(),
             "maximized": bool(self.windowState() & Qt.WindowState.WindowMaximized),
-            "nav_visible": self._nav.isVisible(),
+            "nav_visible": self._nav_panel.isVisible(),
             "right_visible": self._right_panel.isVisible(),
         }
         self._state_path.write_text(
