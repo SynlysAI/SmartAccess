@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smartaccess"
-version = "0.1.0"
+dynamic = ["version"]
 description = "SmartAccess runtime, desktop shell, and shared contract models."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,6 +36,9 @@ smartaccess-edge = "smartaccess.bootstrap:serve_edge_api"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smartaccess"]
+
+[tool.hatch.version]
+path = "src/smartaccess/__init__.py"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
