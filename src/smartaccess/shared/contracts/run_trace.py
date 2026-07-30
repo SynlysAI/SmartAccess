@@ -41,12 +41,15 @@ class RunTraceRecord(ContractModel):
     session_id: NonEmptyStr
     workflow_id: NonEmptyStr
     step_id: NonEmptyStr
+    view_id: str | None = None
     anchor_id: str | None = None
     action: ActionPayload
     wait_strategy: WaitStrategyPayload
-    expected_text: str | None = None
+    expected_text: str | list[str] | None = None
     actual_text: str | None = None
     match_mode: Literal["contains", "equals", "regex", "not_empty", "none"] = "none"
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    min_confidence: float | None = Field(default=None, ge=0, le=1)
     matched: bool | None = None
     attempts: int = Field(default=1, ge=0)
     elapsed_seconds: float = Field(default=0.0, ge=0)

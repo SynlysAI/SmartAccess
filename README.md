@@ -121,6 +121,8 @@ SmartAccess 采用“AI 认知 + 工程落地”的双层结构化架构，不�
 
 ### 2. 双层架构图
 
+该图展示 SmartAccess 的“双层结构化架构”：上层负责 AI 认知、任务理解、设备使用记忆和技能复用，下层负责工程化执行、接口契约、运行编排、观测审计和异常恢复，说明系统如何把大模型能力转化为可追踪、可复用、可落地的仪器操作自动化流程。
+
 ![SmartAccess 双层结构化架构](resource/smartaccess-two-layer-architecture.png)
 
 
@@ -141,7 +143,11 @@ SmartAccess 采用“AI 认知 + 工程落地”的双层结构化架构，不�
 
 ![SmartAccess 与 SpecLabOS 集成](resource/smartaccess-speclabos-integration.png)
 
-### 7. 设备记忆与复用图
+### 7. SmartAccess 与 SpecLabOS 联动技术路线图
+
+![SmartAccess 与 SpecLabOS 联动技术路线](resource/smartaccess-speclabos-technical-route.png)
+
+### 8. 设备记忆与复用图
 
 ![SmartAccess 设备使用记忆驱动复用](resource/smartaccess-device-memory-reuse.png)
 
@@ -187,11 +193,11 @@ copy .envexample .env
 - `SMARTACCESS_WORKSPACE_DIR`：运行时工作区，默认 `workspace`。
 - `SMARTACCESS_VISION_PROVIDER`：桌面真实 OCR 使用 `local`，测试可用 `stub`。
 - `SMARTACCESS_UDP_HOST` / `SMARTACCESS_UDP_PORT`：Edge API 下发 UDP 执行信号的目标。
-- `SMARTACCESS_AI_PROFILES` / `SMARTACCESS_AI_ACTIVE_PROFILE`：OpenAI-compatible 多模型档案列表与默认档案。
-- `SMARTACCESS_AI_PROFILE_{ID}_PROVIDER` / `SMARTACCESS_AI_PROFILE_{ID}_BASE_URL` / `SMARTACCESS_AI_PROFILE_{ID}_MODEL` / `SMARTACCESS_AI_PROFILE_{ID}_API_KEY`：单个模型档案配置。
-- `SMARTACCESS_AI_PROFILE_{ID}_TIMEOUT_SECONDS`：单个模型档案的请求超时，单位秒。
-- `SMARTACCESS_AI_PROFILE_{ID}_WIRE_API`：模型网关接口类型，Codex/Responses 网关使用 `responses`，DeepSeek 等 Chat Completions 兼容网关使用 `chat_completions`。
-- `SMARTACCESS_AI_USER_AGENT`：AI 请求头中的 `User-Agent`，用于兼容部分网关或 Cloudflare 策略。
+- `SMARTACCESS_AI_TEXT_PROVIDER` / `SMARTACCESS_AI_TEXT_BASE_URL` / `SMARTACCESS_AI_TEXT_MODEL` / `SMARTACCESS_AI_TEXT_API_KEY` / `SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS`：文字 LLM 配置，用于 **AI 生成工作流**（不需要图片识别）。
+- `SMARTACCESS_AI_VISION_PROVIDER` / `SMARTACCESS_AI_VISION_BASE_URL` / `SMARTACCESS_AI_VISION_MODEL` / `SMARTACCESS_AI_VISION_API_KEY` / `SMARTACCESS_AI_VISION_TIMEOUT_SECONDS`：多模态模型配置，用于 **AI 辅助接入**（需要识别截图）。目前仅 `provider=codex` 通过 Responses 接口支持图片，其他 provider 走 Chat Completions 仅文字。
+- `SMARTACCESS_AI_USER_AGENT`：AI 请求头中的 `User-Agent`，用于兼容部分网关或 Cloudflare 策略；TEXT 与 VISION 共享。
+- 向后兼容：若未配上述 TEXT/VISION 变量，但配了旧的 `SMARTACCESS_AI_PROVIDER` / `SMARTACCESS_AI_BASE_URL` / `SMARTACCESS_AI_MODEL` / `SMARTACCESS_AI_API_KEY` / `SMARTACCESS_AI_TIMEOUT_SECONDS` 单组写法，TEXT 与 VISION 都回退到此组；进一步若旧单组也未配，再回退到早期 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` / `DEEPSEEK_TIMEOUT_SECONDS`。
+- `provider=template` 时对应用途的 AI 功能禁用（不发起外部请求）。
 
 ### AI 配置与接入
 
@@ -207,6 +213,21 @@ copy .envexample .env
 - 运行时会自动带上浏览器风格的 `User-Agent`、`Origin`、`Referer` 请求头，并把错误压缩成可操作提示。
 - 如果仍被拦截，优先调整 `SMARTACCESS_AI_USER_AGENT`，或者让模型服务提供方放行该 API 客户端。
 
+### SmartAccess 与 SpecLabOS 联动
+
+1. 在 `.env` 中配置 `SMARTACCESS_PLATFORM_PROVIDER=real`、`SPECLABOS_BASE_URL` 和 `SPECLABOS_API_KEY`。
+2. 在 SmartAccess workflow 的 `metadata` 中填写 `template_id` 与 `template_version`，用于平台侧保存模板版本。
+3. 在“模板/平台”页点击发布，SmartAccess 会调用 SpecLabOS 的 `/api/smartaccess/templates/publish`，并保留本地模板副本。
+4. 配置 `SMARTACCESS_DEVICE_ID` 和 `SMARTACCESS_RABBITMQ_*` 后，启动远程任务 worker：
+
+```powershell
+smartaccess-worker
+```
+
+worker 会消费 SpecLabOS 下发给 `SMARTACCESS_DEVICE_ID` 的任务，启动本地 workflow，并通过 `/api/smartaccess/runs/{run_id}/events` 回传接受、拒绝和运行事件。第一版回传保存本地 trace 摘要和截图路径，不上传截图二进制。
+
+`SMARTACCESS_DEVICE_ID` 表示当前安装 SmartAccess 的执行端电脑 ID，例如 `lab-pc-01`；它决定哪台 SmartAccess worker 消费平台任务。`vpn软件`、`weixin` 这类值属于目标设备/目标软件或锚点配置，不应作为 `SMARTACCESS_DEVICE_ID`。
+
 ## 新增一个仪器接入的最小步骤
 
 1. 在 `docs/contracts/` 明确该仪器的 `anchors.yaml`、平台字段映射和运行 trace 读取方式。
@@ -214,6 +235,8 @@ copy .envexample .env
 3. 在 `ai/skills/runtime/` 选择或新增对应的工作流设计、锚点标注、平台映射技能。
 4. 在 `ai/agents/runtime/` 明确 orchestrator、executor、observer、recovery 的职责分配。
 5. 在 `ai/harness/evals/cases/` 新增回归用例，覆盖首次接入、执行、OCR 命中/超时、异常和回传。
+
+新建设备 ID 必须使用 `体系-实验室-产品型号-设备编号` 四段格式，并用 ASCII `-` 分隔，例如 `氟基-2236实验室-元能极片电阻仪-01`。该 ID 同时作为新建 `anchors.yaml` 的 `profile_id` 和 workflow 的 `metadata.anchor_profile` 引用；历史旧锚点文件仍可加载，但新建设备接入页和后端创建路径会阻断非法 ID。
 
 ## 观察区域锚点编辑
 
@@ -227,9 +250,13 @@ copy .envexample .env
 
 - 本地 OCR provider 是 `LocalVisionProvider`，依赖 `opencv-python`、`paddleocr` 和 `paddlepaddle`。
 - 锚点配置在 `anchors.yaml`：`action_region` 用于点击/聚焦，`observe_region` 用于动作后的 OCR 读取。
-- 工作流配置在 `workflow.yaml`：步骤用 `expected_text`、`match_mode`、`timeout_seconds` 声明 OCR 预期；`match_mode: none` 表示不做 OCR。
-- Orchestrator 先执行动作；无 OCR 时按 `step.wait_seconds -> anchor.default_wait_seconds -> 0` 固定等待；有 OCR 时每 0.5 秒截图、裁剪 observe region、识别并匹配文本。
-- 每步都会写入 `run_trace.jsonl`，包含期望 OCR、实际 OCR、匹配结果、尝试次数、耗时、截图路径和错误详情。
+- 工作流配置在 `workflow.yaml`：OCR 步骤用 `expected_text`、`match_mode`、`timeout_seconds`、`poll_interval_seconds` 声明识别规则；默认超时 `10.0s`、轮询间隔 `0.5s`。
+- `type` 步骤支持 `input_mode: free` 和 `input_mode: incrementing`。自由输入沿用 `value`；递增式输入在运行时按 `{device_id}-{author}-{date}-{counter:03d}` 解析，日期由 `date_format` 控制，计数器按 `workflow_id + sequence_key` 持久化。
+- 每个 `type + incrementing` 步骤都有独立 `increment_rule`；桌面工作流表格通过“参数摘要”和“配置”按钮编辑本行模板、变量名、日期格式、起始值、计数位数和循环范围。
+- 同一次 run session 内相同递增变量只生成一次值并复用；只有 workflow 成功完成后才持久化推进下次值，失败、取消或阻塞不会消耗编号。
+- Orchestrator 按“异常检查 → 锚点执行前校验 → 人工确认 → 动作执行”运行步骤；非等待步骤成功后按 `step.wait_seconds` 后置等待，缺省为 `1.0s`，显式 `0` 表示不等待；OCR 步骤按 `poll_interval_seconds` 周期截图并读取锚点 `action_region`，缺省间隔为 `0.5s`。
+- 每步都会写入 `run_trace.jsonl`，包含期望 OCR、实际 OCR、匹配结果、尝试次数、耗时、截图路径和错误详情；递增式输入写入 trace 的 `action.value` 是运行时解析后的真实输入值。
+- 运行监控日志在任务开始和结束时输出 START/END 边界，并展示执行前校验的方式、尝试次数、文字结果或图像相似度；失败日志保留 OCR 规则、实际文本、匹配结果和尝试次数。
 
 ## 能力示例
 
@@ -262,14 +289,30 @@ copy .envexample .env
 4. 运行标准化检查，通过后切到“运行监控”页选择工作流并开始。
 5. 查看步骤时间线、步骤审计、OCR 文本、截图链接和 `run_trace.jsonl`。
 
+### 数据采集
+
+SmartAccess 已内嵌兼容 SmartDataHub 的设备端采集器，可在左侧底部的“数据采集”页完成配置、启动、停止和状态监控：
+
+1. 填写采集器 ID 与站点；设备 ID、SmartDataHub 服务地址及采集密钥统一读取 `.env` 中的 `SMARTACCESS_DEVICE_ID`、`SPECLABOS_BASE_URL`、`SPECLABOS_DATAHUB_KEY`。
+2. 添加一个或多个监听器；文件型监听器按文件模式上传，目录资产型监听器会按顶层结果目录逐文件上传。
+   数据类型为固定分类：日志类（`device_log`）、样品类（`sample_record`）、报告类（`report`）、数据结果类（`result_data`）和其它（`other`）。
+3. 点击“启动采集”。可选择启动时扫描已有数据，采集器会随后持续监听创建、移动和可选的修改事件。
+4. 页面会显示监听器状态及 SQLite 队列中的待上传、已上传、失败待重试和终止失败数量；最大自动重试次数默认是 `3`，达到上限后可查看失败原因并通过“手动重试”重新入队。
+5. 点击“停止采集”可随时安全停止。
+
+采集配置保存在 `workspace/data_collection/collector.yaml`，格式与 SmartDataHub 原有的 `collector.config.yaml` 兼容；本地可靠上传队列位于 `workspace/data_collection/collector_queue.db`。
+
 ## v2 简化模型特性
 
-- ✅ 四页主导航：锚点、工作流、模板/平台、执行
+- ✅ 六页主导航：锚点、工作流、执行、模板/平台、运行概览、数据采集
 - ✅ `anchors.yaml` 作为唯一锚点配置
-- ✅ 简化 `workflow.yaml`：线性步骤 + anchor_id + action + expected_text/match_mode
+- ✅ 新建设备 ID 使用 `体系-实验室-产品型号-设备编号` 四段主键规则
+- ✅ 简化 `workflow.yaml`：线性步骤 + anchor_id + action + expected_text/match_mode + type 输入模式
+- ✅ `type` 步骤支持自由输入和运行内递增输入
 - ✅ OCR-only 观测链路：截图、裁剪、OCR 读取、文本匹配
 - ✅ 真实 Win32 UI 自动化（click/type/hotkey/press_enter；双击用两个连续 click 步骤表达）
-- ✅ `run_trace.jsonl` 自动记录每步 OCR 事实、截图路径、等待策略和错误详情
+- ✅ `run_trace.jsonl` 自动记录每步 OCR 事实、截图路径、等待策略、真实输入值和错误详情
+- ✅ 运行日志 START/END 边界标识设备、作者、工作流和 session
 - ✅ 平台从 trace 提取结果
 - ✅ 模板/平台仍为一级入口，但只发布和回拉新简化 workflow
 
@@ -280,6 +323,21 @@ copy .envexample .env
 3. 接着实现工作流页：锚点集选择、单 prompt 生成、步骤表和标准化检查。
 4. 然后实现执行页：开始/停止/取消、OCR 轮询、截图、日志和 trace。
 5. 最后补模板/平台闭环：模板发布、回拉、状态/trace 上传、评测自动化。
+
+## 打包为 EXE
+
+```powershell
+# 安装 PyInstaller
+pip install pyinstaller
+
+# 打包为单个 exe（保留终端窗口，方便查看日志）
+pyinstaller --onefile --icon=resource/icon.png --name=SmartAccess --add-data="resource/icon.png;resource" run_desktop.py
+
+# 若要隐藏终端黑窗，加上 --windowed（日志将不可见，建议配合文件日志使用）
+pyinstaller --onefile --windowed --icon=resource/icon.png --name=SmartAccess --add-data="resource/icon.png;resource" run_desktop.py
+```
+
+输出文件：`dist/SmartAccess.exe`
 
 ## 验证
 

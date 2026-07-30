@@ -7,17 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from smartaccess.shared.contracts.anchors import (
-    ACTION_SUPPORT_SETS,
-    AnchorActionBinding,
     AnchorDefinition,
-    AnchorRegion,
     AnchorsContract,
-    NormalizedRegion,
-    PixelRegion,
-    SIMPLIFIED_ACTIONS,
+    ExceptionRule,
     WindowSignature,
 )
 from smartaccess.shared.contracts.io import dump_yaml_contract, load_yaml_contract
+from smartaccess.shared.contracts.validation import require_valid_device_id
 from smartaccess.shared.logging import get_logger
 
 
@@ -58,9 +54,16 @@ class AnchorService:
         profile_id: str,
         title_contains: str,
         anchors: list[dict[str, Any]] | None = None,
+        views: list[dict[str, Any]] | None = None,
         process_name: str | None = None,
         capture_width: int | None = None,
         capture_height: int | None = None,
+        capture_origin_x: int | None = None,
+        capture_origin_y: int | None = None,
+        capture_mode: str = "window",
+        capture_screen_origin_x: int | None = None,
+        capture_screen_origin_y: int | None = None,
+        capture_windows: list[dict[str, Any]] | None = None,
         supported_os: list[str] | None = None,
         safety_limits: dict[str, Any] | None = None,
     ) -> AnchorsContract:
@@ -73,6 +76,12 @@ class AnchorService:
             process_name: 可选进程名。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
+            capture_origin_x: 兼容旧窗口模式的截图原点 X 偏移。
+            capture_origin_y: 兼容旧窗口模式的截图原点 Y 偏移。
+            capture_mode: 截图坐标模式。
+            capture_screen_origin_x: 校准截图画布在屏幕上的左上角 X。
+            capture_screen_origin_y: 校准截图画布在屏幕上的左上角 Y。
+            capture_windows: 参与截图的窗口元数据。
             supported_os: 支持的操作系统。
             safety_limits: 安全限制。
 
@@ -80,6 +89,7 @@ class AnchorService:
             已保存的锚点契约。
         """
 
+        profile_id = require_valid_device_id(profile_id)
         profile = AnchorsContract(
             profile_id=profile_id,
             window_signature=WindowSignature(
@@ -89,8 +99,15 @@ class AnchorService:
                     "width": capture_width,
                     "height": capture_height,
                 },
+                capture_origin_x=capture_origin_x or 0,
+                capture_origin_y=capture_origin_y or 0,
+                capture_mode=capture_mode,
+                capture_screen_origin_x=capture_screen_origin_x,
+                capture_screen_origin_y=capture_screen_origin_y,
+                capture_windows=capture_windows or [],
             ),
             anchors=[self._coerce_anchor(anchor) for anchor in (anchors or [])],
+            views=views or [],
             supported_os=supported_os or ["windows"],
             safety_limits=safety_limits or {},
         )
@@ -109,6 +126,10 @@ class AnchorService:
             保存路径。
         """
 
+        profile.exception_rules = [
+            ExceptionRule.model_validate(rule)
+            for rule in profile.exception_rules
+        ]
         self._profiles[profile.profile_id] = profile
         path = dump_yaml_contract(profile, self._profile_path(profile.profile_id))
         self._logger.info("锚点配置已保存: profile_id=%s, 锚点数=%d",
@@ -136,7 +157,13 @@ class AnchorService:
             shutil.rmtree(path.parent)
         self._logger.info("锚点配置已删除: profile_id=%s", profile_id)
 
-    def save_capture(self, profile_id: str, data: bytes) -> Path:
+    def save_capture(
+        self,
+        profile_id: str,
+        data: bytes,
+        *,
+        view_id: str | None = None,
+    ) -> Path:
         """保存设备校准截图。
 
         Args:
@@ -147,12 +174,17 @@ class AnchorService:
             已保存截图路径。
         """
 
-        path = self._capture_path(profile_id)
+        path = self._capture_path(profile_id, view_id=view_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         return path
 
-    def load_capture(self, profile_id: str | None) -> bytes | None:
+    def load_capture(
+        self,
+        profile_id: str | None,
+        *,
+        view_id: str | None = None,
+    ) -> bytes | None:
         """读取设备校准截图。
 
         Args:
@@ -164,124 +196,42 @@ class AnchorService:
 
         if not profile_id:
             return None
-        path = self._capture_path(profile_id)
+        path = self._capture_path(profile_id, view_id=view_id)
         if not path.exists():
             return None
         return path.read_bytes()
+
+    def delete_capture(self, profile_id: str, *, view_id: str | None = None) -> None:
+        """删除指定设备视图的校准截图。
+
+        Args:
+            profile_id: 锚点配置 ID。
+            view_id: 视图 ID；为空或 main 时删除主截图。
+        """
+
+        path = self._capture_path(profile_id, view_id=view_id)
+        if view_id and view_id != "main":
+            view_dir = path.parent
+            if view_dir.exists():
+                shutil.rmtree(view_dir)
+            return
+        if path.exists():
+            path.unlink()
 
     def _profile_path(self, profile_id: str) -> Path:
         """返回锚点配置路径。"""
 
         return self._workspace_dir / "anchors" / profile_id / "anchors.yaml"
 
-    def _capture_path(self, profile_id: str) -> Path:
+    def _capture_path(self, profile_id: str, *, view_id: str | None = None) -> Path:
         """返回设备校准截图路径。"""
 
-        return self._workspace_dir / "anchors" / profile_id / "capture.png"
+        if not view_id or view_id == "main":
+            return self._workspace_dir / "anchors" / profile_id / "capture.png"
+        return self._workspace_dir / "anchors" / profile_id / "views" / view_id / "capture.png"
 
     @staticmethod
     def _coerce_anchor(raw: dict[str, Any]) -> AnchorDefinition:
         """把 UI 原始锚点数据转换为契约锚点。"""
 
-        if "action_region" in raw:
-            return AnchorService._simplify_anchor(AnchorDefinition.model_validate(raw))
-        roi = raw.get("roi") or {}
-        normalized = raw.get("normalized_roi") or {}
-        action_bindings = raw.get("action_bindings") or []
-        main_action = raw.get("main_action")
-        if not main_action and action_bindings:
-            main_action = action_bindings[0].get("action")
-        if main_action not in SIMPLIFIED_ACTIONS:
-            main_action = "click"
-        supported_actions = ACTION_SUPPORT_SETS[main_action]
-        requires_confirmation = bool(raw.get("requires_confirmation"))
-        if action_bindings:
-            requires_confirmation = any(
-                bool(binding.get("requires_confirmation"))
-                for binding in action_bindings
-            )
-        observe_region = AnchorService._observe_region(raw, roi, normalized)
-        return AnchorService._simplify_anchor(
-            AnchorDefinition(
-                id=raw["id"],
-                label=raw.get("label") or raw["id"],
-                action_region=AnchorRegion(
-                    pixel=PixelRegion(**roi),
-                    normalized=(
-                        NormalizedRegion(**normalized)
-                        if normalized
-                        else NormalizedRegion()
-                    ),
-                ),
-                observe_region=observe_region,
-                supported_actions=supported_actions,
-                default_wait_seconds=float(raw.get("default_wait_seconds", 2.0)),
-                notes=raw.get("notes"),
-                type=raw.get("type"),
-                locator_hint=raw.get("locator_hint"),
-                vision_mode=raw.get("vision_mode"),
-                action_bindings=[
-                    {
-                        "action": action,
-                        "requires_confirmation": requires_confirmation,
-                    }
-                    for action in supported_actions
-                ],
-            )
-        )
-
-    @staticmethod
-    def _observe_region(
-        raw: dict[str, Any],
-        roi: dict[str, Any],
-        normalized: dict[str, Any],
-    ) -> AnchorRegion | None:
-        """从原始数据中提取观察区域。"""
-
-        observe_roi = raw.get("observe_roi") or raw.get("observe_region")
-        observe_normalized = raw.get("observe_normalized_roi")
-        vision_mode = raw.get("vision_mode") or ("ocr" if observe_roi else "none")
-        if vision_mode != "ocr":
-            return None
-        observe_pixel = (
-            observe_roi.get("pixel")
-            if isinstance(observe_roi, dict) and "pixel" in observe_roi
-            else observe_roi or roi
-        )
-        observe_norm = (
-            observe_roi.get("normalized")
-            if isinstance(observe_roi, dict) and "normalized" in observe_roi
-            else observe_normalized or normalized
-        )
-        return AnchorRegion(
-            pixel=PixelRegion(**(observe_pixel or {})),
-            normalized=(
-                NormalizedRegion(**observe_norm) if observe_norm else NormalizedRegion()
-            ),
-        )
-
-    @staticmethod
-    def _simplify_anchor(anchor: AnchorDefinition) -> AnchorDefinition:
-        """清理锚点动作绑定和视觉字段。"""
-
-        supported_actions = [
-            action for action in anchor.supported_actions if action in SIMPLIFIED_ACTIONS
-        ] or ["click"]
-        requires_confirmation = any(
-            binding.requires_confirmation
-            for binding in anchor.action_bindings
-            if binding.action in supported_actions
-        )
-        anchor.supported_actions = list(dict.fromkeys(supported_actions))
-        anchor.action_bindings = [
-            AnchorActionBinding(
-                action=action,
-                requires_confirmation=requires_confirmation,
-            )
-            for action in anchor.supported_actions
-        ]
-        anchor.type = "observation" if anchor.observe_region is not None else "action_target"
-        anchor.vision_mode = "ocr" if anchor.observe_region is not None else None
-        anchor.confidence_threshold = None
-        anchor.vision_config = None
-        return anchor
+        return AnchorDefinition.model_validate(raw)

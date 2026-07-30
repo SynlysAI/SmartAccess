@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -20,9 +19,12 @@ from PyQt6.QtWidgets import (
 from smartaccess.desktop.viewmodels.monitoring_vm import MonitoringViewModel
 from smartaccess.desktop.widgets.log_view import LogView
 from smartaccess.desktop.widgets import rich_text
+from smartaccess.desktop.widgets.runtime_input_dialog import RuntimeInputDialog
+from smartaccess.desktop.widgets.table_style import NoWheelComboBox
 from smartaccess.desktop.widgets.timeline import TimelineTable
 from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.shared.events.bus import RuntimeEvent
+from smartaccess.shared.events.runtime import RuntimeEventName
 
 
 class MonitoringPage(QWidget):
@@ -80,7 +82,8 @@ class MonitoringPage(QWidget):
         title.setObjectName("PageTitle")
         row.addWidget(title)
         row.addStretch(1)
-        self._workflow_combo = QComboBox()
+        row.addWidget(QLabel("工作流:"))
+        self._workflow_combo = NoWheelComboBox()
         self._workflow_combo.setMinimumWidth(260)
         self._workflow_combo.currentIndexChanged.connect(self._refresh_workflow_info)
         row.addWidget(self._workflow_combo)
@@ -239,9 +242,30 @@ class MonitoringPage(QWidget):
             QMessageBox.warning(self, "无法启动", "请先在工作流设计页保存工作流")
             return
         try:
-            self._vm.start_run(str(workflow_id))
+            runtime_inputs = self._collect_runtime_inputs(str(workflow_id))
+            if runtime_inputs is None:
+                return
+            self._vm.start_run(str(workflow_id), runtime_inputs)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "启动失败", str(exc))
+
+    def _collect_runtime_inputs(self, workflow_id: str) -> dict[str, str] | None:
+        """收集当前工作流运行前需要人工填写的输入。
+
+        Args:
+            workflow_id: 当前选择的工作流 ID。
+
+        Returns:
+            输入步骤值；用户取消时返回 None。
+        """
+
+        fields = self._vm.runtime_input_fields(workflow_id)
+        if not fields:
+            return {}
+        dialog = RuntimeInputDialog(fields, self)
+        if dialog.exec() != RuntimeInputDialog.DialogCode.Accepted:
+            return None
+        return dialog.values()
 
     def _stop(self) -> None:
         """请求停止当前运行。"""
@@ -259,6 +283,89 @@ class MonitoringPage(QWidget):
 
         if event.name.value == "run.step.observed":
             self._audit.setHtml(self._observation_html(event))
+        elif event.name == RuntimeEventName.RUN_BLOCKED:
+            self._handle_blocked_event(event)
+
+    @staticmethod
+    def _confirm_yes_button() -> QMessageBox.StandardButton:
+        """Return the QMessageBox yes button; useful for tests."""
+
+        return QMessageBox.StandardButton.Yes
+
+    def _handle_blocked_event(self, event: RuntimeEvent) -> None:
+        """Handle runtime blocked events with visible operator prompts."""
+
+        payload = event.payload
+        if payload.get("incident_type") == "WindowMissing":
+            self._show_window_missing_warning(payload)
+            return
+        session_id = event.session_id
+        step_id = str(payload.get("step_id") or "")
+        if not session_id or not step_id:
+            return
+        reason = str(payload.get("reason") or payload.get("detail") or "该步骤需要人工确认")
+        confirmed = self._ask_manual_confirmation(reason)
+        self._vm.resolve_confirmation(
+            session_id,
+            step_id,
+            confirmed,
+        )
+
+    def _ask_manual_confirmation(self, reason: str) -> bool:
+        """激活主窗口并显示置顶的人工确认弹窗。
+
+        Args:
+            reason: 当前步骤需要人工确认的原因。
+
+        Returns:
+            用户确认继续时返回 True。
+        """
+
+        window = self.window()
+        if window.isMinimized():
+            window.showNormal()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+        message_box = QMessageBox(window)
+        message_box.setIcon(QMessageBox.Icon.Question)
+        message_box.setWindowTitle("人工确认")
+        message_box.setText(
+            f"{reason}\n\n确认后继续运行，取消后工作流保持阻塞。"
+        )
+        message_box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        message_box.setDefaultButton(QMessageBox.StandardButton.No)
+        message_box.setEscapeButton(QMessageBox.StandardButton.No)
+        message_box.setWindowModality(Qt.WindowModality.ApplicationModal)
+        message_box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        message_box.show()
+        message_box.raise_()
+        message_box.activateWindow()
+        message_box.exec()
+        return (
+            message_box.standardButton(message_box.clickedButton())
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def _show_window_missing_warning(self, payload: dict) -> None:
+        """Show a warning when the controlled app window is not found."""
+
+        profile = payload.get("anchor_profile") or "-"
+        title = payload.get("title_contains") or "-"
+        detail = payload.get("detail") or payload.get("reason") or "未找到目标窗口"
+        QMessageBox.warning(
+            self,
+            "未检测到目标窗口",
+            (
+                f"{detail}\n\n"
+                f"绑定设备: {profile}\n"
+                f"窗口标题: {title}\n\n"
+                "请打开被控软件或重新扫描窗口后再运行。"
+            ),
+        )
 
     def _audit_html(self, session_id: str) -> str:
         """构建会话审计摘要。"""
@@ -331,7 +438,8 @@ class MonitoringPage(QWidget):
         """构建观察事件文本。"""
 
         payload = event.payload
-        rule = rich_text.ocr_rule(payload.get("match_mode"), payload.get("expected_text"))
+        expected = payload.get("expected_text") or payload.get("expected_candidates")
+        rule = rich_text.ocr_rule(payload.get("match_mode"), expected)
         body = "<br>".join(
             [
                 rich_text.field("步骤: ", payload.get("step_id")),

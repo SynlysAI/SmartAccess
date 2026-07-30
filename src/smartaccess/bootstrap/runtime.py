@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
+import pika
+
 from smartaccess.runtime.adapters import (
     ApiVisionProvider,
     EchoInstructionGenerator,
@@ -22,7 +26,10 @@ from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.runtime.application.incident_service import IncidentService
 from smartaccess.runtime.application.migration_service import MigrationService
 from smartaccess.runtime.application.platform_sync_service import PlatformSyncService
-from smartaccess.runtime.application.run_session_service import RunSessionService
+from smartaccess.runtime.application.run_session_service import (
+    IncrementCounterService,
+    RunSessionService,
+)
 from smartaccess.runtime.application.template_service import TemplateService
 from smartaccess.runtime.application.workflow_service import WorkflowService
 from smartaccess.runtime.application.workspace_service import WorkspaceService
@@ -34,7 +41,17 @@ from smartaccess.runtime.orchestration import (
 )
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.shared.events.bus import EventBus
-from smartaccess.shared.logging import get_logger
+from smartaccess.shared.logging import configure_logging, get_logger
+
+
+REMOTE_OCR_MODES = {
+    "paddleocr-vl",
+    "paddleocr_vl",
+    "vl",
+    "paddlex",
+    "paddlex-ocr",
+    "paddlex_ocr",
+}
 
 
 def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
@@ -52,14 +69,16 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
     vision = _build_vision(settings)
     platform = _build_platform(settings)
     artifacts = FileArtifactStore(settings.workspace_dir)
-    ai_generator = _build_ai_generator(settings)
+    text_ai_generator = _build_text_ai_generator(settings)
+    vision_ai_generator = _build_vision_ai_generator(settings)
     anchors = AnchorService(workspace_dir=settings.workspace_dir)
     workflows = WorkflowService(
         workspace_dir=settings.workspace_dir,
         anchors=anchors,
-        draft_generator=ai_generator,
+        draft_generator=text_ai_generator,
     )
     run_sessions = RunSessionService(artifact_store=artifacts, event_bus=event_bus)
+    increment_counters = IncrementCounterService(settings.workspace_dir)
     incidents = IncidentService(event_bus=event_bus)
     platform_sync = PlatformSyncService(
         platform=platform,
@@ -70,6 +89,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         platform=platform,
         workspace_dir=settings.workspace_dir,
         event_bus=event_bus,
+        source_device_id=settings.device_id,
     )
     migration = MigrationService(workspace_dir=settings.workspace_dir)
     workspace = WorkspaceService(
@@ -86,6 +106,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         recovery=RecoveryEngine(),
         run_sessions=run_sessions,
         incidents=incidents,
+        increment_counters=increment_counters,
     )
     return RuntimeFacade(
         settings=settings,
@@ -101,10 +122,129 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         run_sessions=run_sessions,
         incidents=incidents,
         platform_sync=platform_sync,
+        increment_counters=increment_counters,
         orchestrator=orchestrator,
         migration=migration,
-        ai_generator=ai_generator,
+        ai_generator=vision_ai_generator,
     )
+
+
+
+def build_remote_task_worker(settings: AppSettings, *, facade=None):
+    """创建 SmartAccess 远程任务 worker。
+
+    Args:
+        settings: 应用配置。
+        facade: 可选已有的运行时门面；为空时构建新实例。
+
+    Returns:
+        远程任务 worker。
+    """
+    from smartaccess.runtime.application.platform_event_uploader import (
+        PlatformEventUploader,
+    )
+    from smartaccess.runtime.application.remote_task_worker import RemoteTaskWorker
+
+    if facade is None:
+        facade = build_runtime_facade(settings)
+    return RemoteTaskWorker(
+        device_id=settings.device_id or str(settings.workspace_dir),
+        facade=facade,
+        uploader=PlatformEventUploader(facade.providers()["platform"]),
+    )
+
+
+def _run_mq_consumer(settings: AppSettings, worker, device_id: str) -> None:
+    """连接 RabbitMQ 并阻塞消费远程任务消息。
+
+    Args:
+        settings: 应用配置。
+        worker: 远程任务 worker。
+        device_id: 当前设备 ID。
+    """
+    logger = get_logger()
+    credentials = pika.PlainCredentials(
+        settings.rabbitmq_username,
+        settings.rabbitmq_password,
+    )
+    connection = pika.BlockingConnection(
+        pika.ConnectionParameters(
+            host=settings.rabbitmq_host,
+            port=settings.rabbitmq_port,
+            credentials=credentials,
+        )
+    )
+    channel = connection.channel()
+    exchange = "smartaccess.commands"
+    queue_name = f"smartaccess.device.{device_id}.commands"
+    routing_key = f"device.{device_id}.run.requested"
+    channel.exchange_declare(exchange=exchange, exchange_type="topic", durable=True)
+    channel.queue_declare(queue=queue_name, durable=True)
+    channel.queue_bind(exchange=exchange, queue=queue_name, routing_key=routing_key)
+    channel.basic_qos(prefetch_count=1)
+
+    def _on_message(ch, method, properties, body) -> None:
+        """处理 RabbitMQ 下发的 SmartAccess 任务消息。"""
+        try:
+            result = worker.handle_body(body)
+            logger.info("SmartAccess 远程任务处理完成: result=%s", result)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+        except json.JSONDecodeError:
+            logger.exception("SmartAccess 远程任务消息不是合法 JSON，已丢弃")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        except Exception:  # noqa: BLE001 - 防止消费循环退出
+            logger.exception("SmartAccess 远程任务处理失败，消息不重入队")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    channel.basic_consume(queue=queue_name, on_message_callback=_on_message)
+    logger.info(
+        "SmartAccess 远程任务监听中: queue=%s routing_key=%s",
+        queue_name,
+        routing_key,
+    )
+    try:
+        channel.start_consuming()
+    except KeyboardInterrupt:
+        logger.info("SmartAccess worker 收到停止信号")
+    except Exception:  # noqa: BLE001 - pika 连接异常
+        logger.exception("SmartAccess 远程任务监听连接异常")
+    finally:
+        if connection.is_open:
+            connection.close()
+
+
+def start_remote_task_listener(settings: AppSettings, *, facade=None) -> None:
+    """在后台线程启动 SmartAccess 远程任务监听。
+
+    复用已有 facade（通常来自桌面端进程），不创建新的 provider 实例。
+    保证窗口激活、坐标计算与桌面端手动执行完全一致。
+
+    Args:
+        settings: 应用配置。
+        facade: 已有的运行时门面；为空时构建新实例。
+    """
+    import threading
+
+    worker = build_remote_task_worker(settings, facade=facade)
+    device_id = settings.device_id or str(settings.workspace_dir)
+    logger = get_logger()
+    logger.info(
+        "SmartAccess 远程任务监听启动: device_id=%s, rabbitmq_enabled=%s",
+        device_id,
+        settings.rabbitmq_enabled,
+    )
+    if not settings.rabbitmq_enabled:
+        logger.warning("RabbitMQ 未启用，跳过远程任务监听")
+        return
+
+    thread = threading.Thread(
+        target=_run_mq_consumer,
+        args=(settings, worker, device_id),
+        name="smartaccess-mq-listener",
+        daemon=True,
+    )
+    thread.start()
+    logger.info("SmartAccess 远程任务监听线程已启动")
 
 
 def build_experiment_service(
@@ -197,15 +337,18 @@ def _build_automation(settings: AppSettings):
 def _build_vision(settings: AppSettings):
     """创建视觉 provider。"""
 
-    if settings.vision_provider.lower() == "local":
+    ocr_mode = settings.ocr_mode.lower().strip()
+    vision_provider = settings.vision_provider.lower().strip()
+    if ocr_mode == "local" or vision_provider == "local":
         try:
             return LocalVisionProvider(workspace_dir=settings.workspace_dir)
         except Exception:  # noqa: BLE001 - 可选 OCR 依赖缺失时回退 stub
             get_logger().exception("本地视觉初始化失败，已回退 Stub")
-    if settings.vision_provider.lower() == "api":
+    if ocr_mode in REMOTE_OCR_MODES or vision_provider == "api":
         try:
             return ApiVisionProvider(
-                api_url=settings.vision_api_url,
+                api_url=settings.ocr_api_url,
+                ocr_mode=settings.ocr_mode,
                 workspace_dir=settings.workspace_dir,
             )
         except Exception:  # noqa: BLE001 - API 不可用时回退 stub
@@ -228,29 +371,74 @@ def _build_platform(settings: AppSettings):
     return StubPlatformClient()
 
 
-def _build_ai_generator(settings: AppSettings) -> SmartAccessAiGenerator | None:
-    """按配置创建 AI 生成器。"""
+def _build_text_ai_generator(settings: AppSettings) -> SmartAccessAiGenerator | None:
+    """装配文字 LLM 生成器，用于 AI 生成工作流。
 
-    provider = settings.ai_provider.lower().strip()
+    Args:
+        settings: 应用配置。
+
+    Returns:
+        文字 LLM 生成器；provider=template 或未配 API Key 时返回 None。
+    """
+
+    provider = settings.ai_text_provider.lower().strip()
     if provider == "template":
         return None
-    api_key = settings.ai_api_key
-    base_url = settings.ai_base_url
-    model = settings.ai_model
-    timeout = settings.ai_timeout_seconds
-    if provider == "deepseek":
-        api_key = settings.deepseek_api_key or settings.ai_api_key
-        base_url = settings.deepseek_base_url or settings.ai_base_url
-        model = settings.deepseek_model or settings.ai_model
-        timeout = settings.deepseek_timeout_seconds or settings.ai_timeout_seconds
-    if not api_key:
-        get_logger().warning("AI provider=%s 未配置 API Key，AI 生成功能未启用", provider)
+    if not settings.ai_text_api_key:
+        get_logger().warning(
+            "Text AI provider=%s 未配置 API Key，工作流 AI 生成未启用", provider
+        )
         return None
     return SmartAccessAiGenerator(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
+        api_key=settings.ai_text_api_key,
+        base_url=settings.ai_text_base_url,
+        model=settings.ai_text_model,
         provider=provider,
-        timeout_seconds=timeout,
+        timeout_seconds=settings.ai_text_timeout_seconds,
         user_agent=settings.ai_user_agent,
+        default_action_wait_seconds=settings.default_action_wait_seconds,
+        default_ocr_timeout_seconds=settings.default_ocr_timeout_seconds,
+        default_ocr_poll_interval_seconds=(
+            settings.default_ocr_poll_interval_seconds
+        ),
+        default_precheck_image_threshold=(
+            settings.default_precheck_image_threshold
+        ),
+    )
+
+
+def _build_vision_ai_generator(settings: AppSettings) -> SmartAccessAiGenerator | None:
+    """装配多模态生成器，用于 AI 辅助接入。
+
+    Args:
+        settings: 应用配置。
+
+    Returns:
+        多模态生成器；provider=template 或未配 API Key 时返回 None。
+    """
+
+    provider = settings.ai_vision_provider.lower().strip()
+    if provider == "template":
+        return None
+    if not settings.ai_vision_api_key:
+        get_logger().warning(
+            "Vision AI provider=%s 未配置 API Key，AI 辅助接入未启用", provider
+        )
+        return None
+    return SmartAccessAiGenerator(
+        api_key=settings.ai_vision_api_key,
+        base_url=settings.ai_vision_base_url,
+        model=settings.ai_vision_model,
+        provider=provider,
+        timeout_seconds=settings.ai_vision_timeout_seconds,
+        user_agent=settings.ai_user_agent,
+        enable_thinking=settings.ai_vision_enable_thinking,
+        default_action_wait_seconds=settings.default_action_wait_seconds,
+        default_ocr_timeout_seconds=settings.default_ocr_timeout_seconds,
+        default_ocr_poll_interval_seconds=(
+            settings.default_ocr_poll_interval_seconds
+        ),
+        default_precheck_image_threshold=(
+            settings.default_precheck_image_threshold
+        ),
     )

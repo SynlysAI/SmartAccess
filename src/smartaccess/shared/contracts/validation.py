@@ -7,6 +7,42 @@ import re
 from .anchors import AnchorsContract
 from .workflow import EXECUTABLE_WORKFLOW_ACTIONS, WorkflowContract
 
+WINDOWS_PATH_ILLEGAL_CHARS = set('/\\:*?"<>|')
+
+
+def validate_device_id(device_id: str | None) -> list[str]:
+    """Validate the four-part device ID used by new anchor profiles."""
+
+    issues: list[str] = []
+    if device_id is None:
+        return ["device_id is required"]
+    if device_id != device_id.strip():
+        issues.append("device_id must not have leading or trailing whitespace")
+    value = device_id.strip()
+    parts = value.split("-")
+    if len(parts) != 4:
+        issues.append(
+            "device_id must use four '-' separated parts: "
+            "体系-实验室-产品型号-设备编号"
+        )
+    if any(part.strip() != part or not part for part in parts):
+        issues.append("device_id parts must be non-empty and trim-clean")
+    illegal = sorted({char for char in value if char in WINDOWS_PATH_ILLEGAL_CHARS})
+    if illegal:
+        issues.append(
+            "device_id must not contain Windows path characters: " + "".join(illegal)
+        )
+    return issues
+
+
+def require_valid_device_id(device_id: str | None) -> str:
+    """Return a normalized device ID or raise ValueError with validation details."""
+
+    issues = validate_device_id(device_id)
+    if issues:
+        raise ValueError("; ".join(issues))
+    return str(device_id).strip()
+
 
 def validate_workflow_against_anchors(
     workflow: WorkflowContract,
@@ -31,33 +67,41 @@ def validate_workflow_against_anchors(
     if workflow.metadata.anchor_profile != anchors.profile_id:
         issues.append("workflow.metadata.anchor_profile must match anchors.profile_id")
 
-    anchor_map = anchors.anchor_map()
     for step in workflow.steps:
-        if step.action == "wait":
+        is_wait = step.action == "wait"
+        is_ocr = step.action == "ocr"
+        if is_wait and step.match_mode == "none" and not step.anchor_id:
             _validate_wait_step(step.id, step.wait_seconds, issues)
             continue
-        if step.action not in EXECUTABLE_WORKFLOW_ACTIONS:
+        if is_wait and step.wait_seconds is not None:
+            _validate_wait_step(step.id, step.wait_seconds, issues)
+        if not (is_wait or is_ocr) and step.action not in EXECUTABLE_WORKFLOW_ACTIONS:
             issues.append(f"step {step.id}: unsupported action '{step.action}'")
             continue
         if not step.anchor_id:
             issues.append(f"step {step.id}: anchor_id is required")
             continue
-        anchor = anchor_map.get(step.anchor_id)
+        anchor = anchors.anchor_for_view(step.view_id, step.anchor_id)
         if anchor is None:
-            issues.append(f"step {step.id}: unknown anchor_id '{step.anchor_id}'")
+            if anchors.anchor_map().get(step.anchor_id) is not None:
+                issues.append(
+                    f"step {step.id}: anchor_id '{step.anchor_id}' is not in "
+                    f"view '{step.view_id or 'main'}'"
+                )
+            else:
+                issues.append(f"step {step.id}: unknown anchor_id '{step.anchor_id}'")
             continue
-        if step.action not in anchor.supported_actions:
+        if not is_ocr and step.match_mode != "none":
             issues.append(
-                f"step {step.id}: action '{step.action}' not supported by "
-                f"anchor '{step.anchor_id}'"
+                f"step {step.id}: OCR match fields are only allowed for action 'ocr'"
             )
-        needs_observe_region = step.match_mode != "none"
-        if needs_observe_region and anchor.observe_region is None:
-            issues.append(
-                f"step {step.id}: anchor '{step.anchor_id}' requires "
-                "observe_region for OCR matching"
+        if is_ocr:
+            _validate_text_expectation(
+                step.id,
+                step.match_mode,
+                step.expected_text,
+                issues,
             )
-        _validate_text_expectation(step.id, step.match_mode, step.expected_text, issues)
     return issues
 
 
@@ -75,20 +119,31 @@ def _validate_wait_step(
 def _validate_text_expectation(
     step_id: str,
     match_mode: str,
-    expected_text: str | None,
+    expected_text: str | list[str] | None,
     issues: list[str],
 ) -> None:
     """校验 OCR 文本匹配字段。"""
 
-    if match_mode in {"contains", "equals", "regex"} and not (
-        expected_text or ""
-    ).strip():
+    candidates = _expected_candidates(expected_text)
+    if match_mode in {"contains", "equals", "regex"} and not candidates:
         issues.append(
             f"step {step_id}: expected_text is required when "
             f"match_mode is '{match_mode}'"
         )
-    if match_mode == "regex" and expected_text:
-        try:
-            re.compile(expected_text)
-        except re.error as exc:
-            issues.append(f"step {step_id}: invalid regex '{expected_text}': {exc}")
+    if match_mode == "regex":
+        for candidate in candidates:
+            try:
+                re.compile(candidate)
+            except re.error as exc:
+                issues.append(f"step {step_id}: invalid regex '{candidate}': {exc}")
+
+
+def _expected_candidates(expected_text: str | list[str] | None) -> list[str]:
+    """把 OCR 期望文本转成非空候选列表。"""
+
+    if expected_text is None:
+        return []
+    if isinstance(expected_text, list):
+        return [str(value).strip() for value in expected_text if str(value).strip()]
+    text = str(expected_text).strip()
+    return [text] if text else []

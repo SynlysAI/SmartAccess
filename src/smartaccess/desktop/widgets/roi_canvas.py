@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QGraphicsItem,
@@ -200,13 +200,15 @@ class RoiCanvas(QGraphicsView):
         self.setObjectName("RoiCanvas")
         self._scene.setParent(self)
         self.setBackgroundBrush(QBrush(QColor("#F0F3F8")))
-        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self._image_item: QGraphicsPixmapItem | None = None
         self._placeholder: QGraphicsRectItem | None = None
         self._placeholder_text: QGraphicsTextItem | None = None
         self._rois: dict[str, _RoiItem] = {}
         self._color_index = 0
+        self._resize_generation = 0
         self._source_size = (PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
         self._show_placeholder("截图后在此编辑 ROI")
 
@@ -228,6 +230,8 @@ class RoiCanvas(QGraphicsView):
         rect = QRectF(0, 0, pixmap.width(), pixmap.height())
         self._scene.setSceneRect(rect)
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self._update_pan_bounds()
+        self.centerOn(rect.center())
 
     def load_placeholder(self, message: str) -> None:
         """显示占位提示。"""
@@ -272,6 +276,27 @@ class RoiCanvas(QGraphicsView):
         self.roi_added.emit(name)
         self.roi_changed.emit(name)
         return name
+
+    def rename_roi(self, old_name: str, new_name: str) -> bool:
+        """重命名 ROI。
+
+        Args:
+            old_name: 当前 ROI 名称。
+            new_name: 新 ROI 名称。
+
+        Returns:
+            是否重命名成功。
+        """
+
+        if old_name not in self._rois or new_name in self._rois:
+            return False
+        item = self._rois.pop(old_name)
+        item.name = new_name
+        item._label.setText(new_name)
+        item._position_chip()
+        item.setToolTip(f"{new_name} · 拖动移动 · 拖角缩放 · 右键删除")
+        self._rois[new_name] = item
+        return True
 
     def remove_roi(self, name: str, *, emit_signal: bool = True) -> None:
         """删除 ROI。"""
@@ -355,8 +380,27 @@ class RoiCanvas(QGraphicsView):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
             self.scale(factor, factor)
+            self._update_pan_bounds()
             return
         super().wheelEvent(event)
+
+    def resizeEvent(self, event):  # noqa: N802
+        """窗口尺寸变化时更新画布可平移边界。
+
+        Args:
+            event: Qt 尺寸变化事件。
+        """
+
+        super().resizeEvent(event)
+        if self._image_item is None:
+            return
+        self._resize_generation += 1
+        resize_generation = self._resize_generation
+        self._update_pan_bounds()
+        QTimer.singleShot(
+            0,
+            lambda: self._restore_image_center(resize_generation),
+        )
 
     @staticmethod
     def _find_roi_item(item) -> _RoiItem | None:
@@ -367,6 +411,31 @@ class RoiCanvas(QGraphicsView):
                 return item
             item = item.parentItem()
         return None
+
+    def _update_pan_bounds(self) -> None:
+        """扩展画布边界，使截图任意边缘可移动到窗口中心。"""
+
+        if self._image_item is None:
+            return
+        image_rect = self._image_item.sceneBoundingRect()
+        visible_rect = self.mapToScene(self.viewport().rect()).boundingRect()
+        margin_x = max(1.0, visible_rect.width() / 2)
+        margin_y = max(1.0, visible_rect.height() / 2)
+        self._scene.setSceneRect(
+            image_rect.adjusted(-margin_x, -margin_y, margin_x, margin_y)
+        )
+
+    def _restore_image_center(self, resize_generation: int) -> None:
+        """在滚动条完成布局后恢复截图居中显示。
+
+        Args:
+            resize_generation: 触发恢复操作的窗口缩放序号。
+        """
+
+        if resize_generation != self._resize_generation or self._image_item is None:
+            return
+        self._update_pan_bounds()
+        self.centerOn(self._image_item.sceneBoundingRect().center())
 
     def _clear_background(self) -> None:
         """清除背景截图或占位符。"""

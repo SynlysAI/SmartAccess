@@ -64,6 +64,27 @@ class Executor:
         if not self._automation.window_present(title_contains):
             raise WindowMissingError(f"未找到目标窗口: {title_contains}")
 
+    def configure_step_view(self, step: WorkflowStep) -> None:
+        """配置步骤视图中的锚点集合，不切换运行时目标窗口。"""
+
+        if self._profile is None:
+            return
+        self.configure_view_id(step.view_id)
+
+    def configure_view_id(self, view_id: str | None) -> None:
+        """配置步骤使用的视图锚点集合。
+
+        Args:
+            view_id: 工作流步骤选择的视图 ID。
+        """
+
+        if self._profile is None:
+            return
+        view = self._profile.view_map().get(view_id or "main")
+        configure = getattr(self._automation, "configure_view", None)
+        if callable(configure):
+            configure(view)
+
     def requires_confirm(self, step: WorkflowStep) -> bool:
         """返回步骤执行前是否需要人工确认。
 
@@ -74,16 +95,7 @@ class Executor:
             是否需要人工确认。
         """
 
-        if step.requires_confirmation:
-            return True
-        anchor = self.anchor_for_step(step)
-        if anchor is None:
-            return False
-        return any(
-            bool(binding.requires_confirmation)
-            for binding in anchor.action_bindings
-            if binding.action == step.action
-        )
+        return bool(step.requires_confirmation)
 
     def anchor_for_step(self, step: WorkflowStep) -> AnchorDefinition | None:
         """查找步骤绑定的锚点。
@@ -97,7 +109,8 @@ class Executor:
 
         if step.action == "wait" or self._profile is None or step.anchor_id is None:
             return None
-        return self._profile.anchor_map().get(step.anchor_id)
+        anchor = self._profile.anchor_for_view(step.view_id, step.anchor_id)
+        return anchor or self._profile.anchor_map().get(step.anchor_id)
 
     def run_step(self, step: WorkflowStep) -> ActionOutcome:
         """执行一个动作步骤。
@@ -112,10 +125,13 @@ class Executor:
         anchor = self.anchor_for_step(step)
         if anchor is None:
             raise AnchorMissingError(f"未知锚点: {step.anchor_id}")
-        if step.action not in anchor.supported_actions:
-            raise ExecutorError(
-                f"锚点 {step.anchor_id} 不支持动作 {step.action}"
-            )
+        self.configure_step_view(step)
+        title = (
+            self._profile.window_signature.title_contains
+            if self._profile is not None and self._profile.window_signature is not None
+            else None
+        )
+        self.ensure_window(title)
         self._check_safety(step)
         if not self._automation.locate_anchor(step.anchor_id):
             raise AnchorMissingError(f"锚点无法定位: {step.anchor_id}")

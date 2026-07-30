@@ -48,6 +48,17 @@ class OcrReading:
 
 
 @dataclass(slots=True)
+class VisualCheckResult:
+    """一次锚点执行前视觉校验结果。"""
+
+    passed: bool
+    image_score: float | None = None
+    reference_text: str | None = None
+    current_text: str | None = None
+    detail: str = ""
+
+
+@dataclass(slots=True)
 class ActionOutcome:
     """自动化动作执行结果。"""
 
@@ -118,6 +129,9 @@ class AutomationProvider(Protocol):
     def capture_window(self, hwnd: int) -> bytes | None:
         """按窗口句柄截图。"""
 
+    def capture_windows(self, hwnds: list[int]) -> bytes | None:
+        """按多个窗口的屏幕联合区域截图。"""
+
 
 class VisionProvider(Protocol):
     """截图视觉识别提供者协议。"""
@@ -143,6 +157,16 @@ class VisionProvider(Protocol):
     def sample_color(self, roi: str) -> OcrReading:
         """采样指定 ROI 颜色。"""
 
+    def validate_anchor(
+        self,
+        *,
+        screenshot: bytes | None,
+        anchor: AnchorDefinition,
+        profile_id: str,
+        view_id: str,
+    ) -> VisualCheckResult:
+        """校验当前锚点区域是否与校准参考截图一致。"""
+
 
 class PlatformClient(Protocol):
     """SpecLabOS 平台客户端协议。"""
@@ -160,7 +184,12 @@ class PlatformClient(Protocol):
     ) -> dict[str, Any]:
         """拉取指定模板版本。"""
 
-    def list_templates(self) -> list[dict[str, Any]]:
+    def list_templates(
+        self,
+        *,
+        device_id: str | None = None,
+        source_device_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """列出云端模板。"""
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -175,8 +204,25 @@ class PlatformClient(Protocol):
     def upload_logs(self, payload: dict[str, Any]) -> bool:
         """上传运行日志。"""
 
+    def upload_run_event(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """上传 SmartAccess 运行事件。
+
+        Args:
+            run_id: SpecLabOS 运行 ID。
+            payload: 事件载荷。
+
+        Returns:
+            平台响应。
+        """
+
     def upload_results(self, payload: dict[str, Any]) -> bool:
         """上传运行结果。"""
+
+    def report_heartbeat(self, payload: dict[str, Any]) -> bool:
+        """上报执行端心跳,通知平台本节点在线。"""
+
+    def register_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """注册并校验执行端节点身份。"""
 
 
 class ArtifactStore(Protocol):

@@ -6,6 +6,8 @@
 
 v2 架构主模型是“锚点 -> 工作流 -> 执行”：锚点定义动作区域和可选 OCR 观测区域；工作流引用锚点并声明线性步骤；执行链路负责动作、OCR 轮询、默认等待和 trace 回传。
 
+当前主路径补充三条边界约束：新建设备 ID 使用 `体系-实验室-产品型号-设备编号` 四段格式；`type` 步骤可选择自由输入或运行内递增输入；运行日志在 run session 开始与结束时输出可审计边界。
+
 ## 2. 系统上下文
 
 SmartAccess 位于用户、仪器上位机软件和 SpecLabOS 之间，承担五类责任：
@@ -39,7 +41,7 @@ SmartAccess 位于用户、仪器上位机软件和 SpecLabOS 之间，承担五
 - `自动化操作执行`：把工作流步骤翻译为点击、输入、快捷键和回车等动作。
 - `OCR 观测与状态感知`：根据 observe region 截图裁剪、OCR 读取和文本匹配判断当前状态。
 - `平台通讯与适配`：与 SpecLabOS 进行任务下发、模板拉取、模板发布、状态上报和 trace 同步。
-- `日志与监控中心`：承接操作日志、截图、异常告警和性能指标。
+- `日志与监控中心`：承接操作日志、截图、异常告警和性能指标；每次运行输出 START/END 边界，标识设备 ID、作者、工作流和 session。
 
 ### 3.4 平台接口层
 
@@ -95,20 +97,22 @@ SmartAccess 位于用户、仪器上位机软件和 SpecLabOS 之间，承担五
 1. SpecLabOS 或本地用户发起实验任务。
 2. 若任务来自平台，则先获取任务上下文，再按 `template_id + template_version` 拉取模板内容。
 3. orchestrator 读取工作流、锚点集和平台适配配置。
-4. executor 准备窗口、会话和动作上下文。
+4. run service 建立 `RunSession`，记录 `device_id`、`author`、`workflow_name` 和步骤状态。
+5. executor 准备窗口、会话和动作上下文。
 
 ### 5.2 执行与观测
 
 1. executor 执行锚点动作。
-2. 如果步骤有 `expected_text` 或 `match_mode == not_empty`，observer 对该锚点 `observe_region` 做 OCR 轮询。
-3. 如果步骤没有 OCR 预期，orchestrator 按 `step.wait_seconds -> anchor.default_wait_seconds -> app default 2.0s` 等待。
-4. orchestrator 依据结果决定继续、失败、取消或进入异常。
+2. 如果 `type` 步骤声明 `input_mode: incrementing`，orchestrator 在执行前按 `workflow_id + sequence_key` 读取持久化计数并解析实际输入值；同一 run session 内相同变量复用同一个值，成功完成后才推进下次值，不修改原始 workflow。
+3. 如果步骤有 `expected_text` 或 `match_mode == not_empty`，observer 对该锚点 `observe_region` 做 OCR 轮询。
+4. 如果步骤没有 OCR 预期，orchestrator 按 `step.wait_seconds -> anchor.default_wait_seconds -> app default 2.0s` 等待。
+5. orchestrator 依据结果决定继续、失败、取消或进入异常。
 
 ### 5.3 回传、发布与归档
 
 1. 平台适配层提交状态、参数、日志和 trace 事实。
 2. 标准化工作流可由模板服务发布至 SpecLabOS 模板中心。
-3. 日志中心写入本地轨迹和关键产物路径。
+3. 日志中心写入本地轨迹、START/END 运行边界和关键产物路径。
 4. 会话结束后归档工作流、日志和截图索引。
 
 ## 6. 关键状态流转

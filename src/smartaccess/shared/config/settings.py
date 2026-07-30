@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -12,6 +13,7 @@ DEFAULT_AI_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/125.0.0.0 Safari/537.36"
 )
+USER_SETTINGS_FILENAME = "application_settings.json"
 
 
 class AppSettings(BaseModel):
@@ -24,6 +26,8 @@ class AppSettings(BaseModel):
     automation_provider: str = Field(default="stub")
     vision_provider: str = Field(default="stub")
     vision_api_url: str = Field(default="http://100.84.59.58:8090")
+    ocr_mode: str = Field(default="local")
+    ocr_api_url: str = Field(default="http://100.84.59.58:8090")
     platform_provider: str = Field(default="stub")
     ai_provider: str = Field(default="template")
     ai_api_key: str | None = Field(default=None)
@@ -31,12 +35,27 @@ class AppSettings(BaseModel):
     ai_model: str = Field(default="GPT-5.4")
     ai_timeout_seconds: float = Field(default=30.0, gt=0)
     ai_user_agent: str = Field(default=DEFAULT_AI_USER_AGENT)
+    ai_text_provider: str = Field(default="template")
+    ai_text_base_url: str = Field(default="https://fufei.mossx.ai/v1")
+    ai_text_model: str = Field(default="GPT-5.4")
+    ai_text_api_key: str | None = Field(default=None)
+    ai_text_timeout_seconds: float = Field(default=30.0, gt=0)
+    ai_vision_provider: str = Field(default="template")
+    ai_vision_base_url: str = Field(default="https://fufei.mossx.ai/v1")
+    ai_vision_model: str = Field(default="GPT-5.4")
+    ai_vision_api_key: str | None = Field(default=None)
+    ai_vision_timeout_seconds: float = Field(default=30.0, gt=0)
+    ai_vision_enable_thinking: bool = Field(default=False)
     deepseek_api_key: str | None = Field(default=None)
     deepseek_base_url: str = Field(default="https://api.deepseek.com")
     deepseek_model: str = Field(default="deepseek-chat")
     deepseek_timeout_seconds: float = Field(default=30.0, gt=0)
     speclabos_base_url: str | None = Field(default=None)
     speclabos_api_key: str | None = Field(default=None)
+    speclabos_datahub_key: str | None = Field(default=None)
+    speclabos_username: str = Field(default="")
+    speclabos_user_role: str = Field(default="")
+    speclabos_user_organization: str = Field(default="")
     speclabos_timeout_seconds: float = Field(default=20.0, gt=0)
     edge_api_host: str = Field(default="127.0.0.1")
     edge_api_port: int = Field(default=7000, ge=1, le=65535)
@@ -44,24 +63,42 @@ class AppSettings(BaseModel):
     udp_port: int = Field(default=8889, ge=1, le=65535)
     udp_timeout_seconds: float = Field(default=6.0, gt=0)
     process_executor_provider: str = Field(default="stub")
+    device_id: str = Field(default="")
+    rabbitmq_host: str = Field(default="127.0.0.1")
+    rabbitmq_port: int = Field(default=5672, ge=1, le=65535)
+    rabbitmq_username: str = Field(default="guest")
+    rabbitmq_password: str = Field(default="guest")
+    rabbitmq_enabled: bool = Field(default=False)
+    default_action_wait_seconds: float = Field(default=1.0, ge=0)
+    default_ocr_timeout_seconds: float = Field(default=10.0, ge=0)
+    default_ocr_poll_interval_seconds: float = Field(default=0.5, ge=0.1)
+    default_precheck_image_threshold: float = Field(default=0.8, ge=0, le=1)
 
     @classmethod
     def from_env(cls) -> "AppSettings":
-        """从环境变量和项目根目录 .env 文件读取配置。
+        """从环境变量、用户配置和项目根目录 .env 文件读取配置。
 
         Returns:
             应用配置对象。
         """
 
         env_file_values = cls._read_env_file()
+        workspace_dir = Path(
+            os.getenv("SMARTACCESS_WORKSPACE_DIR")
+            or env_file_values.get("SMARTACCESS_WORKSPACE_DIR")
+            or "workspace"
+        )
+        user_values = cls.load_user_overrides(workspace_dir)
 
         def _get(name: str, default: str | None = None) -> str | None:
             value = os.getenv(name)
-            if value in (None, ""):
-                value = env_file_values.get(name)
+            if value not in (None, ""):
+                return value
+            if name in user_values:
+                return user_values[name]
+            value = env_file_values.get(name)
             return value if value not in (None, "") else default
 
-        workspace_dir = _get("SMARTACCESS_WORKSPACE_DIR", "workspace")
         ai_base_url = _get(
             "SMARTACCESS_AI_BASE_URL",
             _get("DEEPSEEK_BASE_URL", "https://fufei.mossx.ai/v1"),
@@ -75,17 +112,51 @@ class AppSettings(BaseModel):
             _get("DEEPSEEK_TIMEOUT_SECONDS", "30"),
         )
 
+        legacy_provider = _get("SMARTACCESS_AI_PROVIDER", "template") or "template"
+        legacy_base_url = ai_base_url or "https://fufei.mossx.ai/v1"
+        legacy_model = ai_model or "GPT-5.4"
+        legacy_api_key = _get("SMARTACCESS_AI_API_KEY", _get("DEEPSEEK_API_KEY"))
+        legacy_timeout = ai_timeout or "30"
+
+        ai_text_provider = _get("SMARTACCESS_AI_TEXT_PROVIDER", legacy_provider) or legacy_provider
+        ai_text_base_url = _get("SMARTACCESS_AI_TEXT_BASE_URL", legacy_base_url)
+        ai_text_model = _get("SMARTACCESS_AI_TEXT_MODEL", legacy_model) or legacy_model
+        ai_text_api_key = _get("SMARTACCESS_AI_TEXT_API_KEY", legacy_api_key)
+        ai_text_timeout_raw = _get("SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS", legacy_timeout) or legacy_timeout
+
+        ai_vision_provider = _get("SMARTACCESS_AI_VISION_PROVIDER", legacy_provider) or legacy_provider
+        ai_vision_base_url = _get("SMARTACCESS_AI_VISION_BASE_URL", legacy_base_url)
+        ai_vision_model = _get("SMARTACCESS_AI_VISION_MODEL", legacy_model) or legacy_model
+        ai_vision_api_key = _get("SMARTACCESS_AI_VISION_API_KEY", legacy_api_key)
+        ai_vision_timeout_raw = _get("SMARTACCESS_AI_VISION_TIMEOUT_SECONDS", legacy_timeout) or legacy_timeout
+        ai_vision_enable_thinking = (
+            _get("SMARTACCESS_AI_VISION_ENABLE_THINKING", "false") or "false"
+        ).lower() == "true"
+
+        ocr_mode = _get("SMARTACCESS_OCR_MODE")
+        legacy_vision_provider = _get("SMARTACCESS_VISION_PROVIDER", "stub") or "stub"
+        if not ocr_mode:
+            if legacy_vision_provider.lower() == "local":
+                ocr_mode = "local"
+            elif legacy_vision_provider.lower() == "api":
+                ocr_mode = "paddleocr-vl"
+            else:
+                ocr_mode = "stub"
+        ocr_api_url = _get(
+            "SMARTACCESS_OCR_API_URL",
+            _get("SMARTACCESS_VISION_API_URL", "http://100.84.59.58:8090"),
+        ) or "http://100.84.59.58:8090"
+
         return cls(
-            workspace_dir=Path(workspace_dir or "workspace"),
+            workspace_dir=workspace_dir,
             log_level=_get("SMARTACCESS_LOG_LEVEL", "INFO") or "INFO",
             automation_provider=(
                 _get("SMARTACCESS_AUTOMATION_PROVIDER", "stub") or "stub"
             ),
-            vision_provider=_get("SMARTACCESS_VISION_PROVIDER", "stub") or "stub",
-            vision_api_url=_get(
-                "SMARTACCESS_VISION_API_URL", "http://100.84.59.58:8090"
-            )
-            or "http://100.84.59.58:8090",
+            vision_provider=legacy_vision_provider,
+            vision_api_url=ocr_api_url,
+            ocr_mode=ocr_mode,
+            ocr_api_url=ocr_api_url,
             platform_provider=_get("SMARTACCESS_PLATFORM_PROVIDER", "stub") or "stub",
             ai_provider=_get("SMARTACCESS_AI_PROVIDER", "template") or "template",
             ai_api_key=_get("SMARTACCESS_AI_API_KEY", _get("DEEPSEEK_API_KEY")),
@@ -96,6 +167,17 @@ class AppSettings(BaseModel):
                 _get("SMARTACCESS_AI_USER_AGENT", DEFAULT_AI_USER_AGENT)
                 or DEFAULT_AI_USER_AGENT
             ),
+            ai_text_provider=ai_text_provider,
+            ai_text_base_url=ai_text_base_url or "https://fufei.mossx.ai/v1",
+            ai_text_model=ai_text_model,
+            ai_text_api_key=ai_text_api_key,
+            ai_text_timeout_seconds=float(ai_text_timeout_raw),
+            ai_vision_provider=ai_vision_provider,
+            ai_vision_base_url=ai_vision_base_url or "https://fufei.mossx.ai/v1",
+            ai_vision_model=ai_vision_model,
+            ai_vision_api_key=ai_vision_api_key,
+            ai_vision_timeout_seconds=float(ai_vision_timeout_raw),
+            ai_vision_enable_thinking=ai_vision_enable_thinking,
             deepseek_api_key=_get("DEEPSEEK_API_KEY"),
             deepseek_base_url=(
                 _get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -107,6 +189,7 @@ class AppSettings(BaseModel):
             ),
             speclabos_base_url=_get("SPECLABOS_BASE_URL"),
             speclabos_api_key=_get("SPECLABOS_API_KEY"),
+            speclabos_datahub_key=_get("SPECLABOS_DATAHUB_KEY"),
             speclabos_timeout_seconds=float(
                 _get("SPECLABOS_TIMEOUT_SECONDS", "20") or "20"
             ),
@@ -122,7 +205,153 @@ class AppSettings(BaseModel):
             process_executor_provider=(
                 _get("SMARTACCESS_PROCESS_EXECUTOR_PROVIDER", "stub") or "stub"
             ),
+            device_id=_get("SMARTACCESS_DEVICE_ID", "") or "",
+            rabbitmq_host=(
+                _get("SMARTACCESS_RABBITMQ_HOST", "127.0.0.1") or "127.0.0.1"
+            ),
+            rabbitmq_port=int(_get("SMARTACCESS_RABBITMQ_PORT", "5672") or "5672"),
+            rabbitmq_username=(
+                _get("SMARTACCESS_RABBITMQ_USERNAME", "guest") or "guest"
+            ),
+            rabbitmq_password=(
+                _get("SMARTACCESS_RABBITMQ_PASSWORD", "guest") or "guest"
+            ),
+            rabbitmq_enabled=(
+                _get("SMARTACCESS_RABBITMQ_ENABLED", "false") or "false"
+            ).lower()
+            == "true",
+            default_action_wait_seconds=float(
+                _get("SMARTACCESS_DEFAULT_ACTION_WAIT_SECONDS", "1.0") or "1.0"
+            ),
+            default_ocr_timeout_seconds=float(
+                _get("SMARTACCESS_DEFAULT_OCR_TIMEOUT_SECONDS", "10.0") or "10.0"
+            ),
+            default_ocr_poll_interval_seconds=float(
+                _get("SMARTACCESS_DEFAULT_OCR_POLL_INTERVAL_SECONDS", "0.5")
+                or "0.5"
+            ),
+            default_precheck_image_threshold=float(
+                _get("SMARTACCESS_DEFAULT_PRECHECK_IMAGE_THRESHOLD", "0.8")
+                or "0.8"
+            ),
         )
+
+    @classmethod
+    def load_user_overrides(cls, workspace_dir: Path | str) -> dict[str, str]:
+        """读取工作区内的用户配置覆盖值。
+
+        Args:
+            workspace_dir: 当前工作区目录。
+
+        Returns:
+            以环境变量名称为键的用户配置。
+        """
+
+        path = cls.user_settings_path(workspace_dir)
+        if not path.exists():
+            return {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(key): "" if value is None else str(value)
+            for key, value in raw.items()
+        }
+
+    @classmethod
+    def save_user_overrides(
+        cls,
+        workspace_dir: Path | str,
+        values: dict[str, str],
+    ) -> Path:
+        """保存工作区用户配置覆盖值。
+
+        Args:
+            workspace_dir: 当前工作区目录。
+            values: 以环境变量名称为键的配置值。
+
+        Returns:
+            已写入的用户配置文件路径。
+        """
+
+        path = cls.user_settings_path(workspace_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return path
+
+    @classmethod
+    def clear_user_overrides(cls, workspace_dir: Path | str) -> None:
+        """删除工作区用户配置，使设置回退到 .env。"""
+
+        path = cls.user_settings_path(workspace_dir)
+        if path.exists():
+            path.unlink()
+
+    @staticmethod
+    def user_settings_path(workspace_dir: Path | str) -> Path:
+        """返回工作区用户配置文件路径。
+
+        Args:
+            workspace_dir: 当前工作区目录。
+
+        Returns:
+            用户配置 JSON 路径。
+        """
+
+        return Path(workspace_dir) / "app_state" / USER_SETTINGS_FILENAME
+
+    @staticmethod
+    def save_env_value(
+        name: str,
+        value: str,
+        path: Path | None = None,
+    ) -> Path:
+        """更新项目 .env 中的单个配置值并保留其他内容。
+
+        Args:
+            name: 环境变量名称。
+            value: 待保存的环境变量值。
+            path: 可选 .env 文件路径。
+
+        Returns:
+            已更新的 .env 文件路径。
+        """
+
+        env_path = path or Path.cwd() / ".env"
+        try:
+            original = env_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            original = ""
+        newline = "\r\n" if "\r\n" in original else "\n"
+        serialized = (
+            f'"{value}"'
+            if any(character.isspace() for character in value) or "#" in value
+            else value
+        )
+        replacement = f"{name}={serialized}"
+        lines = original.splitlines()
+        replaced = False
+        for index, raw_line in enumerate(lines):
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key = stripped.split("=", 1)[0].strip()
+            if key == name:
+                lines[index] = replacement
+                replaced = True
+                break
+        if not replaced:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.append(replacement)
+        env_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+        return env_path
 
     @staticmethod
     def _read_env_file(path: Path | None = None) -> dict[str, str]:
@@ -173,20 +402,10 @@ class AppSettings(BaseModel):
             return cleaned[1:-1]
         return cleaned
 
-    @property
-    def ai_configured(self) -> bool:
-        """在线 AI 配置是否可用。"""
-
-        return bool(self.ai_api_key)
-
-    @property
-    def deepseek_configured(self) -> bool:
-        """旧 DeepSeek 配置是否可用。"""
-
-        return bool(self.deepseek_api_key)
 
     @property
     def speclabos_configured(self) -> bool:
         """SpecLabOS 平台配置是否可用。"""
 
         return bool(self.speclabos_base_url)
+

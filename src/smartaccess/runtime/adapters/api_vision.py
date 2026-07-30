@@ -8,12 +8,18 @@
 from __future__ import annotations
 
 import base64
+import unicodedata
 from pathlib import Path
 from io import BytesIO
 from typing import Any
 
-from smartaccess.runtime.application.ports import OcrReading
-from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
+from smartaccess.runtime.application.ports import OcrReading, VisualCheckResult
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorRegion, PixelRegion
+
+
+DEFAULT_OCR_MODE = "paddleocr-vl"
+PADDLEOCR_VL_MODES = {"paddleocr-vl", "paddleocr_vl", "vl"}
+PADDLEX_OCR_MODES = {"paddlex", "paddlex-ocr", "paddlex_ocr"}
 
 
 # --------------------------------------------------------------------------- #
@@ -21,10 +27,16 @@ from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
 # --------------------------------------------------------------------------- #
 _PIL_AVAILABLE = False
 _Image: Any = None
+_ImageChops: Any = None
+_ImageStat: Any = None
 
 try:
     from PIL import Image as _PILImage
+    from PIL import ImageChops as _PILImageChops
+    from PIL import ImageStat as _PILImageStat
     _Image = _PILImage
+    _ImageChops = _PILImageChops
+    _ImageStat = _PILImageStat
     _PIL_AVAILABLE = True
 except ImportError:
     pass
@@ -52,6 +64,7 @@ class ApiVisionProvider:
         self,
         *,
         api_url: str,
+        ocr_mode: str = DEFAULT_OCR_MODE,
         workspace_dir: Path | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
@@ -59,12 +72,14 @@ class ApiVisionProvider:
 
         Args:
             api_url: OCR API 基础地址 (例: http://100.84.59.58:8090)。
+            ocr_mode: 远程 OCR 接口模式。
             workspace_dir: 工作区目录。
             timeout_seconds: API 请求超时秒数。
         """
         _require_pil()
 
         self._api_url = api_url.rstrip("/")
+        self._ocr_mode = self._normalize_ocr_mode(ocr_mode)
         self._workspace_dir = workspace_dir
         self._timeout = timeout_seconds
         self._screenshot: bytes | None = None
@@ -252,9 +267,98 @@ class ApiVisionProvider:
             detail=f"sampled RGB=({int(r)},{int(g)},{int(b)})",
         )
 
+    def validate_anchor(
+        self,
+        *,
+        screenshot: bytes | None,
+        anchor: AnchorDefinition,
+        profile_id: str,
+        view_id: str,
+    ) -> VisualCheckResult:
+        """使用Pillow和远程OCR执行锚点动作前校验。"""
+
+        precheck = anchor.precheck
+        if precheck is None:
+            return VisualCheckResult(passed=True, detail="precheck disabled")
+        if screenshot is None:
+            return VisualCheckResult(passed=False, detail="current screenshot unavailable")
+        reference_path = self._reference_capture_path(profile_id, view_id)
+        if not reference_path.exists():
+            return VisualCheckResult(
+                passed=False,
+                detail=f"reference capture unavailable: {reference_path}",
+            )
+        current_crop = self._crop_precheck_region(
+            screenshot,
+            precheck.region,
+            use_normalized=True,
+        )
+        reference_crop = self._crop_precheck_region(
+            reference_path.read_bytes(),
+            precheck.region,
+            use_normalized=False,
+        )
+        if current_crop is None or reference_crop is None:
+            return VisualCheckResult(passed=False, detail="precheck region is invalid")
+
+        image_score = None
+        image_passed = True
+        if precheck.mode in {"image", "image_text"}:
+            image_score = self._image_similarity(reference_crop, current_crop)
+            image_passed = image_score >= precheck.image_threshold
+
+        reference_text = None
+        current_text = None
+        text_passed = True
+        if precheck.mode in {"text", "image_text"}:
+            reference_reading = self._api_ocr(reference_crop, anchor.id)
+            current_reading = self._api_ocr(current_crop, anchor.id)
+            reference_text = reference_reading.text
+            current_text = current_reading.text
+            normalized_reference = " ".join(
+                unicodedata.normalize("NFKC", reference_text).strip().split()
+            ).casefold()
+            normalized_current = " ".join(
+                unicodedata.normalize("NFKC", current_text).strip().split()
+            ).casefold()
+            text_passed = bool(normalized_reference) and (
+                normalized_reference == normalized_current
+            )
+        detail = f"mode={precheck.mode}"
+        if image_score is not None:
+            detail += f" image_score={image_score:.3f}/{precheck.image_threshold:.3f}"
+        return VisualCheckResult(
+            passed=image_passed and text_passed,
+            image_score=image_score,
+            reference_text=reference_text,
+            current_text=current_text,
+            detail=detail,
+        )
+
     # -- helpers ----------------------------------------------------------- #
     def _api_ocr(self, img_bytes: bytes, label: str) -> OcrReading:
         """调用远程 OCR API 并解析结果。
+
+        Args:
+            img_bytes: PNG 图像字节。
+            label: 结果标签。
+
+        Returns:
+            OCR 读取结果。
+        """
+        if self._ocr_mode in PADDLEX_OCR_MODES:
+            return self._paddlex_ocr(img_bytes, label)
+        if self._ocr_mode in PADDLEOCR_VL_MODES:
+            return self._paddleocr_vl_ocr(img_bytes, label)
+        return OcrReading(
+            roi=label,
+            text="",
+            confidence=0.0,
+            detail=f"unsupported OCR mode: {self._ocr_mode}",
+        )
+
+    def _paddleocr_vl_ocr(self, img_bytes: bytes, label: str) -> OcrReading:
+        """调用 PaddleOCR-VL 远程服务并解析布局结果。
 
         Args:
             img_bytes: PNG 图像字节。
@@ -279,7 +383,7 @@ class ApiVisionProvider:
 
         try:
             resp = self._http.post(
-                f"{self._api_url}/layout-parsing",
+                self._api_endpoint("layout-parsing"),
                 json=payload,
                 timeout=self._timeout,
             )
@@ -321,8 +425,151 @@ class ApiVisionProvider:
             roi=label,
             text=combined,
             confidence=avg_score,
-            detail="api_ocr",
+            detail="api_ocr:paddleocr-vl",
         )
+
+    def _paddlex_ocr(self, img_bytes: bytes, label: str) -> OcrReading:
+        """调用 PaddleX OCR 远程服务并解析 OCR 结果。
+
+        Args:
+            img_bytes: PNG 图像字节。
+            label: 结果标签。
+
+        Returns:
+            OCR 读取结果。
+        """
+        image_b64 = self._encode_paddlex_image(img_bytes)
+        payload = {"file": image_b64, "fileType": 1}
+
+        try:
+            resp = self._http.post(
+                self._api_endpoint("ocr"),
+                json=payload,
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            result = resp.json()["result"]
+        except Exception as exc:
+            return OcrReading(
+                roi=label, text="", confidence=0.0, detail=f"API error: {exc}"
+            )
+
+        ocr_results = result.get("ocrResults", [])
+        if not ocr_results:
+            return OcrReading(
+                roi=label, text="", confidence=0.0, detail="no ocr results"
+            )
+
+        texts: list[str] = []
+        scores: list[float] = []
+        for item in ocr_results:
+            pruned = item.get("prunedResult", {}) if isinstance(item, dict) else {}
+            line_texts, line_scores = self._extract_paddlex_texts(pruned)
+            texts.extend(line_texts)
+            scores.extend(line_scores)
+
+        combined = " ".join(texts)
+        avg_score = float(sum(scores) / len(scores)) if scores else 0.9
+        return OcrReading(
+            roi=label,
+            text=combined,
+            confidence=avg_score,
+            detail="api_ocr:paddlex",
+        )
+
+    def _api_endpoint(self, endpoint: str) -> str:
+        """拼接 API 地址，并兼容已包含接口路径的配置。
+
+        Args:
+            endpoint: 接口路径名称。
+
+        Returns:
+            可直接请求的完整接口地址。
+        """
+        suffix = f"/{endpoint}"
+        if self._api_url.endswith(suffix):
+            return self._api_url
+        return f"{self._api_url}{suffix}"
+
+    @staticmethod
+    def _normalize_ocr_mode(ocr_mode: str) -> str:
+        """标准化 OCR 模式名称。
+
+        Args:
+            ocr_mode: 原始 OCR 模式配置。
+
+        Returns:
+            标准化后的 OCR 模式。
+        """
+        normalized = (ocr_mode or DEFAULT_OCR_MODE).strip().lower()
+        return normalized or DEFAULT_OCR_MODE
+
+    @staticmethod
+    def _encode_paddlex_image(img_bytes: bytes) -> str:
+        """按 PaddleX 服务调用习惯预处理并编码图片。
+
+        Args:
+            img_bytes: 原始 PNG 图像字节。
+
+        Returns:
+            JPEG 图像的 Base64 字符串。
+        """
+        img = _Image.open(BytesIO(img_bytes)).convert("RGB")
+        max_size = 960
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            resampling = getattr(getattr(_Image, "Resampling", None), "LANCZOS", None)
+            if resampling is None:
+                resampling = getattr(_Image, "LANCZOS", 1)
+            img = img.resize(new_size, resampling)
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG")
+        return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    @staticmethod
+    def _extract_paddlex_texts(pruned: dict[str, Any]) -> tuple[list[str], list[float]]:
+        """从 PaddleX OCR 的 prunedResult 中提取文本和置信度。
+
+        Args:
+            pruned: PaddleX OCR 返回的裁剪结果。
+
+        Returns:
+            文本列表和置信度列表。
+        """
+        raw_texts = ApiVisionProvider._ensure_list(
+            pruned.get("rec_texts") or pruned.get("texts")
+        )
+        raw_scores = ApiVisionProvider._ensure_list(
+            pruned.get("rec_scores") or pruned.get("scores")
+        )
+        texts = [str(text).strip() for text in raw_texts if str(text).strip()]
+        scores = [float(score) for score in raw_scores if score is not None]
+        if texts:
+            return texts, scores
+        text = pruned.get("rec_text") or pruned.get("text")
+        if not text:
+            return [], []
+        score = pruned.get("rec_score", pruned.get("score"))
+        return [str(text).strip()], [float(score)] if score is not None else []
+
+    @staticmethod
+    def _ensure_list(value: Any) -> list[Any]:
+        """将 OCR 返回字段标准化为列表。
+
+        Args:
+            value: OCR 返回的原始字段值。
+
+        Returns:
+            标准化后的列表。
+        """
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        return [value]
 
     @staticmethod
     def _extract_box_scores(pruned: dict) -> list[float]:
@@ -367,10 +614,52 @@ class ApiVisionProvider:
         Returns:
             裁剪后的 PNG 字节；无法裁剪时返回 None。
         """
-        observe = getattr(anchor, "observe_region", None)
-        if observe is None:
-            return None
-        return self._crop_pixel_roi(img_bytes, observe.pixel)
+        return self._crop_pixel_roi(img_bytes, anchor.action_region.pixel)
+
+    def _reference_capture_path(self, profile_id: str, view_id: str) -> Path:
+        """返回锚点校准参考截图路径。"""
+
+        relative = Path("anchors") / profile_id
+        if view_id and view_id != "main":
+            relative = relative / "views" / view_id
+        relative = relative / "capture.png"
+        return self._workspace_dir / relative if self._workspace_dir else relative
+
+    @staticmethod
+    def _crop_precheck_region(
+        image_bytes: bytes,
+        region: AnchorRegion,
+        *,
+        use_normalized: bool,
+    ) -> bytes | None:
+        """按执行前校验区域裁剪PNG图像。"""
+
+        image = _Image.open(BytesIO(image_bytes))
+        if use_normalized:
+            width, height = image.size
+            normalized = region.normalized
+            roi = PixelRegion(
+                x=normalized.x * width,
+                y=normalized.y * height,
+                width=normalized.width * width,
+                height=normalized.height * height,
+            )
+        else:
+            roi = region.pixel
+        return ApiVisionProvider._crop_pixel_roi(image_bytes, roi)
+
+    @staticmethod
+    def _image_similarity(reference_bytes: bytes, current_bytes: bytes) -> float:
+        """计算两张区域图像的像素相似度。"""
+
+        reference = _Image.open(BytesIO(reference_bytes)).convert("RGB")
+        current = _Image.open(BytesIO(current_bytes)).convert("RGB")
+        if current.size != reference.size:
+            current = current.resize(reference.size)
+        difference = _ImageChops.difference(reference, current)
+        rms = _ImageStat.Stat(difference).rms
+        mean_rms = sum(float(value) for value in rms) / max(len(rms), 1)
+        return max(0.0, min(1.0, 1.0 - mean_rms / 255.0))
 
     @staticmethod
     def _crop_pixel_roi(img_bytes: bytes, roi: PixelRegion) -> bytes | None:

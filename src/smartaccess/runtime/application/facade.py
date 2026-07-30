@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import threading
+import time
 from typing import Any
 
 from smartaccess.runtime.application.ports import (
     ArtifactStore,
     AutomationProvider,
+    OcrReading,
     PlatformClient,
     VisionProvider,
     WindowInfo,
@@ -22,7 +24,10 @@ from smartaccess.runtime.application.migration_service import (
     MigrationService,
 )
 from smartaccess.runtime.application.platform_sync_service import PlatformSyncService
-from smartaccess.runtime.application.run_session_service import RunSessionService
+from smartaccess.runtime.application.run_session_service import (
+    IncrementCounterService,
+    RunSessionService,
+)
 from smartaccess.runtime.application.template_service import (
     TemplateRecord,
     TemplateStats,
@@ -36,11 +41,14 @@ from smartaccess.runtime.application.workspace_service import (
     DashboardProjection,
     WorkspaceService,
 )
+from smartaccess.runtime.application.workflow_input_resolver import (
+    resolve_runtime_input_placeholders,
+)
 from smartaccess.runtime.domain.run_session import RunSession, RunStep
 from smartaccess.runtime.orchestration import Orchestrator
 from smartaccess.shared.config.settings import AppSettings
-from smartaccess.shared.contracts.anchors import AnchorsContract
-from smartaccess.shared.contracts.workflow import WorkflowContract
+from smartaccess.shared.contracts.anchors import AnchorDefinition, AnchorsContract
+from smartaccess.shared.contracts.workflow import WorkflowContract, WorkflowIncrementRule
 from smartaccess.shared.events.bus import EventBus, Subscriber
 from smartaccess.shared.logging import get_logger
 
@@ -51,9 +59,10 @@ class RuntimeStatus:
 
     workspace_dir: Path
     automation_provider: str
-    vision_provider: str
+    ocr_mode: str
     platform_provider: str
-    ai_provider: str
+    ai_text_provider: str
+    ai_vision_provider: str
 
 
 class RuntimeFacade:
@@ -75,6 +84,7 @@ class RuntimeFacade:
         run_sessions: RunSessionService,
         incidents: IncidentService,
         platform_sync: PlatformSyncService,
+        increment_counters: IncrementCounterService | None = None,
         orchestrator: Orchestrator | None = None,
         migration: MigrationService | None = None,
         ai_generator: InstrumentProfileDraftGenerator | None = None,
@@ -113,6 +123,7 @@ class RuntimeFacade:
         self._run_sessions = run_sessions
         self._incidents = incidents
         self._platform_sync = platform_sync
+        self._increment_counters = increment_counters
         self._orchestrator = orchestrator
         self._migration = migration
         self._ai_generator = ai_generator
@@ -136,9 +147,10 @@ class RuntimeFacade:
         return RuntimeStatus(
             workspace_dir=Path(self._settings.workspace_dir),
             automation_provider=self._settings.automation_provider,
-            vision_provider=self._settings.vision_provider,
+            ocr_mode=self._settings.ocr_mode,
             platform_provider=self._settings.platform_provider,
-            ai_provider=self._settings.ai_provider,
+            ai_text_provider=self._settings.ai_text_provider,
+            ai_vision_provider=self._settings.ai_vision_provider,
         )
 
     def workspace_dir(self) -> Path:
@@ -150,6 +162,22 @@ class RuntimeFacade:
         """返回应用配置。"""
 
         return self._settings
+
+    def preview_increment_value(
+        self,
+        workflow_id: str,
+        rule: dict[str, Any] | WorkflowIncrementRule,
+    ) -> int:
+        """Return the next persisted increment value for a workflow rule."""
+
+        normalized = (
+            rule
+            if isinstance(rule, WorkflowIncrementRule)
+            else WorkflowIncrementRule.model_validate(rule)
+        )
+        if self._increment_counters is None:
+            return normalized.start
+        return self._increment_counters.preview_next(workflow_id, normalized)
 
     def discover_windows(self) -> list[WindowInfo]:
         """扫描可接入窗口。"""
@@ -167,6 +195,23 @@ class RuntimeFacade:
         """
 
         return self._automation.capture_window(hwnd)
+
+    def capture_windows(self, hwnds: list[int]) -> bytes | None:
+        """截取多个窗口的屏幕联合区域。
+
+        Args:
+            hwnds: 窗口句柄列表。
+
+        Returns:
+            PNG 字节；失败时返回 None。
+        """
+
+        method = getattr(self._automation, "capture_windows", None)
+        if callable(method):
+            return method(hwnds)
+        if len(hwnds) == 1:
+            return self._automation.capture_window(hwnds[0])
+        return None
 
     def platform_health(self) -> bool:
         """返回平台连接是否可用。"""
@@ -200,8 +245,15 @@ class RuntimeFacade:
         device_id: str,
         title_contains: str,
         anchors: list[dict[str, Any]],
+        views: list[dict[str, Any]] | None = None,
         capture_width: int | None,
         capture_height: int | None,
+        capture_origin_x: int | None = None,
+        capture_origin_y: int | None = None,
+        capture_mode: str = "window",
+        capture_screen_origin_x: int | None = None,
+        capture_screen_origin_y: int | None = None,
+        capture_windows: list[dict[str, Any]] | None = None,
     ) -> AnchorsContract:
         """创建并保存设备校准配置。
 
@@ -211,6 +263,12 @@ class RuntimeFacade:
             anchors: 锚点原始数据。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
+            capture_origin_x: 兼容旧窗口模式的截图原点 X 偏移。
+            capture_origin_y: 兼容旧窗口模式的截图原点 Y 偏移。
+            capture_mode: 截图坐标模式。
+            capture_screen_origin_x: 校准截图画布在屏幕上的左上角 X。
+            capture_screen_origin_y: 校准截图画布在屏幕上的左上角 Y。
+            capture_windows: 参与截图的窗口元数据。
 
         Returns:
             已保存的锚点配置。
@@ -220,11 +278,24 @@ class RuntimeFacade:
             profile_id=device_id,
             title_contains=title_contains,
             anchors=anchors,
+            views=views,
             capture_width=capture_width,
             capture_height=capture_height,
+            capture_origin_x=capture_origin_x,
+            capture_origin_y=capture_origin_y,
+            capture_mode=capture_mode,
+            capture_screen_origin_x=capture_screen_origin_x,
+            capture_screen_origin_y=capture_screen_origin_y,
+            capture_windows=capture_windows,
         )
 
-    def save_instrument_capture(self, device_id: str, data: bytes) -> Path:
+    def save_instrument_capture(
+        self,
+        device_id: str,
+        data: bytes,
+        *,
+        view_id: str | None = None,
+    ) -> Path:
         """保存设备校准截图。
 
         Args:
@@ -235,9 +306,14 @@ class RuntimeFacade:
             保存后的截图路径。
         """
 
-        return self._anchors.save_capture(device_id, data)
+        return self._anchors.save_capture(device_id, data, view_id=view_id)
 
-    def load_instrument_capture(self, device_id: str | None) -> bytes | None:
+    def load_instrument_capture(
+        self,
+        device_id: str | None,
+        *,
+        view_id: str | None = None,
+    ) -> bytes | None:
         """读取设备校准截图。
 
         Args:
@@ -247,7 +323,36 @@ class RuntimeFacade:
             PNG 截图字节；不存在时返回 None。
         """
 
-        return self._anchors.load_capture(device_id)
+        return self._anchors.load_capture(device_id, view_id=view_id)
+
+    def delete_instrument_capture(
+        self,
+        device_id: str,
+        *,
+        view_id: str | None = None,
+    ) -> None:
+        """删除设备校准截图。
+
+        Args:
+            device_id: 设备 ID。
+            view_id: 视图 ID；为空或 main 时删除主截图。
+        """
+
+        self._anchors.delete_capture(device_id, view_id=view_id)
+
+    def preview_anchor_ocr(
+        self,
+        *,
+        capture_data: bytes,
+        anchor_payload: dict[str, Any],
+    ) -> OcrReading:
+        """对一张校准截图中的单个锚点执行一次 OCR 预览。"""
+
+        anchor = AnchorDefinition.model_validate(anchor_payload)
+        method = getattr(self._vision, "read_roi_text", None)
+        if not callable(method):
+            raise RuntimeError("当前视觉提供者不支持锚点 OCR 预览")
+        return method(screenshot=capture_data, anchor=anchor, roi=None)
 
     def draft_instrument_from_prompt(
         self,
@@ -291,6 +396,16 @@ class RuntimeFacade:
         """
 
         return self._workflows.draft_from_prompt(prompt, context)
+
+    def workflow_ai_reasoning(self) -> str:
+        """返回最近一次工作流 AI 生成摘要。"""
+
+        return self._workflows.last_reasoning()
+
+    def workflow_ai_label(self) -> str:
+        """返回工作流 AI 生成器标签。"""
+
+        return self._workflows.generator_label()
 
     def ai_reasoning(self) -> str:
         """返回最近一次 AI 生成摘要。"""
@@ -516,12 +631,14 @@ class RuntimeFacade:
         workflow: WorkflowContract,
         *,
         background: bool = True,
+        runtime_inputs: dict[str, str] | None = None,
     ) -> RunSession:
         """启动工作流运行。
 
         Args:
             workflow: 待运行工作流。
             background: 是否在后台线程运行。
+            runtime_inputs: 运行前填写的输入步骤值。
 
         Returns:
             创建的运行会话。
@@ -531,22 +648,31 @@ class RuntimeFacade:
             raise RuntimeError("运行编排器未配置")
         self._logger.info("启动工作流运行: workflow_id=%s, 步骤数=%d, 后台=%s",
                           workflow.metadata.workflow_id, len(workflow.steps), background)
-        profile = self.get_instrument(workflow.metadata.anchor_profile)
+        runtime_workflow = resolve_runtime_input_placeholders(
+            workflow,
+            runtime_inputs,
+        )
+        profile = self.get_instrument(runtime_workflow.metadata.anchor_profile)
         session = self._run_sessions.create_session(
-            workflow.metadata.workflow_id,
+            runtime_workflow.metadata.workflow_id,
             steps=[
                 RunStep(step_id=step.id, action=step.action)
-                for step in workflow.steps
+                for step in runtime_workflow.steps
             ],
-            template_id=workflow.metadata.template_id,
-            template_version=workflow.metadata.template_version,
+            device_id=runtime_workflow.metadata.anchor_profile,
+            author=runtime_workflow.metadata.author,
+            workflow_name=runtime_workflow.metadata.workflow_id,
+            template_id=runtime_workflow.metadata.template_id,
+            template_version=runtime_workflow.metadata.template_version,
         )
 
         def _run() -> None:
             """后台执行工作流。"""
 
+            # 启动前固定等待 1 秒，避免目标窗口弹出时与用户当前鼠标键盘操作冲突造成误触
+            time.sleep(1.0)
             self._orchestrator.run(
-                workflow=workflow,
+                workflow=runtime_workflow,
                 profile=profile,
                 session=session,
             )

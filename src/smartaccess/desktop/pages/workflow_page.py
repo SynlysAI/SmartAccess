@@ -12,8 +12,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
-    QInputDialog,
-    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QSizePolicy,
@@ -33,6 +31,7 @@ def _selectable_msg(parent, icon, title, text):
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return box
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
+from smartaccess.desktop.widgets.ai_dialogs import AiBusyOverlay, AiPromptDialog
 from smartaccess.desktop.widgets.cards import create_card
 from smartaccess.desktop.widgets import rich_text
 from smartaccess.desktop.widgets.table_style import NoWheelComboBox
@@ -52,9 +51,12 @@ class WorkflowPage(QWidget):
         """初始化工作流页面。"""
 
         super().__init__(parent)
+        self._facade = facade
         self._vm = WorkflowViewModel(facade, self)
         self._current: WorkflowContract | None = None
         self._anchor_ids: list[str] = []
+        self._anchors_by_view: dict[str, list[str]] = {}
+        self._view_ids: list[str] = ["main"]
         self._last_ai_prompt = ""
 
         root = QVBoxLayout(self)
@@ -69,14 +71,28 @@ class WorkflowPage(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([240, 740])
         root.addWidget(splitter, 1)
+        self._refresh_step_defaults()
         self._reload_profiles()
         self._reload_workflows()
 
     def on_show(self) -> None:
         """页面显示时刷新列表。"""
 
+        self._refresh_step_defaults()
         self._reload_profiles()
         self._reload_workflows()
+
+    def _refresh_step_defaults(self) -> None:
+        """同步系统设置中的新建步骤默认参数。"""
+
+        settings = self._facade.settings()
+        self._steps.configure_defaults(
+            action_wait_seconds=settings.default_action_wait_seconds,
+            ocr_timeout_seconds=settings.default_ocr_timeout_seconds,
+            ocr_poll_interval_seconds=(
+                settings.default_ocr_poll_interval_seconds
+            ),
+        )
 
     def _build_header(self) -> QHBoxLayout:
         """构建顶部按钮区。"""
@@ -129,17 +145,22 @@ class WorkflowPage(QWidget):
 
         self._workflow_id = QLineEdit()
         self._workflow_id.setPlaceholderText("wf_new_experiment")
+        self._workflow_id.setMaximumWidth(260)
+        self._workflow_id.textChanged.connect(lambda _text: self._refresh_increment_context())
         self._anchor_profile = NoWheelComboBox()
+        self._anchor_profile.setMinimumWidth(320)
         self._anchor_profile.currentIndexChanged.connect(self._on_profile_changed)
         self._author = QLineEdit("smartaccess")
+        self._author.setMaximumWidth(260)
+        self._author.textChanged.connect(lambda _text: self._refresh_increment_context())
         self._lifecycle = NoWheelComboBox()
         for state in ("Draft", "Standardized", "Published"):
             self._lifecycle.addItem(state, state)
-        self._template_id = QLineEdit()
-        self._template_version = QLineEdit()
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 0)
+        grid.setColumnStretch(3, 1)
         grid.addWidget(QLabel("工作流 ID"), 0, 0)
         grid.addWidget(self._workflow_id, 0, 1)
         grid.addWidget(QLabel("设备"), 0, 2)
@@ -148,10 +169,6 @@ class WorkflowPage(QWidget):
         grid.addWidget(self._author, 1, 1)
         grid.addWidget(QLabel("状态"), 1, 2)
         grid.addWidget(self._lifecycle, 1, 3)
-        grid.addWidget(QLabel("模板 ID"), 2, 0)
-        grid.addWidget(self._template_id, 2, 1)
-        grid.addWidget(QLabel("模板版本"), 2, 2)
-        grid.addWidget(self._template_version, 2, 3)
         layout.addLayout(grid)
 
         layout.addLayout(self._build_step_toolbar())
@@ -211,6 +228,9 @@ class WorkflowPage(QWidget):
         label.setObjectName("PageHint")
         layout.addWidget(label)
 
+        self._ai_busy = AiBusyOverlay()
+        layout.addWidget(self._ai_busy)
+
         self._result = QTextEdit()
         self._result.setObjectName("WorkflowResult")
         self._result.setReadOnly(True)
@@ -267,9 +287,55 @@ class WorkflowPage(QWidget):
         """设备变化时刷新锚点列表。"""
 
         profile = self._vm.get_anchor_profile(self._anchor_profile.currentData())
-        self._anchor_ids = [anchor.id for anchor in profile.anchors] if profile else []
+        self._view_ids = [view.view_id for view in profile.views] if profile else ["main"]
+        self._anchors_by_view = (
+            {
+                view.view_id: [anchor.id for anchor in view.anchors]
+                for view in profile.views
+            }
+            if profile
+            else {}
+        )
+        view_anchor_ids = [
+            anchor_id
+            for anchor_ids in self._anchors_by_view.values()
+            for anchor_id in anchor_ids
+        ]
+        profile_anchor_ids = [anchor.id for anchor in profile.anchors] if profile else []
+        self._anchor_ids = list(dict.fromkeys([*profile_anchor_ids, *view_anchor_ids]))
         if hasattr(self, "_steps"):
-            self._steps.set_steps(self._steps.rows(), self._anchor_ids)
+            self._refresh_increment_context()
+            self._steps.set_steps(
+                self._steps.rows(),
+                self._anchor_ids,
+                self._view_ids,
+                anchors_by_view=self._anchors_by_view,
+            )
+
+    def _refresh_increment_context(self) -> None:
+        """Refresh per-row incrementing input previews from workflow metadata."""
+
+        if not hasattr(self, "_steps"):
+            return
+        workflow_id = self._workflow_id.text().strip()
+        anchor_profile = self._anchor_profile.currentData()
+        def preview_counter(rule: dict) -> int | None:
+            if not workflow_id:
+                return None
+            try:
+                return self._vm.preview_increment_value(workflow_id, rule)
+            except Exception:  # noqa: BLE001 - preview must not block editing.
+                return None
+
+        self._steps.set_increment_context(
+            {
+                "device_id": str(anchor_profile or ""),
+                "author": self._author.text().strip() or "smartaccess",
+                "workflow_id": workflow_id,
+                "workflow_name": workflow_id,
+            },
+            preview_counter=preview_counter,
+        )
 
     def _new_workflow(self) -> None:
         """创建空工作流编辑状态。"""
@@ -278,9 +344,13 @@ class WorkflowPage(QWidget):
         self._workflow_id.setText(self._next_workflow_id())
         self._author.setText("smartaccess")
         self._lifecycle.setCurrentIndex(0)
-        self._template_id.clear()
-        self._template_version.clear()
-        self._steps.set_steps([], self._anchor_ids)
+        self._steps.set_steps(
+            [],
+            self._anchor_ids,
+            self._view_ids,
+            anchors_by_view=self._anchors_by_view,
+        )
+        self._refresh_increment_context()
         self._clear_result()
 
     def _select_workflow(self) -> None:
@@ -315,23 +385,39 @@ class WorkflowPage(QWidget):
         self._author.setText(meta.author)
         state_index = self._lifecycle.findData(meta.lifecycle_state)
         self._lifecycle.setCurrentIndex(max(0, state_index))
-        self._template_id.setText(meta.template_id or "")
-        self._template_version.setText(meta.template_version or "")
         rows = [
             StepRow(
                 step_id=step.id,
                 action=step.action,
+                view_id=step.view_id,
                 anchor_id=step.anchor_id,
                 value=step.value,
+                input_mode=step.input_mode,
+                increment_rule=(
+                    step.increment_rule.model_dump(mode="json")
+                    if step.increment_rule is not None
+                    else None
+                ),
                 wait_seconds=step.wait_seconds,
                 match_mode=step.match_mode,
                 expected_text=step.expected_text,
+                expected_candidates=step.expected_candidates,
                 timeout_seconds=step.timeout_seconds,
+                poll_interval_seconds=step.poll_interval_seconds,
+                min_confidence=step.min_confidence,
+                ignore_case=step.ignore_case,
+                normalize_text=step.normalize_text,
                 requires_confirmation=step.requires_confirmation,
             )
             for step in workflow.steps
         ]
-        self._steps.set_steps(rows, self._anchor_ids)
+        self._steps.set_steps(
+            rows,
+            self._anchor_ids,
+            self._view_ids,
+            anchors_by_view=self._anchors_by_view,
+        )
+        self._refresh_increment_context()
         self._clear_result()
 
     def _add_action(self) -> None:
@@ -356,6 +442,8 @@ class WorkflowPage(QWidget):
     def _save(self) -> None:
         """保存当前工作流。"""
 
+        if self._require_workflow_fields() is None:
+            return
         try:
             workflow = self._build_workflow()
             saved = self._vm.save_workflow(workflow)
@@ -369,6 +457,8 @@ class WorkflowPage(QWidget):
     def _standardize(self) -> None:
         """执行标准化检查。"""
 
+        if self._require_workflow_fields() is None:
+            return
         try:
             workflow = self._build_workflow()
             result = self._vm.standardize(workflow)
@@ -383,55 +473,70 @@ class WorkflowPage(QWidget):
     def _ai_generate(self) -> None:
         """根据文本描述调用 AI 生成工作流。"""
 
-        dialog = QInputDialog(self)
-        dialog.setWindowTitle("AI生成工作流")
-        dialog.setLabelText(
-            "输入实验步骤或自动化目标。\n当前 AI：" + self._vm.ai_label()
-        )
-        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput)
-        dialog.setTextValue(self._last_ai_prompt)
-        text_edit = dialog.findChild(QPlainTextEdit)
-        if text_edit is not None:
-            text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-            text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        dialog.resize(550, 350)
-        if dialog.exec() != QInputDialog.DialogCode.Accepted:
+        fields = self._require_workflow_fields()
+        if fields is None:
             return
-        prompt = dialog.textValue()
+        dialog = AiPromptDialog(
+            title="AI生成工作流",
+            label="输入实验步骤或自动化目标。",
+            ai_label=self._vm.ai_label(),
+            initial_text=self._last_ai_prompt,
+            parent=self,
+        )
+        if dialog.exec() != AiPromptDialog.DialogCode.Accepted:
+            return
+        prompt = dialog.text_value()
         prompt = prompt.strip()
         if not prompt:
             _selectable_msg(self, QMessageBox.Icon.Warning, "缺少描述", "请输入实验步骤或自动化目标。").exec()
             return
         self._last_ai_prompt = prompt
-        workflow_id = self._workflow_id.text().strip() or self._next_workflow_id()
-        anchor_profile = self._anchor_profile.currentData()
-        if not anchor_profile:
-            _selectable_msg(self, QMessageBox.Icon.Warning, "缺少设备", "请先选择设备。").exec()
-            return
+        workflow_id, anchor_profile = fields
         profile = self._vm.get_anchor_profile(str(anchor_profile))
         anchors = []
         if profile is not None:
             anchors = [
                 {
                     "id": anchor.id,
-                    "supported_actions": list(anchor.supported_actions),
-                    "has_ocr": anchor.observe_region is not None,
-                    "default_wait_seconds": anchor.default_wait_seconds,
+                    "precheck_mode": (
+                        anchor.precheck.mode if anchor.precheck is not None else "none"
+                    ),
                 }
                 for anchor in profile.anchors
             ]
+            views = [
+                {
+                    "view_id": view.view_id,
+                    "title_contains": (
+                        view.window_signature.title_contains
+                        if view.window_signature is not None
+                        else None
+                    ),
+                    "anchors": [anchor.id for anchor in view.anchors],
+                }
+                for view in profile.views
+            ]
+        else:
+            views = [{"view_id": "main", "anchors": []}]
         context = {
             "workflow_id": workflow_id,
             "anchor_profile": str(anchor_profile),
             "experiment_type": "generic_automation",
             "anchors": anchors,
-            "available_actions": sorted(
-                {action for item in anchors for action in item["supported_actions"]}
-            ),
+            "views": views,
+            "available_actions": [
+                "click",
+                "type",
+                "hotkey",
+                "press_enter",
+                "ocr",
+                "wait",
+            ],
         }
 
         self._ai_btn.setEnabled(False)
-        self._ai_btn.setText("生成中...")
+        self._ai_btn.setText("AI生成中")
+        self._ai_busy.set_busy(True, "AI生成中，请稍候")
         self._set_result("AI 生成中，请稍候...")
 
         self._ai_task = BackgroundTask(
@@ -446,6 +551,7 @@ class WorkflowPage(QWidget):
 
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI生成")
+        self._ai_busy.set_busy(False)
         self._load_workflow(result)
         self._reload_workflows(result.metadata.workflow_id)
         self._steps.scrollToTop()
@@ -456,8 +562,28 @@ class WorkflowPage(QWidget):
 
         self._ai_btn.setEnabled(True)
         self._ai_btn.setText("AI生成")
+        self._ai_busy.set_busy(False)
         self._clear_result()
         _selectable_msg(self, QMessageBox.Icon.Critical, "AI生成失败", msg).exec()
+
+    def _require_workflow_fields(self) -> tuple[str, str] | None:
+        """校验工作流 ID 和绑定设备。"""
+
+        workflow_id = self._workflow_id.text().strip()
+        anchor_profile = self._anchor_profile.currentData()
+        missing = []
+        if not workflow_id:
+            missing.append("工作流 ID")
+        if not anchor_profile:
+            missing.append("设备")
+        if missing:
+            QMessageBox.warning(
+                self,
+                "缺少参数",
+                "请填写：" + "、".join(missing),
+            )
+            return None
+        return workflow_id, str(anchor_profile)
 
     def _build_workflow(self) -> WorkflowContract:
         """从编辑器构建工作流契约。"""
@@ -473,20 +599,29 @@ class WorkflowPage(QWidget):
             anchor_profile=str(anchor_profile),
             author=self._author.text().strip() or "smartaccess",
             lifecycle_state=str(self._lifecycle.currentData() or "Draft"),
-            template_id=self._template_id.text().strip() or None,
-            template_version=self._template_version.text().strip() or None,
         )
         steps = []
         for row in self._steps.rows():
+            is_ocr = row.action == "ocr"
             payload = {
                 "id": row.step_id,
                 "action": row.action,
+                "view_id": row.view_id,
                 "anchor_id": row.anchor_id,
                 "value": row.value,
+                "input_mode": row.input_mode,
+                "increment_rule": row.increment_rule,
                 "wait_seconds": row.wait_seconds,
-                "match_mode": row.match_mode,
-                "expected_text": row.expected_text,
-                "timeout_seconds": row.timeout_seconds,
+                "match_mode": row.match_mode if is_ocr else "none",
+                "expected_text": row.expected_text if is_ocr else None,
+                "expected_candidates": row.expected_candidates if is_ocr else None,
+                "timeout_seconds": row.timeout_seconds if is_ocr else None,
+                "poll_interval_seconds": (
+                    row.poll_interval_seconds if is_ocr else None
+                ),
+                "min_confidence": row.min_confidence if is_ocr else None,
+                "ignore_case": row.ignore_case if is_ocr else True,
+                "normalize_text": row.normalize_text if is_ocr else True,
                 "requires_confirmation": row.requires_confirmation,
             }
             steps.append(WorkflowStep.model_validate(payload))

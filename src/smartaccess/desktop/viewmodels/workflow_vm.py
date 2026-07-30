@@ -60,12 +60,12 @@ class WorkflowViewModel(ViewModel):
     def ai_label(self) -> str:
         """返回当前 AI 生成器标签。"""
 
-        return self._facade.ai_label()
+        return self._facade.workflow_ai_label()
 
     def ai_reasoning(self) -> str:
         """返回最近一次 AI 生成摘要。"""
 
-        return self._facade.ai_reasoning()
+        return self._facade.workflow_ai_reasoning()
 
     def delete_workflow(self, workflow_id: str) -> None:
         """删除工作流。"""
@@ -77,3 +77,8 @@ class WorkflowViewModel(ViewModel):
         """执行标准化检查。"""
 
         return self._facade.standardize(workflow)
+
+    def preview_increment_value(self, workflow_id: str, rule: dict) -> int:
+        """Return the next persisted increment value for preview."""
+
+        return self._facade.preview_increment_value(workflow_id, rule)

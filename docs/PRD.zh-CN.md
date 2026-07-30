@@ -109,6 +109,9 @@ SmartAccess 将阶段状态、步骤 OCR 事实、日志和关键截图上传至
 - 支持基于点击、双击、输入、快捷键、回车和固定等待的工作流执行。
 - 支持动作后 OCR 轮询判断和无观测默认等待。
 - 支持 `anchors.yaml`、`workflow.yaml`、`platform_adapter.yaml`、`run_trace.jsonl` 四类主契约。
+- 新建设备 ID 必须采用 `体系-实验室-产品型号-设备编号` 四段格式；历史旧锚点文件允许继续加载。
+- 工作流 `type` 步骤支持自由输入与运行内递增输入，递增值必须进入运行 trace。
+- 运行监控日志必须在任务开始与结束时输出包含设备 ID、作者、工作流名称和 session 的边界行。
 - 支持任务配置下发、状态上报、日志上传和 trace 事实上传。
 - 支持标准工作流发布到 SpecLabOS 模板中心，并按模板 ID + 版本回拉执行。
 - 支持 `GET /health`、`POST /api/v1/experiment/trigger`、`POST /api/v1/experiment/execute`、`GET /api/v1/experiment/status` 四个设备侧 FastAPI 基线接口。

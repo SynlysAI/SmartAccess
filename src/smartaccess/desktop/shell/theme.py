@@ -43,7 +43,8 @@ QMainWindow, QMainWindow > QWidget {{
 QFrame#TopBar {{
     background-color: {SURFACE};
     border-bottom: 1px solid {BORDER_STRONG};
-}}QPushButton#Ghost {{
+}}
+QPushButton#Ghost {{
     background: transparent;
     color: {TEXT_SUBTLE};
     border: none;
@@ -83,10 +84,38 @@ QLabel#PageHint, QLabel#SectionTitle {{
     color: {TEXT_MUTED};
     background: transparent;
 }}
+QLabel#FormError {{
+    color: #B42318;
+    background: #FFF1F2;
+    border: 1px solid #FECDD3;
+    border-radius: 5px;
+    padding: 6px 8px;
+}}
+QLabel#AiBusyLabel {{
+    background: {PRIMARY_SOFT};
+    color: {PRIMARY_HOVER};
+    border: 1px solid {PRIMARY};
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-weight: 700;
+}}
+QWidget#AiBusyOverlay {{
+    background: {PRIMARY_SOFT};
+    border: 1px solid {PRIMARY};
+    border-radius: 6px;
+}}
+QLabel#AiBusyOverlayLabel {{
+    background: transparent;
+    color: {PRIMARY_HOVER};
+    font-weight: 700;
+}}
+QFrame#NavPanel {{
+    background: {SURFACE};
+    border-right: 1px solid {BORDER};
+}}
 QListWidget#NavList {{
     background: {SURFACE};
     border: none;
-    border-right: 1px solid {BORDER};
     padding: 8px 8px;
     outline: 0;
 }}
@@ -107,6 +136,21 @@ QListWidget#NavList::item:selected {{
     color: {PRIMARY_HOVER};
     border-left: 3px solid {PRIMARY};
     font-weight: 700;
+}}
+QPushButton#VersionButton {{
+    background: transparent;
+    color: {TEXT_SUBTLE};
+    border: none;
+    border-radius: 4px;
+    padding: 3px 12px;
+    min-height: 14px;
+    font-size: 11px;
+    font-weight: 500;
+    text-align: left;
+}}
+QPushButton#VersionButton:hover {{
+    background: {SURFACE_MUTED};
+    color: {PRIMARY_HOVER};
 }}
 QPushButton {{
     background: {PRIMARY};
@@ -211,6 +255,14 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QPlainTextEdit:focus, QTextEdit:focus {{
     border: 1px solid {PRIMARY};
 }}
+QLineEdit[validationState="valid"] {{
+    border: 1px solid {SUCCESS};
+    background: #F0FDF4;
+}}
+QLineEdit[validationState="invalid"] {{
+    border: 1px solid {DANGER};
+    background: {DANGER_SOFT};
+}}
 QPlainTextEdit#WorkflowResult {{
     background: {SURFACE_ALT};
     border: 1px solid {BORDER};
@@ -229,23 +281,27 @@ QComboBox#TableComboBox, QComboBox#ConditionMode {{
     padding-left: 6px;
     padding-right: 6px;
 }}
-QDoubleSpinBox#TableSpinBox, QDoubleSpinBox#ConditionTimeout {{
-    padding-right: 20px;
+QDoubleSpinBox#TableSpinBox,
+QDoubleSpinBox#ConditionTimeout,
+QDoubleSpinBox#ConditionConfidence {{
+    padding: 2px 2px 2px 6px;
 }}
+QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
     subcontrol-origin: border;
     width: 18px;
     background: {SURFACE_ALT};
     border-left: 1px solid {BORDER};
 }}
-QDoubleSpinBox::up-button {{
+QSpinBox::up-button, QDoubleSpinBox::up-button {{
     subcontrol-position: top right;
     border-top-right-radius: 6px;
 }}
-QDoubleSpinBox::down-button {{
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
     subcontrol-position: bottom right;
     border-bottom-right-radius: 6px;
 }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover,
 QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
     background: {PRIMARY_SOFT};
 }}

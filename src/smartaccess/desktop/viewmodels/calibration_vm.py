@@ -24,6 +24,18 @@ class CalibrationViewModel(ViewModel):
 
         return self._facade.capture_window(hwnd)
 
+    def capture_windows(self, hwnds: list[int]) -> bytes | None:
+        """截取多个窗口的屏幕联合区域。
+
+        Args:
+            hwnds: 窗口句柄列表。
+
+        Returns:
+            PNG 截图字节；失败时返回 None。
+        """
+
+        return self._facade.capture_windows(hwnds)
+
     def list_instruments(self) -> list[AnchorsContract]:
         """列出已保存设备。"""
 
@@ -34,7 +46,12 @@ class CalibrationViewModel(ViewModel):
 
         return self._facade.get_instrument(device_id)
 
-    def load_instrument_capture(self, device_id: str | None) -> bytes | None:
+    def load_instrument_capture(
+        self,
+        device_id: str | None,
+        *,
+        view_id: str | None = None,
+    ) -> bytes | None:
         """读取指定设备的校准截图。
 
         Args:
@@ -44,7 +61,22 @@ class CalibrationViewModel(ViewModel):
             PNG 截图字节；不存在时返回 None。
         """
 
-        return self._facade.load_instrument_capture(device_id)
+        return self._facade.load_instrument_capture(device_id, view_id=view_id)
+
+    def delete_instrument_capture(
+        self,
+        device_id: str,
+        *,
+        view_id: str | None = None,
+    ) -> None:
+        """删除指定设备视图的校准截图。
+
+        Args:
+            device_id: 设备 ID。
+            view_id: 视图 ID。
+        """
+
+        self._facade.delete_instrument_capture(device_id, view_id=view_id)
 
     def workspace_dir(self) -> Path:
         """返回工作区目录。"""
@@ -92,9 +124,17 @@ class CalibrationViewModel(ViewModel):
         device_id: str,
         title_contains: str,
         anchors: list[dict[str, Any]],
+        views: list[dict[str, Any]] | None = None,
         capture_width: int | None,
         capture_height: int | None,
+        capture_origin_x: int | None = None,
+        capture_origin_y: int | None = None,
+        capture_mode: str = "window",
+        capture_screen_origin_x: int | None = None,
+        capture_screen_origin_y: int | None = None,
+        capture_windows: list[dict[str, Any]] | None = None,
         capture_data: bytes | None = None,
+        view_captures: dict[str, bytes] | None = None,
     ) -> AnchorsContract:
         """创建并保存设备锚点配置。
 
@@ -104,6 +144,12 @@ class CalibrationViewModel(ViewModel):
             anchors: 锚点列表。
             capture_width: 校准截图宽度。
             capture_height: 校准截图高度。
+            capture_origin_x: 兼容旧窗口模式的截图原点 X 偏移。
+            capture_origin_y: 兼容旧窗口模式的截图原点 Y 偏移。
+            capture_mode: 截图坐标模式。
+            capture_screen_origin_x: 校准截图画布在屏幕上的左上角 X。
+            capture_screen_origin_y: 校准截图画布在屏幕上的左上角 Y。
+            capture_windows: 参与截图的窗口元数据。
             capture_data: 当前校准截图 PNG 字节。
 
         Returns:
@@ -114,10 +160,38 @@ class CalibrationViewModel(ViewModel):
             device_id=device_id,
             title_contains=title_contains,
             anchors=anchors,
+            views=views,
             capture_width=capture_width,
             capture_height=capture_height,
+            capture_origin_x=capture_origin_x,
+            capture_origin_y=capture_origin_y,
+            capture_mode=capture_mode,
+            capture_screen_origin_x=capture_screen_origin_x,
+            capture_screen_origin_y=capture_screen_origin_y,
+            capture_windows=capture_windows,
         )
         if capture_data:
             self._facade.save_instrument_capture(profile.profile_id, capture_data)
+        for view_id, data in (view_captures or {}).items():
+            if data:
+                self._facade.save_instrument_capture(
+                    profile.profile_id,
+                    data,
+                    view_id=view_id,
+                )
         self.changed.emit()
         return profile
+
+    def preview_anchor_ocr(
+        self,
+        *,
+        capture_data: bytes,
+        anchor_payload: dict[str, Any],
+    ) -> str:
+        """对当前校准截图中的锚点执行一次 OCR 预览。"""
+
+        reading = self._facade.preview_anchor_ocr(
+            capture_data=capture_data,
+            anchor_payload=anchor_payload,
+        )
+        return reading.text
