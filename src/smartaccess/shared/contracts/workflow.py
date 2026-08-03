@@ -10,6 +10,7 @@ from .base import ContractModel, FlexibleContractModel, NonEmptyStr
 
 SIMPLIFIED_WORKFLOW_ACTIONS: tuple[str, ...] = (
     "click",
+    "double_click",
     "type",
     "hotkey",
     "press_enter",
@@ -21,12 +22,12 @@ DEFAULT_OCR_TIMEOUT_SECONDS = 10.0
 DEFAULT_OCR_POLL_INTERVAL_SECONDS = 0.5
 EXECUTABLE_WORKFLOW_ACTIONS: tuple[str, ...] = (
     "click",
+    "double_click",
     "type",
     "hotkey",
     "press_enter",
 )
 LEGACY_WORKFLOW_ACTIONS: tuple[str, ...] = (
-    "double_click",
     "wait_until",
     "screenshot_check",
 )
@@ -95,7 +96,15 @@ class WorkflowStep(FlexibleContractModel):
     anchor_id: NonEmptyStr | None = None
     view_id: NonEmptyStr = "main"
     target: str | None = Field(default=None, exclude=True)
-    action: Literal["click", "type", "hotkey", "press_enter", "ocr", "wait"]
+    action: Literal[
+        "click",
+        "double_click",
+        "type",
+        "hotkey",
+        "press_enter",
+        "ocr",
+        "wait",
+    ]
     value: Any | None = None
     input_mode: Literal["free", "incrementing"] = "free"
     increment_rule: WorkflowIncrementRule | None = None
@@ -377,9 +386,6 @@ def normalize_workflow_steps(
         step_id = str(step.get("id") or f"step_{index + 1}")
         if "anchor_id" not in step and step.get("target"):
             step["anchor_id"] = step.get("target")
-        if action == "double_click":
-            _append_double_click_steps(steps, step, step_id)
-            continue
         if action in {"wait_until", "screenshot_check"}:
             _merge_legacy_condition(steps, errors, step)
             continue
@@ -403,22 +409,6 @@ def normalize_workflow_steps(
             _merge_condition_into_step(clean, flat_condition)
         steps.append(clean)
     return steps, errors
-
-
-def _append_double_click_steps(
-    steps: list[dict[str, Any]],
-    step: dict[str, Any],
-    step_id: str,
-) -> None:
-    """把双击步骤拆成两次 click。"""
-
-    first = _action_step(step, action="click", step_id=f"{step_id}_click_1")
-    second = _action_step(step, action="click", step_id=f"{step_id}_click_2")
-    first.pop("expected_text", None)
-    first.pop("timeout_seconds", None)
-    first.pop("poll_interval_seconds", None)
-    first["match_mode"] = "none"
-    steps.extend([first, second])
 
 
 def _merge_legacy_condition(

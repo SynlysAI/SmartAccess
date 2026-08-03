@@ -198,12 +198,12 @@ def test_new_anchor_and_workflow_examples_use_simplified_model() -> None:
 
     dumped_anchors = anchors.model_dump(mode="json", exclude_none=True)
     dumped_workflow = workflow.model_dump(mode="json", exclude_none=True)
-    allowed_actions = {"click", "type", "hotkey", "press_enter", "ocr"}
+    allowed_actions = {"click", "double_click", "type", "hotkey", "press_enter", "ocr"}
 
     assert all("type" not in anchor for anchor in dumped_anchors["anchors"])
     assert all(set(anchor["supported_actions"]) <= allowed_actions for anchor in dumped_anchors["anchors"])
     assert all(step["action"] in allowed_actions for step in dumped_workflow["steps"])
-    assert not any(step["action"] in {"wait", "wait_until", "screenshot_check", "double_click"} for step in dumped_workflow["steps"])
+    assert not any(step["action"] in {"wait", "wait_until", "screenshot_check"} for step in dumped_workflow["steps"])
 
 
 def test_legacy_anchor_types_are_read_compatible() -> None:
@@ -232,7 +232,7 @@ def test_legacy_anchor_types_are_read_compatible() -> None:
         }
     )
 
-    assert anchors.anchor_map()["legacy_button"].supported_actions == ["click"]
+    assert anchors.anchor_map()["legacy_button"].supported_actions == ["double_click"]
     assert anchors.anchor_map()["legacy_status"].observe_region is not None
     dumped = anchors.model_dump(mode="json", exclude_none=True)
     assert all("type" not in anchor for anchor in dumped["anchors"])
@@ -263,7 +263,7 @@ def test_legacy_workflow_steps_are_normalized() -> None:
         }
     )
 
-    assert [step.action for step in workflow.steps] == ["click", "click"]
+    assert [step.action for step in workflow.steps] == ["double_click"]
     assert workflow.steps[-1].expected_text == "Running"
     assert workflow.steps[-1].match_mode == "contains"
     assert workflow.steps[-1].timeout_seconds == 5

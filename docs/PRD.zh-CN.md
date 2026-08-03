@@ -124,7 +124,7 @@ SmartAccess 将阶段状态、步骤 OCR 事实、日志和关键截图上传至
 - **锚点配置唯一入口**：`anchors.yaml` 顶层为 `profile_id`、`window_signature`、`anchors[]`。
 - **线性工作流**：步骤只包含 `anchor_id`、`action`、`value?`、`expected_text?`、`match_mode`、等待和确认字段。
 - **OCR-only 观测**：本地 vision provider 只保留截图、裁剪、OCR 读取和文本匹配。
-- **真实动作链路**：Win32 SendInput/SetCursorPos 驱动 click、type、hotkey、press_enter；双击用两个连续 click 步骤表达。
+- **真实动作链路**：Win32 SendInput/SetCursorPos 驱动 click、double_click、type、hotkey、press_enter。
 - **运行 trace 自动产出**：每步记录动作、等待策略、期望 OCR、实际 OCR、匹配结果、尝试次数、耗时、截图路径和错误详情。
 - **AI 工作流生成单 prompt**：内部流程为 `prompt -> memory/skill/template 检索 -> step intent -> anchor resolver -> simplified workflow`。
 - **模板/平台保留一级入口**：只发布、回拉和同步新简化 workflow。
@@ -173,7 +173,7 @@ SmartAccess 将阶段状态、步骤 OCR 事实、日志和关键截图上传至
 
 ### 8.4 自动化执行
 
-- 支持 `click` 点击 `action_region` 中心；双击用两个连续 `click` 步骤表达。
+- 支持 `click` 单击 `action_region` 中心，支持 `double_click` 双击同一位置。
 - 支持 `type` / `hotkey` / `press_enter` 先聚焦该锚点再输入或按键。
 - 支持执行前安全检查，例如窗口存在、锚点可定位、步骤需要人工确认。
 - 支持开始、停止、取消和 OCR 轮询可中断。

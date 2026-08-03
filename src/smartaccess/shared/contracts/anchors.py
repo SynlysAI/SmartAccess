@@ -10,6 +10,7 @@ from .base import ContractModel, FlexibleContractModel, JsonMap, NonEmptyStr
 
 WORKFLOW_ACTIONS: tuple[str, ...] = (
     "click",
+    "double_click",
     "type",
     "hotkey",
     "press_enter",

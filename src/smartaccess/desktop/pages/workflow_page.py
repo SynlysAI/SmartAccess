@@ -526,6 +526,7 @@ class WorkflowPage(QWidget):
             "views": views,
             "available_actions": [
                 "click",
+                "double_click",
                 "type",
                 "hotkey",
                 "press_enter",

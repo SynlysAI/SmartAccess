@@ -44,6 +44,7 @@ from smartaccess.shared.contracts.workflow import (
 
 ACTION_OPTIONS = [
     ("click", "单击"),
+    ("double_click", "双击"),
     ("type", "输入"),
     ("hotkey", "快捷键"),
     ("press_enter", "回车"),
