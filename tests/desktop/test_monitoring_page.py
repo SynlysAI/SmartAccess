@@ -121,7 +121,7 @@ def test_monitoring_vm_describes_selected_workflow_device(tmp_path: Path) -> Non
     assert summary.title_contains == "ElectroChem Console"
     assert summary.anchor_count == 2
     assert summary.ocr_anchor_count == 1
-    assert summary.actions == ["click", "type", "hotkey", "press_enter"]
+    assert summary.actions == ["click", "double_click", "type", "hotkey", "press_enter"]
     assert summary.template_label == "tpl_demo@1.0.0"
 
 

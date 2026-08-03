@@ -84,7 +84,7 @@
 | `steps` | 线性步骤数组 |
 | `steps[].id` | 步骤唯一标识 |
 | `steps[].anchor_id` | 目标锚点 ID |
-| `steps[].action` | `click`、`type`、`hotkey`、`press_enter` 之一；双击用两个连续 `click` 步骤表达 |
+| `steps[].action` | `click`、`double_click`、`type`、`hotkey`、`press_enter` 之一 |
 | `steps[].value` | 可选输入值，例如文本或快捷键 |
 | `steps[].input_mode` | 可选，`free` 或 `incrementing`，默认 `free`；仅 `type` 步骤启用 |
 | `steps[].increment_rule` | `incrementing` 输入的持久化递增规则；每个 `type + incrementing` 步骤独立保存一份规则 |

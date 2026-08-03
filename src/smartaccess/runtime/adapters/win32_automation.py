@@ -26,8 +26,10 @@ VK_MENU = 0x12
 VK_SHIFT = 0x10
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
 INPUT_KEYBOARD = 1
 GW_ENABLEDPOPUP = 6
+MAPVK_VK_TO_VSC = 0
 
 
 class _KeybdInput(ctypes.Structure):
@@ -42,14 +44,44 @@ class _KeybdInput(ctypes.Structure):
     ]
 
 
+class _MouseInput(ctypes.Structure):
+    """Win32 MOUSEINPUT 结构。"""
+
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_ulonglong),
+    ]
+
+
+class _HardwareInput(ctypes.Structure):
+    """Win32 HARDWAREINPUT 结构。"""
+
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
+class _InputUnion(ctypes.Union):
+    """Win32 INPUT 联合体。"""
+
+    _fields_ = [
+        ("mi", _MouseInput),
+        ("ki", _KeybdInput),
+        ("hi", _HardwareInput),
+    ]
+
+
 class _Input(ctypes.Structure):
     """Win32 INPUT 结构。"""
 
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("ki", _KeybdInput),
-        ("_pad", ctypes.c_ubyte * 8),
-    ]
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _InputUnion)]
 
 
 class Win32AutomationProvider:
@@ -193,7 +225,14 @@ class Win32AutomationProvider:
             wintypes.DWORD,
             ctypes.c_void_p,
         )
+        self._user32.SendInput.argtypes = (
+            wintypes.UINT,
+            ctypes.POINTER(_Input),
+            ctypes.c_int,
+        )
         self._user32.SendInput.restype = wintypes.UINT
+        self._user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
+        self._user32.MapVirtualKeyW.restype = wintypes.UINT
         self._user32.GetWindow.argtypes = (wintypes.HWND, wintypes.UINT)
         self._user32.GetWindow.restype = wintypes.HWND
         self._user32.IsWindow.argtypes = (wintypes.HWND,)
@@ -310,6 +349,8 @@ class Win32AutomationProvider:
 
         if action == "click" and anchor is not None:
             self._click_anchor(anchor)
+        elif action == "double_click" and anchor is not None:
+            self._double_click_anchor(anchor)
         elif action == "type":
             self._type_text(str(value or ""))
         elif action == "hotkey":
@@ -324,14 +365,28 @@ class Win32AutomationProvider:
     def _click_anchor(self, anchor: AnchorDefinition) -> None:
         """点击锚点中心位置。"""
 
+        self._click_anchor_times(anchor, count=1)
+
+    def _double_click_anchor(self, anchor: AnchorDefinition) -> None:
+        """双击锚点中心位置。"""
+
+        self._click_anchor_times(anchor, count=2)
+
+    def _click_anchor_times(self, anchor: AnchorDefinition, *, count: int) -> None:
+        """按指定次数点击锚点中心位置。
+
+        Args:
+            anchor: 待点击的锚点定义。
+            count: 点击次数。
+        """
+
         if self._uses_screen_canvas():
             roi = anchor.action_region.pixel
             left, top = self._screen_canvas_origin()
             screen_x = int(left + roi.x + roi.width / 2)
             screen_y = int(top + roi.y + roi.height / 2)
             self._user32.SetCursorPos(screen_x, screen_y)
-            self._user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
-            self._user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
+            self._click_current_position(count)
             return
         width, height = self._capture_reference_size()
         roi = resolve_anchor_roi(
@@ -351,8 +406,19 @@ class Win32AutomationProvider:
             rel_y = min(max(rel_y, 0), max(height - 1, 0))
         offset_x, offset_y = self._capture_origin_offset()
         self._user32.SetCursorPos(int(left + rel_x - offset_x), int(top + rel_y - offset_y))
-        self._user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
-        self._user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
+        self._click_current_position(count)
+
+    def _click_current_position(self, count: int) -> None:
+        """在当前鼠标位置点击指定次数。
+
+        Args:
+            count: 点击次数。
+        """
+
+        for _ in range(max(1, count)):
+            self._user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
+            self._user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
+            time.sleep(0.05)
 
     def _capture_reference_size(self) -> tuple[int, int]:
         """返回用于解析锚点坐标的参考截图尺寸。"""
@@ -449,7 +515,7 @@ class Win32AutomationProvider:
         self._user32.SendInput(len(text) * 2, inputs, ctypes.sizeof(_Input))
 
     def _hotkey(self, value: str) -> None:
-        """发送热键。"""
+        """通过扫描码发送热键。"""
 
         keys = [
             part.strip().lower()
@@ -470,10 +536,46 @@ class Win32AutomationProvider:
             for key in keys
         ]
         codes = [code for code in codes if code]
+        events: list[_Input] = []
         for code in codes:
-            self._user32.keybd_event(code, 0, 0, None)
+            events.append(self._keyboard_input(code))
         for code in reversed(codes):
-            self._user32.keybd_event(code, 0, KEYEVENTF_KEYUP, None)
+            events.append(self._keyboard_input(code, key_up=True))
+        self._send_input_events(events)
+
+    def _keyboard_input(self, vk_code: int, *, key_up: bool = False) -> _Input:
+        """构造接近真实键盘的扫描码按键事件。
+
+        Args:
+            vk_code: Windows 虚拟键码。
+            key_up: 是否构造抬键事件。
+
+        Returns:
+            可传入 SendInput 的键盘输入事件。
+        """
+
+        event = _Input()
+        event.type = INPUT_KEYBOARD
+        event.ki.wScan = int(self._user32.MapVirtualKeyW(vk_code, MAPVK_VK_TO_VSC))
+        event.ki.dwFlags = KEYEVENTF_SCANCODE
+        if key_up:
+            event.ki.dwFlags |= KEYEVENTF_KEYUP
+        return event
+
+    def _send_input_events(self, events: list[_Input]) -> None:
+        """批量发送 Win32 输入事件。
+
+        Args:
+            events: 待发送的输入事件列表。
+        """
+
+        if not events:
+            return
+        payload_type = _Input * len(events)
+        payload = payload_type(*events)
+        sent = self._user32.SendInput(len(events), payload, ctypes.sizeof(_Input))
+        if sent != len(events):
+            raise RuntimeError(f"键盘输入注入不完整: {sent}/{len(events)}")
 
     @staticmethod
     def _wait(value: Any | None) -> None:

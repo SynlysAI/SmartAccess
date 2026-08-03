@@ -114,7 +114,7 @@ MVP 页面：
 
 动作原语：
 
-- `click`：定位到 `action_region` 中心点击；双击用两个连续 `click` 步骤表达。
+- `click`：定位到 `action_region` 中心单击；`double_click`：在同一位置执行双击。
 - `type`：先聚焦目标锚点，再输入 `value`。
 - `hotkey`：先聚焦目标锚点，再发送组合键。
 - `press_enter`：先聚焦目标锚点，再发送回车。
