@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 API_BASE_URL = "http://10.26.15.52:30081/ccb44b4cfe18439f8affd07babd0810e/v1"
 API_MODEL = "Qwen3.6-35B-A3B"
-API_KEY = "sk-6mOM3wbHEoMQRnVzaW9uc22tAt6iUlMG"
+API_KEY = "[REDACTED]"
 IMAGE_PATH = r"C:\Users\www59\Pictures\多模态材料表征数据库概览.png"
 PROMPT = (
     "一句话总结这个图片"
