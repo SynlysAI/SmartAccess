@@ -11,9 +11,9 @@ __all__ = [
 ]
 
 APP_NAME = "SmartAccess"
-__version__ = "0.1.0"
-RELEASE_CHANNEL = "内测版"
-RELEASE_DATE = "2026年7月24日"
+__version__ = "1.0.0"
+RELEASE_CHANNEL = "正式版"
+RELEASE_DATE = "2026年9月8日"
 
 
 def _format_version(version: str) -> str:
