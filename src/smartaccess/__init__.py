@@ -11,7 +11,7 @@ __all__ = [
 ]
 
 APP_NAME = "SmartAccess"
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 RELEASE_CHANNEL = "正式版"
 RELEASE_DATE = "2026年9月8日"
 
