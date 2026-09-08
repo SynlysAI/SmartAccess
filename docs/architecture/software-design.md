@@ -139,7 +139,7 @@ MVP 可以由同一个 FastAPI 应用承载两类路由，但必须做到逻辑�
 | 模块 | 主要职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
 | `Anchor Manager` | 维护窗口签名、action/observe 区域、坐标重映射 | 截图、用户标注、锚点表 | `anchors.yaml` |
-| `Workflow Manager` | 管理草稿、标准化检查、参数绑定、模板装配 | 自然语言草稿、模板、平台任务、锚点集 | `workflow.yaml`、本地执行上下文 |
+| `Workflow Manager` | 管理草稿、标准化检查、输入模式、参数绑定、模板装配 | 自然语言草稿、模板、平台任务、锚点集 | `workflow.yaml`、本地执行上下文 |
 | `Automation Executor` | 执行动作原语并回写事件 | step、anchor、参数、确认状态 | 动作事件、截图、执行结果 |
 | `Observer` | 截图裁剪并生成 OCR 观察结果 | observe region、截图、匹配规则 | OCR 事件、结构化文本结果 |
 | `Recovery Engine` | 根据异常和策略给出重试、人工确认或终止动作 | incident、run context、recovery rule | 恢复动作、升级事件 |
@@ -155,6 +155,7 @@ orchestrator 不等于单一 agent，而是运行时决策中心。它需要负�
 
 - 建立 `RunSession`。
 - 按步骤驱动 executor。
+- 对 `input_mode: incrementing` 的 `type` 步骤在运行时解析真实输入值；计数状态独立持久化，保持 workflow 契约不被回写污染。
 - 若步骤有 OCR 预期，则驱动 observer 轮询；否则执行默认等待。
 - 根据观察结果推进、失败、取消或阻塞。
 - 触发 platform sync 与本地审计。
@@ -228,7 +229,7 @@ workspace/
 | `anchor_profiles` | 锚点集索引、状态、适用 OS、最近更新时间 |
 | `workflows` | 草稿与标准化工作流索引 |
 | `template_versions` | 发布态模板版本索引、来源、状态 |
-| `run_sessions` | 运行会话主表，记录状态、模板来源、开始结束时间 |
+| `run_sessions` | 运行会话主表，记录状态、设备 ID、作者、工作流名称、模板来源、开始结束时间 |
 | `run_steps` | 步骤执行投影，供执行页查询 |
 | `incidents` | 异常、恢复动作、人工确认记录 |
 | `sync_outbox` | 待补传平台事件 |
@@ -306,12 +307,13 @@ workspace/
 - 截图捕获与画布标注。
 - 锚点表：id、label、action_region、observe_region、supported_actions、default_wait_seconds。
 - 保存并校验 `anchors.yaml`。
+- 新建设备 ID 必须使用 `体系-实验室-产品型号-设备编号` 四段格式；历史旧锚点文件仅在加载路径兼容。
 
 ### 工作流
 
 - 锚点集选择。
 - 单 prompt 输入与生成按钮。
-- 步骤表：id、anchor_id、action、value、expected_text、match_mode、timeout/wait、confirmation。
+- 步骤表：id、anchor_id、action、value、input_mode、increment_rule、expected_text、match_mode、timeout/wait、confirmation。
 - 标准化检查结果。
 
 ### 模板/平台
@@ -329,6 +331,7 @@ workspace/
 - 期望 OCR vs 实际 OCR。
 - 最新截图路径。
 - 日志流和异常处理面板。
+- `run.started`、`run.completed`、`run.failed`、`run.cancelled` 必须形成 START/END 边界并包含设备 ID、作者、工作流名称和 session。
 
 ### 9.3 状态管理原则
 
@@ -343,13 +346,13 @@ workspace/
 1. 桌面端发起锚点配置会话。
 2. runtime 扫描窗口并创建 `AnchorProfile` 草稿。
 3. 用户标注 action region 和可选 observe region。
-4. `AnchorService` 生成 `anchors.yaml` 与元数据索引。
+4. `AnchorService` 校验四段设备 ID，生成 `anchors.yaml` 与元数据索引。
 5. 若存在平台字段需求，则在平台适配层建立映射草稿。
 
 ### 10.2 工作流从草稿到发布
 
 1. 用户选择锚点集并通过 AI 或手工创建 workflow draft。
-2. `WorkflowService` 绑定 `anchor_profile` 和平台任务参数。
+2. `WorkflowService` 绑定 `anchor_profile`、输入模式和平台任务参数。
 3. 标准化检查校验步骤、锚点、动作能力和 OCR 观测区域。
 4. 通过后进入 `Standardized`。
 5. `TemplateService` 发布模板到 SpecLabOS，并在本地保存稳定副本。
@@ -359,8 +362,8 @@ workspace/
 1. `PlatformSyncService` 接收任务上下文。
 2. 根据 `template_id + template_version` 拉取模板。
 3. `WorkflowService` 绑定参数，生成 session context。
-4. `RunService` 创建 `session_id`。
-5. orchestrator 驱动 executor + observer 执行。
+4. `RunService` 创建 `session_id`，并记录设备 ID、作者和工作流名称。
+5. orchestrator 解析持久化递增输入，驱动 executor + observer 执行，并在成功完成后推进计数。
 6. `PlatformSyncService` 异步上传状态、日志、trace 和异常。
 
 ### 10.4 异常恢复

@@ -1,4 +1,4 @@
-profile_id: potentiostat_win_01
+profile_id: 氟基-2236实验室-元能极片电阻仪-01
 window_signature:
   title_contains: "ElectroChem Console"
   process_name: electrochem.exe

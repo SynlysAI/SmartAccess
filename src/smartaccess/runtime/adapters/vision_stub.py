@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from smartaccess.runtime.application.ports import OcrReading
+from smartaccess.runtime.application.ports import OcrReading, VisualCheckResult
 from smartaccess.shared.contracts.anchors import AnchorDefinition, PixelRegion
 
 
@@ -85,6 +85,22 @@ class StubVisionProvider:
             text="green",
             confidence=0.9,
             detail="stub color sample",
+        )
+
+    @staticmethod
+    def validate_anchor(
+        *,
+        screenshot: bytes | None,
+        anchor: AnchorDefinition,
+        profile_id: str,
+        view_id: str,
+    ) -> VisualCheckResult:
+        """返回模拟锚点执行前校验结果。"""
+
+        return VisualCheckResult(
+            passed=True,
+            image_score=0.99 if anchor.precheck is not None else None,
+            detail=f"stub precheck profile={profile_id} view={view_id}",
         )
 
     @staticmethod

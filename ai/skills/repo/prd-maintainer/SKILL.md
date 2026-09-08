@@ -9,6 +9,7 @@ description: Maintain the SmartAccess PRD as the source of product scope, users,
 
 - 需要新增、修改或审查产品需求。
 - 需要同步 MVP/V1 边界、核心场景或成功指标。
+- 设备主键、工作流输入模式、运行日志边界等用户可见行为发生变化。
 
 ## 输入
 
@@ -27,6 +28,7 @@ description: Maintain the SmartAccess PRD as the source of product scope, users,
 1. 判断变更属于目标、范围、功能还是非功能。
 2. 更新 PRD 的对应章节。
 3. 检查是否影响架构、契约、README 或 AI 组件。
+4. 对设备 ID、`workflow.yaml` 输入模式和运行日志边界这类契约行为，必须同步 SPEC 与 contracts。
 
 ## 失败处理
 

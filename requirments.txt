@@ -1,0 +1,10 @@
+pyyaml>=6.0
+pydantic>=2.10
+fastapi>=0.130
+uvicorn>=0.40
+httpx>=0.28
+pytest>=8.0
+pyqt6>=6.0
+opencv-contrib-python>=4.10.0
+paddlepaddle>=3.3.0
+paddleocr>=3.7.0

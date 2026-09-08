@@ -118,10 +118,10 @@ class NoWheelDoubleSpinBox(QDoubleSpinBox):
             event: Qt 绘制事件。
         """
 
+        super().paintEvent(event)
         option = QStyleOptionSpinBox()
         self.initStyleOption(option)
         painter = QPainter(self)
-        self.style().drawComplexControl(QStyle.ComplexControl.CC_SpinBox, option, painter, self)
         up_rect = self.style().subControlRect(
             QStyle.ComplexControl.CC_SpinBox,
             option,

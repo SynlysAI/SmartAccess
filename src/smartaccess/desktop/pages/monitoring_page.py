@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -20,9 +18,13 @@ from PyQt6.QtWidgets import (
 
 from smartaccess.desktop.viewmodels.monitoring_vm import MonitoringViewModel
 from smartaccess.desktop.widgets.log_view import LogView
+from smartaccess.desktop.widgets import rich_text
+from smartaccess.desktop.widgets.runtime_input_dialog import RuntimeInputDialog
+from smartaccess.desktop.widgets.table_style import NoWheelComboBox
 from smartaccess.desktop.widgets.timeline import TimelineTable
 from smartaccess.runtime.application.facade import RuntimeFacade
 from smartaccess.shared.events.bus import RuntimeEvent
+from smartaccess.shared.events.runtime import RuntimeEventName
 
 
 class MonitoringPage(QWidget):
@@ -45,6 +47,7 @@ class MonitoringPage(QWidget):
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(12)
         root.addLayout(self._build_header())
+        root.addWidget(self._build_workflow_info())
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_left_panel())
@@ -79,8 +82,10 @@ class MonitoringPage(QWidget):
         title.setObjectName("PageTitle")
         row.addWidget(title)
         row.addStretch(1)
-        self._workflow_combo = QComboBox()
+        row.addWidget(QLabel("工作流:"))
+        self._workflow_combo = NoWheelComboBox()
         self._workflow_combo.setMinimumWidth(260)
+        self._workflow_combo.currentIndexChanged.connect(self._refresh_workflow_info)
         row.addWidget(self._workflow_combo)
         start_btn = QPushButton("开始")
         start_btn.clicked.connect(self._start)
@@ -90,6 +95,17 @@ class MonitoringPage(QWidget):
         stop_btn.clicked.connect(self._stop)
         row.addWidget(stop_btn)
         return row
+
+    def _build_workflow_info(self) -> QTextEdit:
+        """构建工作流绑定设备摘要区。"""
+
+        self._workflow_info = QTextEdit()
+        self._workflow_info.setObjectName("WorkflowRunSummary")
+        self._workflow_info.setReadOnly(True)
+        self._workflow_info.setMinimumHeight(100)
+        self._workflow_info.setMaximumHeight(150)
+        self._workflow_info.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        return self._workflow_info
 
     def _build_left_panel(self) -> QWidget:
         """构建会话列表面板。"""
@@ -132,9 +148,16 @@ class MonitoringPage(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+        header = QHBoxLayout()
         label = QLabel("运行日志")
         label.setObjectName("PageHint")
-        layout.addWidget(label)
+        header.addWidget(label)
+        header.addStretch(1)
+        clear_btn = QPushButton("清空日志")
+        clear_btn.setObjectName("Secondary")
+        clear_btn.clicked.connect(self._clear_logs)
+        header.addWidget(clear_btn)
+        layout.addLayout(header)
         self._log = LogView()
         layout.addWidget(self._log, 1)
         return panel
@@ -152,6 +175,7 @@ class MonitoringPage(QWidget):
         if index >= 0:
             self._workflow_combo.setCurrentIndex(index)
         self._workflow_combo.blockSignals(False)
+        self._refresh_workflow_info()
 
     def _refresh(self) -> None:
         """刷新页面显示。"""
@@ -166,8 +190,23 @@ class MonitoringPage(QWidget):
             self._status.setText(
                 f"状态: {active.status.value} / 会话: {active.session_id}"
             )
-            self._audit.setPlainText(self._audit_text(active.session_id))
+            self._audit.setHtml(self._audit_html(active.session_id))
         self._log.set_entries(self._vm.logs())
+
+    def _refresh_workflow_info(self) -> None:
+        """刷新当前工作流绑定设备摘要。"""
+
+        workflow_id = self._workflow_combo.currentData()
+        summary = self._vm.workflow_summary(str(workflow_id) if workflow_id else None)
+        if summary is None:
+            self._workflow_info.setHtml(
+                rich_text.panel(
+                    "工作流绑定设备",
+                    rich_text.paragraph("工作流: -\n绑定设备: -"),
+                )
+            )
+            return
+        self._workflow_info.setHtml(self._workflow_info_html(summary))
 
     def _refresh_sessions(self, active_id: str | None) -> None:
         """刷新运行会话列表。"""
@@ -203,9 +242,30 @@ class MonitoringPage(QWidget):
             QMessageBox.warning(self, "无法启动", "请先在工作流设计页保存工作流")
             return
         try:
-            self._vm.start_run(str(workflow_id))
+            runtime_inputs = self._collect_runtime_inputs(str(workflow_id))
+            if runtime_inputs is None:
+                return
+            self._vm.start_run(str(workflow_id), runtime_inputs)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "启动失败", str(exc))
+
+    def _collect_runtime_inputs(self, workflow_id: str) -> dict[str, str] | None:
+        """收集当前工作流运行前需要人工填写的输入。
+
+        Args:
+            workflow_id: 当前选择的工作流 ID。
+
+        Returns:
+            输入步骤值；用户取消时返回 None。
+        """
+
+        fields = self._vm.runtime_input_fields(workflow_id)
+        if not fields:
+            return {}
+        dialog = RuntimeInputDialog(fields, self)
+        if dialog.exec() != RuntimeInputDialog.DialogCode.Accepted:
+            return None
+        return dialog.values()
 
     def _stop(self) -> None:
         """请求停止当前运行。"""
@@ -213,37 +273,185 @@ class MonitoringPage(QWidget):
         if not self._vm.stop_run():
             QMessageBox.information(self, "停止运行", "当前没有可停止的运行")
 
+    def _clear_logs(self) -> None:
+        """清空运行日志。"""
+
+        self._vm.clear_logs()
+
     def _on_event(self, event: RuntimeEvent) -> None:
         """更新最近观察摘要。"""
 
         if event.name.value == "run.step.observed":
-            self._audit.setPlainText(self._observation_text(event))
+            self._audit.setHtml(self._observation_html(event))
+        elif event.name == RuntimeEventName.RUN_BLOCKED:
+            self._handle_blocked_event(event)
 
-    def _audit_text(self, session_id: str) -> str:
+    @staticmethod
+    def _confirm_yes_button() -> QMessageBox.StandardButton:
+        """Return the QMessageBox yes button; useful for tests."""
+
+        return QMessageBox.StandardButton.Yes
+
+    def _handle_blocked_event(self, event: RuntimeEvent) -> None:
+        """Handle runtime blocked events with visible operator prompts."""
+
+        payload = event.payload
+        if payload.get("incident_type") == "WindowMissing":
+            self._show_window_missing_warning(payload)
+            return
+        session_id = event.session_id
+        step_id = str(payload.get("step_id") or "")
+        if not session_id or not step_id:
+            return
+        reason = str(payload.get("reason") or payload.get("detail") or "该步骤需要人工确认")
+        confirmed = self._ask_manual_confirmation(reason)
+        self._vm.resolve_confirmation(
+            session_id,
+            step_id,
+            confirmed,
+        )
+
+    def _ask_manual_confirmation(self, reason: str) -> bool:
+        """激活主窗口并显示置顶的人工确认弹窗。
+
+        Args:
+            reason: 当前步骤需要人工确认的原因。
+
+        Returns:
+            用户确认继续时返回 True。
+        """
+
+        window = self.window()
+        if window.isMinimized():
+            window.showNormal()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+        message_box = QMessageBox(window)
+        message_box.setIcon(QMessageBox.Icon.Question)
+        message_box.setWindowTitle("人工确认")
+        message_box.setText(
+            f"{reason}\n\n确认后继续运行，取消后工作流保持阻塞。"
+        )
+        message_box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        message_box.setDefaultButton(QMessageBox.StandardButton.No)
+        message_box.setEscapeButton(QMessageBox.StandardButton.No)
+        message_box.setWindowModality(Qt.WindowModality.ApplicationModal)
+        message_box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        message_box.show()
+        message_box.raise_()
+        message_box.activateWindow()
+        message_box.exec()
+        return (
+            message_box.standardButton(message_box.clickedButton())
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def _show_window_missing_warning(self, payload: dict) -> None:
+        """Show a warning when the controlled app window is not found."""
+
+        profile = payload.get("anchor_profile") or "-"
+        title = payload.get("title_contains") or "-"
+        detail = payload.get("detail") or payload.get("reason") or "未找到目标窗口"
+        QMessageBox.warning(
+            self,
+            "未检测到目标窗口",
+            (
+                f"{detail}\n\n"
+                f"绑定设备: {profile}\n"
+                f"窗口标题: {title}\n\n"
+                "请打开被控软件或重新扫描窗口后再运行。"
+            ),
+        )
+
+    def _audit_html(self, session_id: str) -> str:
         """构建会话审计摘要。"""
 
         session = self._vm.facade.get_session(session_id)
         if session is None:
             return ""
         trace = self._vm.facade.get_trace(session_id)
-        return (
-            f"工作流: {session.workflow_id}\n"
-            f"状态: {session.status.value}\n"
-            f"步骤数: {len(session.steps)}\n"
-            f"轨迹记录: {len(trace)}"
+        body = "<br>".join(
+            [
+                rich_text.field("工作流: ", session.workflow_id),
+                rich_text.field("状态: ", session.status.value),
+                rich_text.field("步骤数: ", len(session.steps)),
+                rich_text.field("轨迹记录: ", len(trace)),
+            ]
+        )
+        return rich_text.panel("会话审计", body)
+
+    @staticmethod
+    def _workflow_info_html(summary) -> str:
+        """格式化工作流绑定设备摘要。"""
+
+        actions = ", ".join(summary.actions or []) or "-"
+        window_bits = []
+        if summary.title_contains:
+            label = "标题匹配" if summary.match_mode == "equals" else "标题包含"
+            window_bits.append(f"{label}: {summary.title_contains}")
+        if summary.process_name:
+            window_bits.append(f"进程: {summary.process_name}")
+        window_text = "\n".join(window_bits) if window_bits else "-"
+        device_status = (
+            summary.status_text
+            if summary.device_found
+            else f"{summary.status_text} ({summary.anchor_profile or '-'})"
+        )
+        cards = [
+            rich_text.info_card(
+                "基础信息",
+                [
+                    ("工作流: ", summary.workflow_id),
+                    ("状态: ", summary.lifecycle_state),
+                    ("模板: ", summary.template_label),
+                ],
+            ),
+            rich_text.info_card(
+                "设备评估",
+                [
+                    ("绑定设备: ", summary.anchor_profile or "-"),
+                    ("配置状态: ", device_status),
+                    ("窗口: ", window_text if summary.device_found else "-"),
+                ],
+            ),
+            rich_text.info_card(
+                "能力评估",
+                [
+                    ("锚点: ", summary.anchor_count if summary.device_found else 0),
+                    ("OCR观测: ", summary.ocr_anchor_count if summary.device_found else 0),
+                    ("动作: ", actions if summary.device_found else "-"),
+                ],
+            ),
+        ]
+        return rich_text.panel(
+            "工作流绑定设备",
+            rich_text.info_grid(cards),
+            status="success" if summary.device_found else "warning",
         )
 
     @staticmethod
-    def _observation_text(event: RuntimeEvent) -> str:
+    def _observation_html(event: RuntimeEvent) -> str:
         """构建观察事件文本。"""
 
         payload = event.payload
-        return (
-            f"步骤: {payload.get('step_id')}\n"
-            f"期望: {payload.get('expected_text') or '-'}\n"
-            f"实际: {payload.get('actual_text') or '-'}\n"
-            f"匹配: {payload.get('matched')}\n"
-            f"尝试: {payload.get('attempts')}\n"
-            f"耗时: {float(payload.get('elapsed_seconds') or 0):.2f}s\n"
-            f"截图: {payload.get('screenshot_path') or '-'}"
+        expected = payload.get("expected_text") or payload.get("expected_candidates")
+        rule = rich_text.ocr_rule(payload.get("match_mode"), expected)
+        body = "<br>".join(
+            [
+                rich_text.field("步骤: ", payload.get("step_id")),
+                rich_text.field("期望规则: ", rule),
+                rich_text.field("实际识别: ", payload.get("actual_text") or "-"),
+                rich_text.field("匹配: ", payload.get("matched")),
+                rich_text.field("尝试: ", payload.get("attempts")),
+                rich_text.field(
+                    "耗时: ",
+                    f"{float(payload.get('elapsed_seconds') or 0):.2f}s",
+                ),
+                rich_text.field("截图: ", payload.get("screenshot_path") or "-"),
+            ]
         )
+        return rich_text.panel("最新 OCR 观测", body)

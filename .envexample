@@ -1,50 +1,85 @@
 # SmartAccess local configuration example.
 # Copy to .env for local development; do not commit real secrets.
 
+# ---- 基础配置 ----
 SMARTACCESS_WORKSPACE_DIR=workspace
 SMARTACCESS_LOG_LEVEL=INFO
+SMARTACCESS_DEVICE_ID=lab-pc-01  # 这里必须配置唯一的设备ID
 
-# Edge API exposed to SpecLabOS / process hosts.
+# ---- Provider 模式 ----
+# 每个 provider 控制对应功能模块的实现方式：
+#   stub  - 桩模式（不执行实际操作，用于测试）
+#   real  - 真实模式（连接真实设备/API）
+
+# 自动化提供者：控制 UI 自动化操作的执行方式
+SMARTACCESS_AUTOMATION_PROVIDER=real
+# OCR 模式：控制截图文字识别方式
+#   local        - 本地 PaddleOCR
+#   paddleocr-vl - 远程 PaddleOCR-VL 服务接口（/layout-parsing）
+#   paddlex      - 远程 PaddleX OCR 服务接口（/ocr）
+SMARTACCESS_OCR_MODE=paddleocr-vl
+# 平台提供者：控制与 SpecLabOS 平台的联动方式
+SMARTACCESS_PLATFORM_PROVIDER=stub
+# 进程执行器提供者：控制进程执行的方式
+SMARTACCESS_PROCESS_EXECUTOR_PROVIDER=stub
+
+# ---- AI 模型配置（文字 LLM + 多模态 分离）----
+SMARTACCESS_AI_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36
+
+# 文字 LLM —— 用于 AI 生成工作流（不需要图片识别）
+# provider=template 时禁用；可选值：deepseek、codex 或其他 OpenAI 兼容供应商
+SMARTACCESS_AI_TEXT_PROVIDER=deepseek
+SMARTACCESS_AI_TEXT_BASE_URL=https://api.deepseek.com/v1
+SMARTACCESS_AI_TEXT_MODEL=deepseek-v4-pro
+SMARTACCESS_AI_TEXT_API_KEY=
+SMARTACCESS_AI_TEXT_TIMEOUT_SECONDS=30
+
+# 多模态 —— 用于 AI 辅助接入（需要识别截图）
+# provider=template 时禁用；目前仅 codex 走 Responses 接口支持图片，qwen 走 chat 接口
+SMARTACCESS_AI_VISION_PROVIDER=qwen
+SMARTACCESS_AI_VISION_BASE_URL=http://10.26.15.52:30081/ccb44b4cfe18439f8affd07babd0810e/v1
+SMARTACCESS_AI_VISION_MODEL=Qwen3.6-35B-A3B
+SMARTACCESS_AI_VISION_API_KEY=
+SMARTACCESS_AI_VISION_TIMEOUT_SECONDS=60
+SMARTACCESS_AI_VISION_ENABLE_THINKING=true
+
+# 向后兼容（可选）：仅当 TEXT_* / VISION_* 都未配时生效，TEXT 和 VISION 共用此组
+# SMARTACCESS_AI_PROVIDER=codex
+# SMARTACCESS_AI_BASE_URL=https://fufei.mossx.ai/v1
+# SMARTACCESS_AI_MODEL=GPT-5.4
+# SMARTACCESS_AI_API_KEY=
+# SMARTACCESS_AI_TIMEOUT_SECONDS=30
+
+# ---- OCR 服务配置（SMARTACCESS_OCR_MODE 为远程模式时生效） ----
+# paddleocr-vl 可配置服务根地址，如：http://100.84.59.58:7050
+# paddlex 可配置服务根地址或 /ocr 完整地址，如：http://100.84.59.58:8090
+SMARTACCESS_OCR_API_URL=http://100.84.59.58:8090
+
+# ---- 新建动作、OCR 与执行前校验默认值 ----
+SMARTACCESS_DEFAULT_ACTION_WAIT_SECONDS=1.0
+SMARTACCESS_DEFAULT_OCR_TIMEOUT_SECONDS=10.0
+SMARTACCESS_DEFAULT_OCR_POLL_INTERVAL_SECONDS=0.5
+SMARTACCESS_DEFAULT_PRECHECK_IMAGE_THRESHOLD=0.8
+
+# ---- SpecLabOS 平台联动 ----
+SMARTACCESS_PLATFORM_PROVIDER=stub
+SPECLABOS_BASE_URL=http://10.26.15.93:8010
+SPECLABOS_API_KEY=dev-smartaccess-token
+SPECLABOS_DATAHUB_KEY=dev-datahub-token
+SPECLABOS_TIMEOUT_SECONDS=20
+
+# ---- 远程任务监听（桌面端 daemon 线程，RabbitMQ） ----
+SMARTACCESS_RABBITMQ_ENABLED=false
+SMARTACCESS_RABBITMQ_HOST=10.26.15.93
+SMARTACCESS_RABBITMQ_PORT=5672
+SMARTACCESS_RABBITMQ_USERNAME=admin
+SMARTACCESS_RABBITMQ_PASSWORD=password123
+
+# ---- smartaccess-edge 独立 API 服务 ----
 SMARTACCESS_EDGE_API_HOST=127.0.0.1
 SMARTACCESS_EDGE_API_PORT=7000
 
-# Reserved internal control API settings.
-SMARTACCESS_INTERNAL_API_HOST=127.0.0.1
-SMARTACCESS_INTERNAL_API_PORT=7100
-
-# Provider modes.
-# Desktop startup currently wires automation=real and vision=local.
-SMARTACCESS_ENABLE_REAL_PROVIDERS=false
-SMARTACCESS_AUTOMATION_PROVIDER=stub
-SMARTACCESS_VISION_PROVIDER=stub
-SMARTACCESS_PLATFORM_PROVIDER=stub
-
-# Optional AI model profiles. API keys are intentionally blank; set them in your local .env.
-SMARTACCESS_AI_PROFILES=codex,deepseek
-SMARTACCESS_AI_ACTIVE_PROFILE=codex
-SMARTACCESS_AI_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36
-
-SMARTACCESS_AI_PROFILE_CODEX_LABEL=Codex
-SMARTACCESS_AI_PROFILE_CODEX_PROVIDER=codex
-SMARTACCESS_AI_PROFILE_CODEX_BASE_URL=https://fufei.mossx.ai/v1
-SMARTACCESS_AI_PROFILE_CODEX_MODEL=GPT-5.4
-SMARTACCESS_AI_PROFILE_CODEX_API_KEY=
-SMARTACCESS_AI_PROFILE_CODEX_TIMEOUT_SECONDS=30
-SMARTACCESS_AI_PROFILE_CODEX_WIRE_API=responses
-
-SMARTACCESS_AI_PROFILE_DEEPSEEK_LABEL=DeepSeek
-SMARTACCESS_AI_PROFILE_DEEPSEEK_PROVIDER=deepseek
-SMARTACCESS_AI_PROFILE_DEEPSEEK_BASE_URL=https://api.deepseek.com
-SMARTACCESS_AI_PROFILE_DEEPSEEK_MODEL=deepseek-chat
-SMARTACCESS_AI_PROFILE_DEEPSEEK_API_KEY=
-SMARTACCESS_AI_PROFILE_DEEPSEEK_TIMEOUT_SECONDS=30
-SMARTACCESS_AI_PROFILE_DEEPSEEK_WIRE_API=chat_completions
-
-# Downstream UDP process executor target used by smartaccess-edge.
+# UDP 执行器（smartaccess-edge 下发下游流程主机时使用）
 SMARTACCESS_UDP_HOST=127.0.0.1
 SMARTACCESS_UDP_PORT=8889
-
-# Optional SpecLabOS platform adapter.
-SPECLABOS_BASE_URL=
-SPECLABOS_API_KEY=
-SPECLABOS_TIMEOUT_SECONDS=20
+SMARTACCESS_UDP_TIMEOUT_SECONDS=6

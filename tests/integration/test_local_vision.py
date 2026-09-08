@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import importlib
+import ssl
+import sys
+
 import numpy as np
 import pytest
 
@@ -76,3 +80,29 @@ def test_local_vision_keeps_legacy_use_gpu_path(monkeypatch) -> None:
     assert calls["cls"] is False
     assert reading.text == "Carol Delta"
     assert reading.confidence == pytest.approx(0.7)
+
+
+def test_local_vision_defers_paddleocr_import_failures(monkeypatch, tmp_path) -> None:
+    fake_package = tmp_path / "paddleocr"
+    fake_package.mkdir()
+    (fake_package / "__init__.py").write_text(
+        "import ssl\nraise ssl.SSLError('bad windows cert store')\n",
+        encoding="utf-8",
+    )
+
+    with monkeypatch.context() as mp:
+        mp.syspath_prepend(str(tmp_path))
+        mp.delitem(sys.modules, "paddleocr", raising=False)
+        mp.setattr(local_vision_module, "_PADDLE_AVAILABLE", False)
+        mp.setattr(local_vision_module, "_PADDLE_IMPORT_ERROR", None)
+        mp.setattr(local_vision_module, "_PaddleOCR", None)
+
+        reloaded = importlib.reload(local_vision_module)
+
+        assert reloaded._PADDLE_AVAILABLE is False
+        assert reloaded._PADDLE_IMPORT_ERROR is None
+        with pytest.raises(RuntimeError, match="PaddleOCR"):
+            reloaded._require_paddle()
+        assert isinstance(reloaded._PADDLE_IMPORT_ERROR, ssl.SSLError)
+
+    importlib.reload(local_vision_module)

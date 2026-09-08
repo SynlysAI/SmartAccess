@@ -65,6 +65,9 @@ class RunSession:
 
     session_id: str
     workflow_id: str
+    device_id: str | None = None
+    author: str | None = None
+    workflow_name: str | None = None
     template_id: str | None = None
     template_version: str | None = None
     status: RunSessionStatus = RunSessionStatus.CREATED

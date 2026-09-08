@@ -14,6 +14,7 @@ class IncidentType(StrEnum):
     ANCHOR_MISSING = "AnchorMissing"
     OCR_LOW_CONFIDENCE = "OcrLowConfidence"
     SAFETY_LIMIT_VIOLATION = "SafetyLimitViolation"
+    DEVICE_POPUP = "DevicePopup"
     PLATFORM_SYNC_FAILED = "PlatformSyncFailed"
     TEMPLATE_VERSION_MISSING = "TemplateVersionMissing"
     EXECUTOR_FAILED = "ExecutorFailed"
@@ -33,6 +34,7 @@ DEFAULT_RECOVERY: dict[IncidentType, RecoveryAction] = {
     IncidentType.ANCHOR_MISSING: RecoveryAction.RETRY,
     IncidentType.OCR_LOW_CONFIDENCE: RecoveryAction.RETRY,
     IncidentType.SAFETY_LIMIT_VIOLATION: RecoveryAction.ABORT,
+    IncidentType.DEVICE_POPUP: RecoveryAction.MANUAL_CONFIRM,
     IncidentType.PLATFORM_SYNC_FAILED: RecoveryAction.RETRY,
     IncidentType.TEMPLATE_VERSION_MISSING: RecoveryAction.ABORT,
     IncidentType.EXECUTOR_FAILED: RecoveryAction.RETRY,
@@ -40,6 +42,7 @@ DEFAULT_RECOVERY: dict[IncidentType, RecoveryAction] = {
 MANUAL_CONFIRM_INCIDENTS = frozenset(
     {
         IncidentType.SAFETY_LIMIT_VIOLATION,
+        IncidentType.DEVICE_POPUP,
         IncidentType.TEMPLATE_VERSION_MISSING,
     }
 )

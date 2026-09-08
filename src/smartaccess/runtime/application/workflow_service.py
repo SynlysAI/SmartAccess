@@ -75,11 +75,15 @@ class WorkflowService:
         self._workflows.clear()
         paths = list((self._workspace_dir / "workflows").glob("*/draft.yaml"))
         paths.extend((self._workspace_dir / "templates").glob("*/*/workflow.yaml"))
+        loaded_count = 0
         for path in sorted(paths):
             try:
                 self.load(path)
+                loaded_count += 1
             except Exception:  # noqa: BLE001 - 单个坏文件不能阻断启动
                 self._logger.exception("工作流加载失败: %s", path)
+        if loaded_count:
+            self._logger.info("已加载 %d 个工作流", loaded_count)
 
     def draft_from_prompt(
         self,
@@ -101,7 +105,10 @@ class WorkflowService:
         normalized_context = dict(context)
         if "anchor_profile" not in normalized_context and "instrument_profile" in context:
             normalized_context["anchor_profile"] = context["instrument_profile"]
+        self._logger.info("AI 生成工作流中... prompt=%.100s", prompt)
         workflow = self._draft_generator.draft_from_prompt(prompt, normalized_context)
+        self._logger.info("AI 工作流生成完成: workflow_id=%s, 步骤数=%d",
+                          workflow.metadata.workflow_id, len(workflow.steps))
         reasoning = getattr(self._draft_generator, "last_reasoning", "") or ""
         self._draft_records[workflow.metadata.workflow_id] = WorkflowDraftRecord(
             workflow_id=workflow.metadata.workflow_id,
@@ -132,8 +139,11 @@ class WorkflowService:
         normalized = WorkflowContract.model_validate(
             workflow.model_dump(mode="json", exclude_none=True)
         )
+        self._log_migration_errors(normalized)
         self._workflows[normalized.metadata.workflow_id] = normalized
         self.save(normalized)
+        self._logger.info("工作流已注册: workflow_id=%s, 步骤数=%d",
+                          normalized.metadata.workflow_id, len(normalized.steps))
         return normalized
 
     def update(self, workflow: WorkflowContract) -> WorkflowContract:
@@ -145,6 +155,7 @@ class WorkflowService:
         """从文件加载工作流。"""
 
         workflow = load_yaml_contract(path, WorkflowContract)
+        self._log_migration_errors(workflow)
         self._workflows[workflow.metadata.workflow_id] = workflow
         return workflow
 
@@ -207,11 +218,37 @@ class WorkflowService:
         draft_path = self._draft_path(workflow_id)
         if draft_path.exists():
             shutil.rmtree(draft_path.parent)
+        self._logger.info("工作流已删除: workflow_id=%s", workflow_id)
 
     def draft_record(self, workflow_id: str) -> WorkflowDraftRecord | None:
         """读取工作流草稿生成记录。"""
 
         return self._draft_records.get(workflow_id)
+
+    @staticmethod
+    def _log_migration_errors(workflow: WorkflowContract) -> None:
+        """记录工作流迁移错误到日志。
+
+        Args:
+            workflow: 已校验的工作流契约。
+        """
+
+        errors = getattr(workflow, "migration_errors", [])
+        if not errors:
+            return
+        logger = get_logger()
+        logger.warning(
+            "工作流 %s 存在 %d 条迁移错误:",
+            workflow.metadata.workflow_id,
+            len(errors),
+        )
+        for error in errors:
+            logger.warning(
+                "  step %s (action=%s): %s",
+                error.id,
+                error.action,
+                error.reason,
+            )
 
     def standardize_check(self, workflow: WorkflowContract) -> StandardizationResult:
         """执行工作流标准化校验。"""

@@ -11,7 +11,9 @@ def main() -> int:
     """加载配置并启动桌面应用。"""
 
     settings = AppSettings.from_env()
-    configure_logging(settings).info("通过 python -m smartaccess 启动")
+    logger = configure_logging(settings)
+    logger.info("通过 python -m smartaccess 启动")
+    logger.info("SmartAccess 执行端 ID: %s", settings.device_id or "未配置")
     return run_desktop(settings)
 
 

@@ -39,25 +39,46 @@ class StubPlatformClient:
         self,
         template_id: str,
         template_version: str,
+        source_device_id: str | None = None,
     ) -> dict[str, Any]:
-        """读取指定模板版本。"""
+        """读取指定模板版本，可按执行端 ID 区分同名模板。"""
 
-        key = (template_id, template_version)
+        key = (template_id, template_version, source_device_id or "")
         if key not in self._templates:
             raise TemplateVersionMissing(template_id, template_version)
         return self._templates[key]
 
-    def list_templates(self) -> list[dict[str, Any]]:
+    def list_templates(
+        self,
+        *,
+        device_id: str | None = None,
+        source_device_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """列出模板。"""
 
         self._raise_if_offline("list_templates")
-        return [dict(payload) for payload in self._templates.values()]
+        templates = [dict(payload) for payload in self._templates.values()]
+        if device_id:
+            templates = [
+                item for item in templates if item.get("anchor_profile") == device_id
+            ]
+        if source_device_id:
+            templates = [
+                item
+                for item in templates
+                if item.get("source_device_id") == source_device_id
+            ]
+        return templates
 
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         """发布模板。"""
 
         self._raise_if_offline("publish_template")
-        key = (payload["template_id"], payload["template_version"])
+        key = (
+            payload["template_id"],
+            payload["template_version"],
+            str(payload.get("source_device_id") or ""),
+        )
         self._templates[key] = dict(payload)
         return {
             "ok": True,
@@ -65,15 +86,34 @@ class StubPlatformClient:
             "template_version": key[1],
         }
 
-    def delete_template(self, template_id: str, template_version: str) -> bool:
-        """删除模板版本。"""
+    def delete_template(
+        self,
+        template_id: str,
+        template_version: str,
+        source_device_id: str | None = None,
+    ) -> bool:
+        """删除模板版本，可按执行端 ID 精确删除同名模板。"""
 
         self._raise_if_offline("delete_template")
-        key = (template_id, template_version)
+        key = (template_id, template_version, source_device_id or "")
         if key not in self._templates:
             raise TemplateVersionMissing(template_id, template_version)
         del self._templates[key]
         return True
+
+    def upload_run_event(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """上传 SmartAccess 运行事件。
+
+        Args:
+            run_id: SpecLabOS 运行 ID。
+            payload: 事件载荷。
+
+        Returns:
+            平台响应。
+        """
+        self._raise_if_offline("upload_run_event")
+        self.uploads.append(("run_event", dict(payload)))
+        return {"ok": True, "run_id": run_id, **payload}
 
     def upload_status(self, payload: dict[str, Any]) -> bool:
         """上传状态。"""
@@ -89,6 +129,34 @@ class StubPlatformClient:
         """上传结果。"""
 
         return self._upload("results", payload)
+
+    def report_heartbeat(self, payload: dict[str, Any]) -> bool:
+        """上报执行端心跳。
+
+        Args:
+            payload: 心跳载荷。
+
+        Returns:
+            平台接收成功返回 True。
+        """
+        return self._upload("heartbeat", payload)
+
+    def register_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """注册并校验执行端节点身份。
+
+        Args:
+            payload: 节点注册载荷。
+
+        Returns:
+            注册结果。
+        """
+
+        self._raise_if_offline("register_node")
+        return {
+            "ok": True,
+            "conflict": False,
+            "node_id": payload.get("node_id", ""),
+        }
 
     def _upload(self, kind: str, payload: dict[str, Any]) -> bool:
         """记录一次上传。"""

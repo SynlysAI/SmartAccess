@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QComboBox,
     QPushButton,
     QTableWidget,
@@ -16,17 +15,20 @@ from PyQt6.QtWidgets import (
 
 from smartaccess.desktop.widgets.table_style import (
     NoWheelComboBox,
-    TableCheckBox,
     configure_data_table,
     interactive_header,
     set_embedded_editor_height,
 )
 
-ACTION_OPTIONS = [
-    ("click", "单击"),
-    ("type", "输入"),
-    ("hotkey", "快捷键"),
-    ("press_enter", "回车"),
+PRECHECK_OPTIONS = [
+    ("none", "无"),
+    ("image", "图像一致"),
+    ("text", "文字一致"),
+    ("image_text", "图像 + 文字"),
+]
+VALIDATION_REGION_OPTIONS = [
+    ("target", "与目标区域一致"),
+    ("custom", "自定义区域"),
 ]
 
 
@@ -35,38 +37,36 @@ class AnchorRow:
     """锚点表格行模型。"""
 
     anchor_id: str
-    action_roi: str
-    action: str = "click"
-    ocr_enabled: bool = False
-    observe_roi: str = ""
-    requires_confirmation: bool = False
+    target_roi: str
+    precheck_mode: str = "none"
+    validation_roi: str = ""
+    image_threshold: float = 0.8
 
 
 class AnchorTable(QTableWidget):
-    """用于编辑锚点、动作和 OCR 观察区域的表格。"""
+    """用于编辑锚点目标区域和执行前校验区域的表格。"""
 
     row_delete_requested = pyqtSignal(int)
-    row_ocr_toggled = pyqtSignal(int, bool)
+    row_precheck_changed = pyqtSignal(int, str)
+    row_validation_region_changed = pyqtSignal(int, bool)
     row_changed = pyqtSignal(int)
 
     def __init__(self, parent=None) -> None:
         """初始化锚点表格。"""
 
-        super().__init__(0, 7, parent)
+        super().__init__(0, 5, parent)
         self.setHorizontalHeaderLabels(
-            ["锚点 ID", "动作区域", "动作", "OCR", "观察区域", "确认", "操作"]
+            ["锚点 ID", "目标区域", "执行前校验", "校验区域", "操作"]
         )
         configure_data_table(self, row_height=38)
         header = interactive_header(self)
         header.setStretchLastSection(False)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.setColumnWidth(0, 170)
-        self.setColumnWidth(1, 130)
-        self.setColumnWidth(2, 118)
-        self.setColumnWidth(3, 50)
-        self.setColumnWidth(4, 130)
-        self.setColumnWidth(5, 50)
-        self.setColumnWidth(6, 50)
+        self.setColumnWidth(0, 190)
+        self.setColumnWidth(1, 140)
+        self.setColumnWidth(2, 130)
+        self.setColumnWidth(3, 140)
+        self.setColumnWidth(4, 50)
         self.itemChanged.connect(self._on_item_changed)
 
     def minimumSizeHint(self):
@@ -77,7 +77,7 @@ class AnchorTable(QTableWidget):
     def sizeHint(self):
         """返回合理默认尺寸，控制表格对布局空间的诉求。"""
 
-        return QSize(520, 220)
+        return QSize(560, 220)
 
     def add_anchor(self, row_data: AnchorRow) -> int:
         """新增锚点行。
@@ -89,23 +89,28 @@ class AnchorTable(QTableWidget):
             新增行号。
         """
 
+        if row_data.precheck_mode != "none" and not row_data.validation_roi:
+            row_data.validation_roi = row_data.target_roi
         row = self.rowCount()
         self.insertRow(row)
         self._set_item(row, 0, row_data.anchor_id)
-        self._set_item(row, 1, row_data.action_roi)
-        self.setCellWidget(row, 2, self._action_combo(row_data.action))
-        self.setCellWidget(row, 3, self._checkbox(row_data.ocr_enabled, "ocr"))
-        self._set_item(row, 4, row_data.observe_roi)
-        self.setCellWidget(row, 5, self._checkbox(row_data.requires_confirmation, "confirm"))
+        self._set_item(row, 1, row_data.target_roi)
+        self.setCellWidget(row, 2, self._precheck_combo(row_data.precheck_mode))
+        self._set_item(row, 3, row_data.validation_roi)
+        self.setCellWidget(row, 3, self._validation_region_combo(row_data))
         delete_btn = QPushButton("×")
         delete_btn.setObjectName("TableDanger")
         delete_btn.setToolTip("删除锚点")
         delete_btn.setFixedSize(22, 22)
-        delete_btn.clicked.connect(lambda _checked=False, r=row: self.row_delete_requested.emit(r))
-        self.setCellWidget(row, 6, delete_btn)
+        delete_btn.clicked.connect(
+            lambda _checked=False, current_row=row: self.row_delete_requested.emit(
+                current_row
+            )
+        )
+        self.setCellWidget(row, 4, delete_btn)
         self._store_row(row, row_data)
-        self._stash_roi_name(row, 1, row_data.action_roi)
-        self._stash_roi_name(row, 4, row_data.observe_roi or "")
+        self._stash_roi_name(row, 1, row_data.target_roi)
+        self._stash_roi_name(row, 3, row_data.validation_roi)
         self.rebind_row_widgets()
         return row
 
@@ -122,17 +127,24 @@ class AnchorTable(QTableWidget):
         if row < 0 or row >= self.rowCount():
             return None
         anchor_id = self._item_text(row, 0)
-        action_roi = self._roi_name(row, 1)
-        observe_roi = self._roi_name(row, 4)
-        if not anchor_id or not action_roi:
+        target_roi = self._roi_name(row, 1)
+        validation_roi = self._roi_name(row, 3)
+        if not anchor_id or not target_roi:
             return None
+        stored_item = self.item(row, 0)
+        stored = (
+            stored_item.data(Qt.ItemDataRole.UserRole)
+            if stored_item is not None
+            else None
+        )
         return AnchorRow(
             anchor_id=anchor_id,
-            action_roi=action_roi,
-            action=self._combo_data(row, 2) or "click",
-            ocr_enabled=self._checkbox_value(row, 3),
-            observe_roi=observe_roi,
-            requires_confirmation=self._checkbox_value(row, 5),
+            target_roi=target_roi,
+            precheck_mode=self._combo_data(row, 2) or "none",
+            validation_roi=validation_roi,
+            image_threshold=(
+                stored.image_threshold if isinstance(stored, AnchorRow) else 0.8
+            ),
         )
 
     def row_models(self) -> list[AnchorRow]:
@@ -155,15 +167,12 @@ class AnchorTable(QTableWidget):
         return row_data
 
     def update_roi_label(self, roi_name: str, label: str) -> None:
-        """更新引用指定 ROI 的坐标显示。
-
-        ROI 名称存入 UserRole 供 row_model 读取，单元格仅显示坐标文本。
-        """
+        """更新引用指定 ROI 的坐标显示。"""
 
         for row in range(self.rowCount()):
-            for column in (1, 4):
-                text = self._item_text(row, column)
+            for column in (1, 3):
                 item = self.item(row, column)
+                text = self._item_text(row, column)
                 stored = item.data(Qt.ItemDataRole.UserRole) if item else ""
                 name = str(stored) if stored else text.split("  ")[0].strip()
                 if name == roi_name:
@@ -172,106 +181,194 @@ class AnchorTable(QTableWidget):
                     if item is not None:
                         item.setData(Qt.ItemDataRole.UserRole, roi_name)
 
-    def clear_observe_roi(self, row: int) -> str:
-        """清空指定行观察 ROI。"""
+    def clear_validation_roi(self, row: int) -> str:
+        """清空指定行的校验 ROI。"""
 
-        observe = self._roi_name(row, 4)
-        self._set_item(row, 4, "")
-        item = self.item(row, 4)
+        validation_roi = self._roi_name(row, 3)
+        self._set_item(row, 3, "")
+        item = self.item(row, 3)
         if item is not None:
             item.setData(Qt.ItemDataRole.UserRole, "")
-        checkbox = self.cellWidget(row, 3)
-        if isinstance(checkbox, QCheckBox):
-            checkbox.blockSignals(True)
-            checkbox.setChecked(False)
-            checkbox.blockSignals(False)
-        return observe
+        return validation_roi
 
-    def set_observe_roi(self, row: int, roi_name: str) -> None:
-        """设置指定行观察 ROI 名称。
+    def set_validation_roi(self, row: int, roi_name: str) -> None:
+        """设置指定行的校验 ROI。
 
         Args:
             row: 表格行号。
-            roi_name: 观察 ROI 名称。
+            roi_name: 校验 ROI 名称。
         """
 
         if 0 <= row < self.rowCount():
-            self._set_item(row, 4, roi_name)
-            self._stash_roi_name(row, 4, roi_name)
+            self._set_item(row, 3, roi_name)
+            self._stash_roi_name(row, 3, roi_name)
+            combo = self.cellWidget(row, 3)
+            if isinstance(combo, QComboBox):
+                target_roi = self._roi_name(row, 1)
+                mode = "target" if roi_name == target_roi else "custom"
+                index = combo.findData(mode)
+                combo.blockSignals(True)
+                combo.setCurrentIndex(max(0, index))
+                combo.blockSignals(False)
+
+    def set_validation_region_enabled(self, row: int, enabled: bool) -> None:
+        """设置校验区域选择器的可用状态。
+
+        Args:
+            row: 表格行号。
+            enabled: 是否启用选择器。
+        """
+
+        combo = self.cellWidget(row, 3)
+        if isinstance(combo, QComboBox):
+            if enabled:
+                self._set_validation_region_options(
+                    combo,
+                    self._roi_name(row, 3),
+                    self._roi_name(row, 1),
+                )
+            else:
+                self._set_validation_region_options(combo)
+            combo.setEnabled(enabled)
 
     def remove_rows_by_roi(self, roi_name: str) -> None:
-        """根据动作 ROI 删除对应锚点行。"""
+        """根据 ROI 名称删除或清理相关锚点行。"""
 
         for row in range(self.rowCount() - 1, -1, -1):
             row_data = self.row_model(row)
-            if row_data and row_data.action_roi == roi_name:
+            if row_data and row_data.target_roi == roi_name:
                 self.removeRow(row)
-            elif row_data and row_data.observe_roi == roi_name:
-                self.clear_observe_roi(row)
+            elif row_data and row_data.validation_roi == roi_name:
+                self.clear_validation_roi(row)
+                combo = self.cellWidget(row, 2)
+                if isinstance(combo, QComboBox):
+                    combo.setCurrentIndex(0)
         self.rebind_row_widgets()
 
     def rebind_row_widgets(self) -> None:
         """重新绑定行号相关控件。"""
 
         for row in range(self.rowCount()):
-            delete_btn = self.cellWidget(row, 6)
+            delete_btn = self.cellWidget(row, 4)
             if isinstance(delete_btn, QPushButton):
                 try:
                     delete_btn.clicked.disconnect()
                 except TypeError:
                     pass
                 delete_btn.clicked.connect(
-                    lambda _checked=False, r=row: self.row_delete_requested.emit(r)
+                    lambda _checked=False, current_row=row: self.row_delete_requested.emit(
+                        current_row
+                    )
                 )
-            ocr = self.cellWidget(row, 3)
-            if isinstance(ocr, QCheckBox):
+            combo = self.cellWidget(row, 2)
+            if isinstance(combo, QComboBox):
                 try:
-                    ocr.toggled.disconnect()
+                    combo.currentIndexChanged.disconnect()
                 except TypeError:
                     pass
-                ocr.toggled.connect(
-                    lambda checked, r=row: self.row_ocr_toggled.emit(r, checked)
+                combo.currentIndexChanged.connect(
+                    lambda _index, current_combo=combo: self._emit_precheck_changed(
+                        current_combo
+                    )
+                )
+            validation_combo = self.cellWidget(row, 3)
+            if isinstance(validation_combo, QComboBox):
+                try:
+                    validation_combo.currentIndexChanged.disconnect()
+                except TypeError:
+                    pass
+                validation_combo.currentIndexChanged.connect(
+                    lambda _index, current_combo=validation_combo: (
+                        self._emit_validation_region_changed(current_combo)
+                    )
                 )
 
-    def _action_combo(self, action: str) -> QComboBox:
-        """创建动作下拉框。"""
+    def _precheck_combo(self, mode: str) -> QComboBox:
+        """创建执行前校验方式下拉框。"""
 
         combo = NoWheelComboBox()
         combo.setObjectName("TableComboBox")
         set_embedded_editor_height(combo)
-        for key, label in ACTION_OPTIONS:
+        for key, label in PRECHECK_OPTIONS:
             combo.addItem(label, key)
-        index = combo.findData(action)
+        index = combo.findData(mode)
         combo.setCurrentIndex(max(0, index))
-        combo.currentIndexChanged.connect(lambda _index: self._emit_widget_changed(combo))
+        combo.currentIndexChanged.connect(
+            lambda _index, current_combo=combo: self._emit_precheck_changed(
+                current_combo
+            )
+        )
         return combo
 
-    def _checkbox(self, checked: bool, role: str) -> QCheckBox:
-        """创建复选框。"""
+    def _validation_region_combo(self, row_data: AnchorRow) -> QComboBox:
+        """创建校验区域范围选择器。
 
-        checkbox = TableCheckBox()
-        checkbox.setObjectName("TableCheck")
-        set_embedded_editor_height(checkbox)
-        checkbox.setChecked(checked)
-        if role == "ocr":
-            checkbox.toggled.connect(lambda value: self._emit_ocr_changed(checkbox, value))
+        Args:
+            row_data: 当前锚点行模型。
+
+        Returns:
+            校验区域范围下拉框。
+        """
+
+        combo = NoWheelComboBox()
+        combo.setObjectName("TableComboBox")
+        set_embedded_editor_height(combo)
+        if row_data.precheck_mode == "none":
+            self._set_validation_region_options(combo)
         else:
-            checkbox.toggled.connect(lambda _value: self._emit_widget_changed(checkbox))
-        return checkbox
+            self._set_validation_region_options(
+                combo,
+                row_data.validation_roi,
+                row_data.target_roi,
+            )
+        combo.setEnabled(row_data.precheck_mode != "none")
+        combo.currentIndexChanged.connect(
+            lambda _index, current_combo=combo: (
+                self._emit_validation_region_changed(current_combo)
+            )
+        )
+        return combo
 
-    def _emit_widget_changed(self, widget) -> None:
-        """控件变更时发出行变更信号。"""
+    @staticmethod
+    def _set_validation_region_options(
+        combo: QComboBox,
+        validation_roi: str = "",
+        target_roi: str = "",
+    ) -> None:
+        """根据校验启用状态刷新校验区域下拉选项。
 
-        row = self.indexAt(widget.pos()).row()
+        Args:
+            combo: 待更新的校验区域下拉框。
+            validation_roi: 当前校验 ROI 名称。
+            target_roi: 当前目标 ROI 名称。
+        """
+
+        combo.blockSignals(True)
+        combo.clear()
+        if not target_roi:
+            combo.addItem("无", "none")
+        else:
+            for key, label in VALIDATION_REGION_OPTIONS:
+                combo.addItem(label, key)
+            uses_target = not validation_roi or validation_roi == target_roi
+            combo.setCurrentIndex(0 if uses_target else 1)
+        combo.blockSignals(False)
+
+    def _emit_precheck_changed(self, combo: QComboBox) -> None:
+        """执行前校验方式变化时发出信号。"""
+
+        row = self.indexAt(combo.pos()).row()
         if row >= 0:
+            self.row_precheck_changed.emit(row, str(combo.currentData() or "none"))
             self.row_changed.emit(row)
 
-    def _emit_ocr_changed(self, checkbox: QCheckBox, checked: bool) -> None:
-        """OCR 复选框变更时发出信号。"""
+    def _emit_validation_region_changed(self, combo: QComboBox) -> None:
+        """校验区域范围变化时发出信号。"""
 
-        row = self.indexAt(checkbox.pos()).row()
+        row = self.indexAt(combo.pos()).row()
         if row >= 0:
-            self.row_ocr_toggled.emit(row, checked)
+            uses_target = str(combo.currentData() or "target") == "target"
+            self.row_validation_region_changed.emit(row, uses_target)
             self.row_changed.emit(row)
 
     def _set_item(self, row: int, column: int, text: str) -> None:
@@ -282,7 +379,7 @@ class AnchorTable(QTableWidget):
             item = QTableWidgetItem()
             self.setItem(row, column, item)
         item.setText(text)
-        if column in (1, 4):
+        if column in (1, 3):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
     def _store_row(self, row: int, row_data: AnchorRow) -> None:
@@ -313,15 +410,7 @@ class AnchorTable(QTableWidget):
             item.setData(Qt.ItemDataRole.UserRole, name)
 
     def _roi_name(self, row: int, column: int) -> str:
-        """从 UserRole 或文本解析 ROI 名称。
-
-        Args:
-            row: 行号。
-            column: 列号（1=动作区域，4=观察区域）。
-
-        Returns:
-            ROI 名称，如果没有则返回空字符串。
-        """
+        """从 UserRole 或文本解析 ROI 名称。"""
 
         item = self.item(row, column)
         if item is not None:
@@ -336,9 +425,3 @@ class AnchorTable(QTableWidget):
 
         widget = self.cellWidget(row, column)
         return str(widget.currentData()) if isinstance(widget, QComboBox) else ""
-
-    def _checkbox_value(self, row: int, column: int) -> bool:
-        """读取复选框值。"""
-
-        widget = self.cellWidget(row, column)
-        return widget.isChecked() if isinstance(widget, QCheckBox) else False

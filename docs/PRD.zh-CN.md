@@ -109,6 +109,9 @@ SmartAccess 将阶段状态、步骤 OCR 事实、日志和关键截图上传至
 - 支持基于点击、双击、输入、快捷键、回车和固定等待的工作流执行。
 - 支持动作后 OCR 轮询判断和无观测默认等待。
 - 支持 `anchors.yaml`、`workflow.yaml`、`platform_adapter.yaml`、`run_trace.jsonl` 四类主契约。
+- 新建设备 ID 必须采用 `体系-实验室-产品型号-设备编号` 四段格式；历史旧锚点文件允许继续加载。
+- 工作流 `type` 步骤支持自由输入与运行内递增输入，递增值必须进入运行 trace。
+- 运行监控日志必须在任务开始与结束时输出包含设备 ID、作者、工作流名称和 session 的边界行。
 - 支持任务配置下发、状态上报、日志上传和 trace 事实上传。
 - 支持标准工作流发布到 SpecLabOS 模板中心，并按模板 ID + 版本回拉执行。
 - 支持 `GET /health`、`POST /api/v1/experiment/trigger`、`POST /api/v1/experiment/execute`、`GET /api/v1/experiment/status` 四个设备侧 FastAPI 基线接口。
@@ -121,7 +124,7 @@ SmartAccess 将阶段状态、步骤 OCR 事实、日志和关键截图上传至
 - **锚点配置唯一入口**：`anchors.yaml` 顶层为 `profile_id`、`window_signature`、`anchors[]`。
 - **线性工作流**：步骤只包含 `anchor_id`、`action`、`value?`、`expected_text?`、`match_mode`、等待和确认字段。
 - **OCR-only 观测**：本地 vision provider 只保留截图、裁剪、OCR 读取和文本匹配。
-- **真实动作链路**：Win32 SendInput/SetCursorPos 驱动 click、type、hotkey、press_enter；双击用两个连续 click 步骤表达。
+- **真实动作链路**：Win32 SendInput/SetCursorPos 驱动 click、double_click、type、hotkey、press_enter。
 - **运行 trace 自动产出**：每步记录动作、等待策略、期望 OCR、实际 OCR、匹配结果、尝试次数、耗时、截图路径和错误详情。
 - **AI 工作流生成单 prompt**：内部流程为 `prompt -> memory/skill/template 检索 -> step intent -> anchor resolver -> simplified workflow`。
 - **模板/平台保留一级入口**：只发布、回拉和同步新简化 workflow。
@@ -170,7 +173,7 @@ SmartAccess 将阶段状态、步骤 OCR 事实、日志和关键截图上传至
 
 ### 8.4 自动化执行
 
-- 支持 `click` 点击 `action_region` 中心；双击用两个连续 `click` 步骤表达。
+- 支持 `click` 单击 `action_region` 中心，支持 `double_click` 双击同一位置。
 - 支持 `type` / `hotkey` / `press_enter` 先聚焦该锚点再输入或按键。
 - 支持执行前安全检查，例如窗口存在、锚点可定位、步骤需要人工确认。
 - 支持开始、停止、取消和 OCR 轮询可中断。

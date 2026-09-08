@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QSize, Qt
+from PyQt6.QtGui import QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -21,9 +22,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from smartaccess import APP_NAME, RELEASE_CHANNEL, RELEASE_DATE, VERSION_DISPLAY
 from smartaccess.desktop.pages.calibration_page import CalibrationPage
+from smartaccess.desktop.pages.data_collection_page import DataCollectionPage
 from smartaccess.desktop.pages.dashboard_page import DashboardPage
 from smartaccess.desktop.pages.monitoring_page import MonitoringPage
+from smartaccess.desktop.pages.settings_page import SystemSettingsPage
 from smartaccess.desktop.pages.template_page import TemplatePage
 from smartaccess.desktop.pages.workflow_page import WorkflowPage
 from smartaccess.shared.config.settings import AppSettings
@@ -36,6 +40,8 @@ _NAV_ITEMS = [
     ("运行监控", "执行工作流并查看日志和审计"),
     ("模板/平台", "模板发布、回滚和平台同步"),
     ("运行概览", "设备、模板、运行和异常概览"),
+    ("数据采集", "配置本地目录监听并可靠上传至 SmartDataHub"),
+    ("系统设置", "配置 OCR、AI、平台、默认参数和消息服务"),
 ]
 
 
@@ -64,7 +70,7 @@ class MainWindow(QMainWindow):
             Path(settings.workspace_dir) / "app_state" / "window_state.json"
         )
 
-        self.setWindowTitle("SmartAccess")
+        self.setWindowTitle(f"{APP_NAME} {VERSION_DISPLAY}")
         self.setMinimumSize(800, 500)
         self._nav = QListWidget()
         self._nav.setObjectName("NavList")
@@ -79,6 +85,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         """关闭窗口前保存 UI 状态。"""
 
+        for index in range(self._stack.count()):
+            page = self._stack.widget(index)
+            shutdown = getattr(page, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
         self._save_window_state()
         super().closeEvent(event)
 
@@ -96,28 +107,33 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(center)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        nav_panel = self._build_nav()
         root.addWidget(self._build_top_bar())
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        body.addWidget(self._build_nav(), 0)
+        body.addWidget(nav_panel, 0)
         body.addWidget(self._stack, 1)
         body.addWidget(self._right_panel, 0)
         root.addLayout(body, 1)
         self.setCentralWidget(center)
 
-        for index, (title, hint) in enumerate(_NAV_ITEMS):
-            if index == 0 and self._facade is not None:
+        for title, hint in _NAV_ITEMS:
+            if title == "设备接入与校准" and self._facade is not None:
                 self._stack.addWidget(CalibrationPage(self._facade))
-            elif index == 1 and self._facade is not None:
+            elif title == "数据采集" and self._facade is not None:
+                self._stack.addWidget(DataCollectionPage(self._facade))
+            elif title == "工作流设计" and self._facade is not None:
                 self._stack.addWidget(WorkflowPage(self._facade))
-            elif index == 2 and self._facade is not None:
+            elif title == "运行监控" and self._facade is not None:
                 self._stack.addWidget(MonitoringPage(self._facade))
-            elif index == 3 and self._facade is not None:
+            elif title == "模板/平台" and self._facade is not None:
                 self._stack.addWidget(TemplatePage(self._facade))
-            elif index == 4 and self._facade is not None:
+            elif title == "运行概览" and self._facade is not None:
                 self._stack.addWidget(DashboardPage(self._facade))
+            elif title == "系统设置" and self._facade is not None:
+                self._stack.addWidget(SystemSettingsPage(self._facade))
             else:
                 self._stack.addWidget(self._placeholder_page(title, hint))
         self._nav.currentRowChanged.connect(self._on_nav_changed)
@@ -141,7 +157,7 @@ class MainWindow(QMainWindow):
         self._nav_toggle.setCheckable(True)
         self._nav_toggle.setChecked(True)
         self._nav_toggle.setToolTip("显示或隐藏导航栏")
-        self._nav_toggle.toggled.connect(self._nav.setVisible)
+        self._nav_toggle.toggled.connect(self._nav_panel.setVisible)
         nav_font = self._nav_toggle.font()
         nav_font.setBold(True)
         self._nav_toggle.setFont(nav_font)
@@ -158,17 +174,58 @@ class MainWindow(QMainWindow):
         self._right_toggle.setFont(info_font)
 
         layout.addStretch(1)
+        user_text = self._user_text()
+        if user_text:
+            user_label = QLabel(user_text)
+            user_label.setObjectName("PageHint")
+            user_label.setToolTip(user_text)
+            layout.addWidget(user_label)
         layout.addWidget(self._right_toggle)
         return bar
 
-    def _build_nav(self) -> QListWidget:
+    def _user_text(self) -> str:
+        """生成顶部登录用户文本。
+
+        Returns:
+            登录用户展示文本；未登录时返回空字符串。
+        """
+
+        username = self._settings.speclabos_username.strip()
+        if not username:
+            return ""
+        role = self._settings.speclabos_user_role.strip()
+        return f"{username} · {role}" if role else username
+
+    def _show_about(self) -> None:
+        """显示 SmartAccess 版本和发布信息。"""
+
+        QMessageBox.about(
+            self,
+            f"关于 {APP_NAME}",
+            (
+                f"{APP_NAME}\n\n"
+                f"版本：{VERSION_DISPLAY}\n"
+                f"发布阶段：{RELEASE_CHANNEL}\n"
+                f"发布日期：{RELEASE_DATE}\n\n"
+                "首个功能完善的内部测试版本。"
+            ),
+        )
+
+    def _build_nav(self) -> QWidget:
         """构建左侧导航。
 
         Returns:
-            导航列表部件。
+            包含导航列表和版本入口的导航面板。
         """
 
-        self._nav.setFixedWidth(200)
+        panel = QFrame()
+        panel.setObjectName("NavPanel")
+        panel.setFixedWidth(200)
+        self._nav_panel = panel
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setSpacing(0)
+
         self._nav.setIconSize(QSize(18, 18))
         icons = [
             QStyle.StandardPixmap.SP_ComputerIcon,
@@ -176,13 +233,42 @@ class MainWindow(QMainWindow):
             QStyle.StandardPixmap.SP_MediaPlay,
             QStyle.StandardPixmap.SP_DirIcon,
             QStyle.StandardPixmap.SP_FileDialogInfoView,
+            QStyle.StandardPixmap.SP_DriveHDIcon,
         ]
         for index, (title, hint) in enumerate(_NAV_ITEMS):
             item = QListWidgetItem(title)
-            item.setIcon(self.style().standardIcon(icons[index]))
+            if title == "系统设置":
+                item.setIcon(self._settings_icon())
+            else:
+                item.setIcon(self.style().standardIcon(icons[index]))
             item.setToolTip(hint)
             self._nav.addItem(item)
-        return self._nav
+        layout.addWidget(self._nav, 1)
+
+        version_button = QPushButton(VERSION_DISPLAY)
+        version_button.setObjectName("VersionButton")
+        version_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        version_button.setToolTip(f"查看关于 {APP_NAME}")
+        version_button.clicked.connect(self._show_about)
+        layout.addWidget(
+            version_button,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+        )
+        return panel
+
+    def _settings_icon(self) -> QIcon:
+        """创建与导航栏尺寸一致的齿轮设置图标。"""
+
+        pixmap = QPixmap(18, 18)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setPen(self.palette().text().color())
+        painter.setFont(QFont("Segoe UI Symbol", 14))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "⚙")
+        painter.end()
+        return QIcon(pixmap)
 
     def _build_right_panel(self) -> QWidget:
         """构建右侧系统状态栏。
@@ -269,6 +355,8 @@ class MainWindow(QMainWindow):
             return (
                 f"当前页面: {title}\n"
                 f"工作区: {self._settings.workspace_dir}\n"
+                f"执行端: {self._settings.device_id or '未配置'}\n"
+                f"登录用户: {self._settings.speclabos_username or '未登录'}\n"
                 "状态: 已启动\n"
                 "日志: 已启用"
             )
@@ -276,10 +364,13 @@ class MainWindow(QMainWindow):
         return (
             f"当前页面: {title}\n"
             f"工作区: {status.workspace_dir}\n"
+            f"执行端: {self._settings.device_id or '未配置'}\n"
+            f"登录用户: {self._settings.speclabos_username or '未登录'}\n"
             f"自动化: {status.automation_provider}\n"
-            f"视觉: {status.vision_provider}\n"
+            f"OCR: {status.ocr_mode}\n"
             f"平台: {status.platform_provider}\n"
-            f"AI: {status.ai_provider}\n"
+            f"AI 文字: {status.ai_text_provider}\n"
+            f"AI 多模态: {status.ai_vision_provider}\n"
             "日志: 已启用"
         )
 
@@ -315,7 +406,7 @@ class MainWindow(QMainWindow):
             "width": self.width(),
             "height": self.height(),
             "maximized": bool(self.windowState() & Qt.WindowState.WindowMaximized),
-            "nav_visible": self._nav.isVisible(),
+            "nav_visible": self._nav_panel.isVisible(),
             "right_visible": self._right_panel.isVisible(),
         }
         self._state_path.write_text(
