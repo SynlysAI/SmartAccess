@@ -347,7 +347,11 @@ class TemplateService:
         if target.status == TemplateVersionStatus.PUBLISHED and not force:
             raise ValueError("当前发布版本需要 force=True 确认后才能删除")
         try:
-            self._platform.delete_template(template_id, template_version)
+            self._platform.delete_template(
+                template_id,
+                template_version,
+                source_device_id=self._source_device_id or None,
+            )
         except TemplateVersionMissing:
             pass
         except Exception as exc:  # noqa: BLE001 - 云端失败时保留本地副本

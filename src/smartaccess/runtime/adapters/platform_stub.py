@@ -39,10 +39,11 @@ class StubPlatformClient:
         self,
         template_id: str,
         template_version: str,
+        source_device_id: str | None = None,
     ) -> dict[str, Any]:
-        """读取指定模板版本。"""
+        """读取指定模板版本，可按执行端 ID 区分同名模板。"""
 
-        key = (template_id, template_version)
+        key = (template_id, template_version, source_device_id or "")
         if key not in self._templates:
             raise TemplateVersionMissing(template_id, template_version)
         return self._templates[key]
@@ -73,7 +74,11 @@ class StubPlatformClient:
         """发布模板。"""
 
         self._raise_if_offline("publish_template")
-        key = (payload["template_id"], payload["template_version"])
+        key = (
+            payload["template_id"],
+            payload["template_version"],
+            str(payload.get("source_device_id") or ""),
+        )
         self._templates[key] = dict(payload)
         return {
             "ok": True,
@@ -81,11 +86,16 @@ class StubPlatformClient:
             "template_version": key[1],
         }
 
-    def delete_template(self, template_id: str, template_version: str) -> bool:
-        """删除模板版本。"""
+    def delete_template(
+        self,
+        template_id: str,
+        template_version: str,
+        source_device_id: str | None = None,
+    ) -> bool:
+        """删除模板版本，可按执行端 ID 精确删除同名模板。"""
 
         self._raise_if_offline("delete_template")
-        key = (template_id, template_version)
+        key = (template_id, template_version, source_device_id or "")
         if key not in self._templates:
             raise TemplateVersionMissing(template_id, template_version)
         del self._templates[key]

@@ -181,6 +181,7 @@ class PlatformClient(Protocol):
         self,
         template_id: str,
         template_version: str,
+        source_device_id: str | None = None,
     ) -> dict[str, Any]:
         """拉取指定模板版本。"""
 
@@ -195,7 +196,12 @@ class PlatformClient(Protocol):
     def publish_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         """发布模板。"""
 
-    def delete_template(self, template_id: str, template_version: str) -> bool:
+    def delete_template(
+        self,
+        template_id: str,
+        template_version: str,
+        source_device_id: str | None = None,
+    ) -> bool:
         """删除模板版本。"""
 
     def upload_status(self, payload: dict[str, Any]) -> bool:

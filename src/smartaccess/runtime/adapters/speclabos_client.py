@@ -54,11 +54,20 @@ class SpecLabOSPlatformClient:
     def fetch_task(self) -> dict[str, Any] | None:
         return self._request("GET", self._endpoints["fetch_task"])
 
-    def fetch_template(self, template_id: str, template_version: str) -> dict[str, Any]:
+    def fetch_template(
+        self,
+        template_id: str,
+        template_version: str,
+        source_device_id: str | None = None,
+    ) -> dict[str, Any]:
+        """拉取指定模板版本，可按执行端 ID 区分同名模板。"""
+
         path = self._endpoints["fetch_template"].format(
             template_id=quote(template_id, safe=""),
             template_version=quote(template_version, safe=""),
         )
+        if source_device_id:
+            path = f"{path}?{urlencode({'source_device_id': source_device_id})}"
         try:
             return self._request("GET", path)
         except PlatformOffline as exc:
@@ -130,13 +139,20 @@ class SpecLabOSPlatformClient:
         }
         return self._request("POST", self._endpoints["publish_template"], normalized)
 
-    def delete_template(self, template_id: str, template_version: str) -> bool:
-        """删除云端模板版本。"""
+    def delete_template(
+        self,
+        template_id: str,
+        template_version: str,
+        source_device_id: str | None = None,
+    ) -> bool:
+        """删除云端模板版本，可按执行端 ID 精确删除同名模板。"""
 
         path = self._endpoints["delete_template"].format(
             template_id=quote(template_id, safe=""),
             template_version=quote(template_version, safe=""),
         )
+        if source_device_id:
+            path = f"{path}?{urlencode({'source_device_id': source_device_id})}"
         try:
             self._request("DELETE", path)
         except PlatformOffline as exc:
