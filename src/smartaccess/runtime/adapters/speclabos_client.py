@@ -134,7 +134,7 @@ class SpecLabOSPlatformClient:
             "source_device_id": str(
                 payload.get("source_device_id") or payload.get("anchor_profile") or ""
             ),
-            "published_by": "smartaccess",
+            "published_by": str(payload.get("published_by") or "smartaccess"),
             "workflow": workflow,
         }
         return self._request("POST", self._endpoints["publish_template"], normalized)

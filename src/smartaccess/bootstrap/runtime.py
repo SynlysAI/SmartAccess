@@ -90,6 +90,7 @@ def build_runtime_facade(settings: AppSettings) -> RuntimeFacade:
         workspace_dir=settings.workspace_dir,
         event_bus=event_bus,
         source_device_id=settings.device_id,
+        publisher=settings.speclabos_username,
     )
     migration = MigrationService(workspace_dir=settings.workspace_dir)
     workspace = WorkspaceService(
