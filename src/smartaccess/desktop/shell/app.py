@@ -388,7 +388,10 @@ def show_login_dialog(settings: AppSettings) -> bool:
     if dialog.exec() != QDialog.DialogCode.Accepted or auth_result is None:
         return False
 
-    settings.speclabos_api_key = auth_result["token"]
+    # 配置了静态 SPECLABOS_API_KEY 时优先使用静态令牌（永不过期），
+    # 登录 token 有有效期，覆盖静态令牌会导致心跳与发布在过期后 401。
+    if not settings.speclabos_api_key:
+        settings.speclabos_api_key = auth_result["token"]
     settings.speclabos_username = auth_result["username"]
     settings.speclabos_user_role = auth_result["role"]
     settings.speclabos_user_organization = auth_result["organization"]
