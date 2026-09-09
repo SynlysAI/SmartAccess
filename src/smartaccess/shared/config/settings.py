@@ -323,7 +323,7 @@ class AppSettings(BaseModel):
             已更新的 .env 文件路径。
         """
 
-        env_path = path or Path.cwd() / ".env"
+        env_path = path or AppSettings._env_file_path()
         try:
             original = env_path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -354,17 +354,33 @@ class AppSettings(BaseModel):
         return env_path
 
     @staticmethod
+    def _env_file_path() -> Path:
+        """返回默认 .env 文件路径：优先当前工作目录，其次项目根目录。
+
+        Returns:
+            默认使用的 .env 文件路径。
+        """
+
+        cwd_env = Path.cwd() / ".env"
+        if cwd_env.exists():
+            return cwd_env
+        project_env = Path(__file__).resolve().parents[4] / ".env"
+        if project_env.exists():
+            return project_env
+        return cwd_env
+
+    @staticmethod
     def _read_env_file(path: Path | None = None) -> dict[str, str]:
         """读取 .env 文件内容。
 
         Args:
-            path: 可选 .env 文件路径；为空时使用当前工作目录下的 .env。
+            path: 可选 .env 文件路径；为空时自动定位默认 .env 文件。
 
         Returns:
             环境变量键值映射。
         """
 
-        env_path = path or Path.cwd() / ".env"
+        env_path = path or AppSettings._env_file_path()
         if not env_path.exists():
             return {}
         values: dict[str, str] = {}
