@@ -274,7 +274,7 @@ def show_login_dialog(settings: AppSettings) -> bool:
     form.addWidget(_field("密码", password_edit))
 
     register_link = QLabel(
-        '<a href="https://speclabos.wumiaox.com/register"'
+        '<a href="https://speclabos.xmuzc.com/register"'
         ' style="color: #5b8def; text-decoration: none;">没有账号？点击注册</a>'
     )
     register_link.setOpenExternalLinks(True)
