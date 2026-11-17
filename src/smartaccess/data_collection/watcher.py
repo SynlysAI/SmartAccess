@@ -15,6 +15,7 @@ from watchdog.observers import Observer
 from .config import CollectorIdentity, WatcherConfig
 from .models import FileAssetRecord
 from .queue import SQLiteUploadQueue
+from .run_context import ACTIVE_RUN_CONTEXT
 
 
 class CollectorFileWatcher:
@@ -122,6 +123,9 @@ class CollectorFileWatcher:
     def handle_event(self, path: Path, is_directory: bool, is_update: bool) -> None:
         """将文件系统事件转换为异步采集任务。
 
+        在事件到达时刻快照当前正在执行的远程任务 ID，任务执行期间
+        监听到的新增文件会被打上该任务标记，实现任务与数据源头绑定。
+
         Args:
             path: 事件对应路径。
             is_directory: 事件路径是否为目录。
@@ -137,27 +141,37 @@ class CollectorFileWatcher:
             if target_path in self._processing_paths:
                 return
             self._processing_paths.add(target_path)
+        active_run_id = ACTIVE_RUN_CONTEXT.current()
         thread = threading.Thread(
             target=self._process_target,
-            args=(target_path,),
+            args=(target_path, active_run_id),
             daemon=True,
             name=f"smartaccess-data-watch-{self._config.name}",
         )
         thread.start()
 
-    def _process_target(self, target_path: Path) -> None:
+    def _process_target(self, target_path: Path, active_run_id: str = "") -> None:
         """等待资产稳定后写入上传队列。
 
         Args:
             target_path: 要采集的文件或目录资产路径。
+            active_run_id: 事件到达时刻正在执行的平台任务 ID。
         """
 
         try:
             if self._config.type == "directory":
                 if self._wait_directory_settled(target_path):
-                    self._enqueue_directory(target_path, force_upload=False)
+                    self._enqueue_directory(
+                        target_path,
+                        force_upload=False,
+                        active_run_id=active_run_id,
+                    )
             elif self._wait_file_settled(target_path):
-                self._enqueue_file(target_path, force_upload=False)
+                self._enqueue_file(
+                    target_path,
+                    force_upload=False,
+                    active_run_id=active_run_id,
+                )
         except Exception as exc:  # noqa: BLE001
             self._logger.warning("采集文件处理失败 path=%s error=%s", target_path, exc)
         finally:
@@ -190,12 +204,18 @@ class CollectorFileWatcher:
             return None
         return asset_path
 
-    def _enqueue_file(self, file_path: Path, force_upload: bool) -> bool:
+    def _enqueue_file(
+        self,
+        file_path: Path,
+        force_upload: bool,
+        active_run_id: str = "",
+    ) -> bool:
         """将单个文件构造成资产记录并写入队列。
 
         Args:
             file_path: 待入队文件路径。
             force_upload: 是否强制重置重复文件状态。
+            active_run_id: 事件到达时刻正在执行的平台任务 ID。
 
         Returns:
             文件成功入队时返回 True。
@@ -210,16 +230,23 @@ class CollectorFileWatcher:
             asset_group_id=file_path.name,
             root_name=file_path.name,
             relative_path=str(relative_path).replace("\\", "/"),
+            active_run_id=active_run_id,
         )
         self._queue.enqueue_file(record, force_pending=force_upload)
         return True
 
-    def _enqueue_directory(self, directory_path: Path, force_upload: bool) -> int:
+    def _enqueue_directory(
+        self,
+        directory_path: Path,
+        force_upload: bool,
+        active_run_id: str = "",
+    ) -> int:
         """将目录资产内的所有文件按原相对路径写入队列。
 
         Args:
             directory_path: 待采集目录资产路径。
             force_upload: 是否强制重置重复文件状态。
+            active_run_id: 事件到达时刻正在执行的平台任务 ID。
 
         Returns:
             写入队列的文件数量。
@@ -238,6 +265,7 @@ class CollectorFileWatcher:
                 asset_group_id=directory_path.name,
                 root_name=directory_path.name,
                 relative_path=str(relative_path).replace("\\", "/"),
+                active_run_id=active_run_id,
             )
             self._queue.enqueue_file(record, force_pending=force_upload)
             total += 1
@@ -251,6 +279,7 @@ class CollectorFileWatcher:
         asset_group_id: str,
         root_name: str,
         relative_path: str,
+        active_run_id: str = "",
     ) -> FileAssetRecord:
         """构造与 SmartDataHub 兼容的文件资产记录。
 
@@ -260,11 +289,16 @@ class CollectorFileWatcher:
             asset_group_id: 资产分组标识。
             root_name: 资产根名称。
             relative_path: 文件在资产内的相对路径。
+            active_run_id: 事件到达时刻正在执行的平台任务 ID；
+                为空表示文件在无远程任务执行时产生。
 
         Returns:
             可写入上传队列的文件资产记录。
         """
 
+        metadata = {"source_path": str(file_path)}
+        if active_run_id:
+            metadata["device_run_id"] = active_run_id
         return FileAssetRecord(
             collector_id=self._identity.collector_id,
             device_id=self._identity.device_id,
@@ -281,7 +315,7 @@ class CollectorFileWatcher:
             or "application/octet-stream",
             file_size=file_path.stat().st_size,
             file_hash=_calculate_sha256(file_path),
-            metadata={"source_path": str(file_path)},
+            metadata=metadata,
         )
 
     def _matches(self, name: str) -> bool:

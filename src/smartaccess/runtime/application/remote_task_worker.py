@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any
 
+from smartaccess.data_collection.run_context import ACTIVE_RUN_CONTEXT
 from smartaccess.shared.contracts.workflow import WorkflowContract
 from smartaccess.shared.events.bus import RuntimeEvent
 from smartaccess.shared.events.runtime import RuntimeEventName
@@ -22,6 +23,9 @@ _EVENT_MAPPING: dict[RuntimeEventName, tuple[str, str]] = {
     RuntimeEventName.RUN_FAILED: ("run.failed", "failed"),
     RuntimeEventName.RUN_CANCELLED: ("run.cancelled", "cancelled"),
 }
+
+# 终态事件类型，收到后从数据采集运行上下文中移除任务
+_TERMINAL_EVENT_TYPES = {"run.completed", "run.failed", "run.cancelled"}
 
 _LOG_EVENT_LABELS: dict[RuntimeEventName, str] = {
     RuntimeEventName.RUN_STARTED: "运行开始",
@@ -112,6 +116,7 @@ class RemoteTaskWorker:
         self._step_index_map[run_id] = {
             step.id: idx for idx, step in enumerate(workflow.steps)
         }
+        ACTIVE_RUN_CONTEXT.begin(run_id)
         self._uploader.upload_event(
             run_id,
             "run.accepted",
@@ -166,6 +171,8 @@ class RemoteTaskWorker:
         if not mapped:
             return
         event_type, status = mapped
+        if event_type in _TERMINAL_EVENT_TYPES:
+            ACTIVE_RUN_CONTEXT.end(run_id)
         step_id = str(event.payload.get("step_id") or "")
         step_index = (
             self._step_index_map.get(run_id, {}).get(step_id)
