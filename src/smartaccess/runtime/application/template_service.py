@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
@@ -56,6 +57,7 @@ class TemplateService:
         event_bus: EventBus,
         source_device_id: str = "",
         publisher: str = "",
+        device_image_path: str = "",
     ) -> None:
         """初始化模板服务。
 
@@ -65,6 +67,7 @@ class TemplateService:
             event_bus: 运行时事件总线。
             source_device_id: 当前 SmartAccess 执行端电脑 ID。
             publisher: 当前登录用户名，发布模板时随 payload 上报给平台。
+            device_image_path: 执行端设备图片本地路径，发布时自动上传平台。
         """
 
         self._platform = platform
@@ -72,6 +75,8 @@ class TemplateService:
         self._event_bus = event_bus
         self._source_device_id = source_device_id
         self._publisher = publisher
+        self._device_image_path = device_image_path
+        self._last_image_sha256 = ""
         self._records: dict[str, list[TemplateRecord]] = {}
         self._last_cloud_count = 0
         self._cloud_available = False
@@ -182,6 +187,7 @@ class TemplateService:
         meta.published_at = published_at
         meta.lifecycle_state = "Published"
         dump_yaml_contract(workflow, self._template_path(identity))
+        self._sync_device_image()
         error = ""
         status = TemplateVersionStatus.PUBLISHED
         try:
@@ -399,6 +405,29 @@ class TemplateService:
         if not path.exists():
             raise TemplateVersionMissing(template_id, template_version)
         return load_yaml_contract(path, WorkflowContract)
+
+    def _sync_device_image(self) -> None:
+        """把配置的设备图片上传到平台。
+
+        图片上传失败只记录告警，不影响模板发布主流程。
+        """
+        path_text = (self._device_image_path or "").strip()
+        if not path_text:
+            return
+        path = Path(path_text).expanduser()
+        if not path.is_file():
+            self._logger.warning("设备图片不存在，跳过上传: %s", path)
+            return
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest == self._last_image_sha256:
+            return
+        try:
+            self._platform.upload_device_image(self._source_device_id, str(path))
+        except Exception as exc:  # noqa: BLE001 - 图片失败不阻塞模板发布
+            self._logger.warning("设备图片上传失败，不影响模板发布: %s", exc)
+            return
+        self._last_image_sha256 = digest
+        self._logger.info("设备图片已同步到平台: %s", path)
 
     def _template_path(self, identity: TemplateIdentity) -> Path:
         """返回模板工作流路径。"""

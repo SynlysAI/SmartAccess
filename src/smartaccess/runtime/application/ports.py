@@ -230,6 +230,21 @@ class PlatformClient(Protocol):
     def register_node(self, payload: dict[str, Any]) -> dict[str, Any]:
         """注册并校验执行端节点身份。"""
 
+    def upload_device_image(
+        self,
+        source_device_id: str,
+        image_path: str,
+    ) -> dict[str, Any]:
+        """上传执行端设备图片。
+
+        Args:
+            source_device_id: 当前执行端 ID。
+            image_path: 本地设备图片路径。
+
+        Returns:
+            平台响应。
+        """
+
 
 class ArtifactStore(Protocol):
     """运行产物存储协议。"""

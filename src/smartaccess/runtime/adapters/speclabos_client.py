@@ -7,10 +7,13 @@ call a FastAPI-compatible SpecLabOS service without adding a hard dependency.
 from __future__ import annotations
 
 import json
+import mimetypes
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urljoin
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from smartaccess.runtime.application.ports import PlatformOffline, TemplateVersionMissing
 
@@ -41,6 +44,7 @@ class SpecLabOSPlatformClient:
             "upload_results": "/smartaccess/results",
             "report_heartbeat": "/api/smartaccess/nodes/heartbeat",
             "register_node": "/api/smartaccess/nodes/register",
+            "upload_device_image": "/api/smartaccess/device-images",
             **(endpoints or {}),
         }
 
@@ -215,13 +219,91 @@ class SpecLabOSPlatformClient:
 
         return self._request("POST", self._endpoints["register_node"], payload)
 
+    def upload_device_image(
+        self,
+        source_device_id: str,
+        image_path: str,
+    ) -> dict[str, Any]:
+        """上传执行端设备图片到 SpecLabOS。
+
+        Args:
+            source_device_id: 当前执行端 ID。
+            image_path: 本地设备图片路径。
+
+        Returns:
+            平台响应。
+        """
+        path = Path(image_path).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(image_path)
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        boundary = f"----SmartAccessBoundary{uuid4().hex}"
+        filename = f"device-image{path.suffix.lower()}"
+        body = b"".join(
+            [
+                (
+                    f"--{boundary}\r\n"
+                    'Content-Disposition: form-data; name="source_device_id"'
+                    f"\r\n\r\n{source_device_id}\r\n"
+                ).encode("utf-8"),
+                (
+                    f"--{boundary}\r\n"
+                    f'Content-Disposition: form-data; name="file"; '
+                    f'filename="{filename}"\r\n'
+                    f"Content-Type: {content_type}\r\n\r\n"
+                ).encode("utf-8"),
+                path.read_bytes(),
+                f"\r\n--{boundary}--\r\n".encode("utf-8"),
+            ]
+        )
+        return self._send(
+            "POST",
+            self._endpoints["upload_device_image"],
+            body,
+            content_type=f"multipart/form-data; boundary={boundary}",
+        )
+
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
-        url = urljoin(self._base_url, path.lstrip("/"))
-        headers = {"Accept": "application/json"}
+        """发送 JSON 请求并解析响应。
+
+        Args:
+            method: HTTP 方法。
+            path: 请求路径。
+            payload: JSON 请求体。
+
+        Returns:
+            平台响应。
+        """
         body = None
+        content_type = None
         if payload is not None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            content_type = "application/json"
+        return self._send(method, path, body, content_type=content_type)
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        body: bytes | None,
+        *,
+        content_type: str | None = None,
+    ) -> Any:
+        """发送 HTTP 请求并解析 JSON 响应。
+
+        Args:
+            method: HTTP 方法。
+            path: 请求路径。
+            body: 请求体字节。
+            content_type: 请求体 MIME 类型。
+
+        Returns:
+            平台响应。
+        """
+        url = urljoin(self._base_url, path.lstrip("/"))
+        headers = {"Accept": "application/json"}
+        if content_type:
+            headers["Content-Type"] = content_type
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         req = Request(url, data=body, headers=headers, method=method)

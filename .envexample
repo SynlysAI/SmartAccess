@@ -67,6 +67,8 @@ SPECLABOS_BASE_URL=http://10.26.15.93:8010
 SPECLABOS_API_KEY=dev-smartaccess-token
 SPECLABOS_DATAHUB_KEY=dev-datahub-token
 SPECLABOS_TIMEOUT_SECONDS=20
+# 设备图片本地路径，发布模板时自动上传到 SpecLabOS 设备监控页展示
+SMARTACCESS_DEVICE_IMAGE=
 
 # ---- 远程任务监听（桌面端 daemon 线程，RabbitMQ） ----
 SMARTACCESS_RABBITMQ_ENABLED=false

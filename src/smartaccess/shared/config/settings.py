@@ -57,6 +57,7 @@ class AppSettings(BaseModel):
     speclabos_user_role: str = Field(default="")
     speclabos_user_organization: str = Field(default="")
     speclabos_timeout_seconds: float = Field(default=20.0, gt=0)
+    device_image_path: str = Field(default="")
     edge_api_host: str = Field(default="127.0.0.1")
     edge_api_port: int = Field(default=7000, ge=1, le=65535)
     udp_host: str = Field(default="127.0.0.1")
@@ -193,6 +194,7 @@ class AppSettings(BaseModel):
             speclabos_timeout_seconds=float(
                 _get("SPECLABOS_TIMEOUT_SECONDS", "20") or "20"
             ),
+            device_image_path=_get("SMARTACCESS_DEVICE_IMAGE", "") or "",
             edge_api_host=(
                 _get("SMARTACCESS_EDGE_API_HOST", "127.0.0.1") or "127.0.0.1"
             ),

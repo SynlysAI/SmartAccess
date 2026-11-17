@@ -235,12 +235,30 @@ class SystemSettingsPage(QWidget):
         self._speclabos_api_key = self._password_edit()
         self._speclabos_datahub_key = self._password_edit()
         self._speclabos_timeout = self._seconds_spin(1, 3600, 5)
+        self._device_image_path = QLineEdit()
+        image_editor = QWidget()
+        image_layout = QHBoxLayout(image_editor)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        image_layout.setSpacing(6)
+        image_layout.addWidget(self._device_image_path, 1)
+        image_button = QPushButton("选择图片")
+        image_button.setObjectName("Secondary")
+        image_button.clicked.connect(self._select_device_image)
+        image_layout.addWidget(image_button)
         form.addRow("平台 Provider", self._platform_provider)
         form.addRow("平台地址", self._speclabos_base_url)
         form.addRow("平台 API Key", self._speclabos_api_key)
         form.addRow("DataHub Key", self._speclabos_datahub_key)
         form.addRow("请求超时", self._speclabos_timeout)
+        form.addRow("设备图片", image_editor)
+        explanation = QLabel(
+            "设备图片会在发布模板时自动上传到 SpecLabOS，用于设备监控页展示；"
+            "建议使用 jpg/png/webp 格式的仪器示意图，修改后重启软件生效。"
+        )
+        explanation.setObjectName("PageHint")
+        explanation.setWordWrap(True)
         layout.addLayout(form)
+        layout.addWidget(explanation)
         return panel
 
     def _build_messaging_section(self) -> QWidget:
@@ -308,6 +326,7 @@ class SystemSettingsPage(QWidget):
         self._speclabos_api_key.setText(settings.speclabos_api_key or "")
         self._speclabos_datahub_key.setText(settings.speclabos_datahub_key or "")
         self._speclabos_timeout.setValue(settings.speclabos_timeout_seconds)
+        self._device_image_path.setText(settings.device_image_path)
         self._rabbitmq_enabled.setChecked(settings.rabbitmq_enabled)
         self._rabbitmq_host.setText(settings.rabbitmq_host)
         self._rabbitmq_port.setValue(settings.rabbitmq_port)
@@ -385,6 +404,7 @@ class SystemSettingsPage(QWidget):
             "SPECLABOS_API_KEY": self._speclabos_api_key.text().strip(),
             "SPECLABOS_DATAHUB_KEY": self._speclabos_datahub_key.text().strip(),
             "SPECLABOS_TIMEOUT_SECONDS": str(self._speclabos_timeout.value()),
+            "SMARTACCESS_DEVICE_IMAGE": self._device_image_path.text().strip(),
             "SMARTACCESS_RABBITMQ_ENABLED": self._bool_text(
                 self._rabbitmq_enabled.isChecked()
             ),
@@ -494,6 +514,19 @@ class SystemSettingsPage(QWidget):
         )
         if selected:
             self._workspace_dir.setText(str(Path(selected).resolve()))
+
+    def _select_device_image(self) -> None:
+        """打开文件选择器并回填设备图片路径。"""
+
+        current = self._device_image_path.text().strip()
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择设备图片",
+            current,
+            "图片文件 (*.png *.jpg *.jpeg *.webp *.gif)",
+        )
+        if selected:
+            self._device_image_path.setText(str(Path(selected).resolve()))
 
     @staticmethod
     def _section(title: str) -> tuple[QWidget, QVBoxLayout]:
