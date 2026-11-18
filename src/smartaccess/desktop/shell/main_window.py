@@ -33,6 +33,15 @@ from smartaccess.desktop.pages.settings_page import SystemSettingsPage
 from smartaccess.desktop.pages.template_page import TemplatePage
 from smartaccess.desktop.pages.workflow_page import WorkflowPage
 from smartaccess.desktop.shell.tray import TrayController
+from smartaccess.desktop.shell.updater import (
+    UpdateError,
+    can_apply_update,
+    download_release,
+    fetch_latest_release,
+    is_newer_version,
+    launch_update,
+)
+from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.viewmodels.base import EventRelay
 from smartaccess.shared.config.settings import AppSettings
 from smartaccess.runtime.application.facade import RuntimeFacade
@@ -455,6 +464,85 @@ class MainWindow(QMainWindow):
         role = self._settings.speclabos_user_role.strip()
         return f"{username} · {role}" if role else username
 
+    def _check_for_update(self) -> None:
+        """在后台检查 GitHub Release 并提示安装更新。"""
+
+        if getattr(self, "_update_task", None) is not None and self._update_task.isRunning():
+            return
+        self._update_button.setEnabled(False)
+        self._update_button.setText("检查中")
+        self._update_task = BackgroundTask(fetch_latest_release, self)
+        self._update_task.done.connect(self._on_update_checked)
+        self._update_task.error.connect(self._on_update_failed)
+        self._update_task.start()
+
+    def _on_update_checked(self, release: object) -> None:
+        """处理检查更新结果。
+
+        Args:
+            release: 最新正式发布附件。
+        """
+
+        self._reset_update_button()
+        version = getattr(release, "version", "")
+        if not is_newer_version(str(version)):
+            QMessageBox.information(self, "检查更新", f"当前已是最新版本 {VERSION_DISPLAY}。")
+            return
+        if not can_apply_update():
+            QMessageBox.information(
+                self,
+                "检查更新",
+                f"发现新版本 v{version}。\n当前是开发环境运行，请使用打包后的 SmartAccess 再更新。",
+            )
+            return
+        reply = QMessageBox.question(
+            self,
+            "检查更新",
+            f"发现新版本 v{version}，是否下载并重启更新？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._update_button.setEnabled(False)
+        self._update_button.setText("下载中")
+        self._update_task = BackgroundTask(lambda: download_release(release), self)
+        self._update_task.done.connect(self._on_update_downloaded)
+        self._update_task.error.connect(self._on_update_failed)
+        self._update_task.start()
+
+    def _on_update_downloaded(self, zip_path: object) -> None:
+        """下载完成后启动独立更新脚本并退出程序。
+
+        Args:
+            zip_path: 已下载的发布压缩包路径。
+        """
+
+        self._reset_update_button()
+        try:
+            launch_update(Path(str(zip_path)))
+        except UpdateError as exc:
+            QMessageBox.warning(self, "更新失败", str(exc))
+            return
+        self._quitting = True
+        QApplication.quit()
+
+    def _on_update_failed(self, message: str) -> None:
+        """显示检查或下载更新失败的原因。
+
+        Args:
+            message: 后台任务错误文本。
+        """
+
+        self._reset_update_button()
+        QMessageBox.warning(self, "检查更新", message)
+
+    def _reset_update_button(self) -> None:
+        """恢复检查更新按钮状态。"""
+
+        self._update_button.setEnabled(True)
+        self._update_button.setText("检查更新")
+
     def _show_about(self) -> None:
         """显示 SmartAccess 版本和发布信息。"""
 
@@ -504,16 +592,23 @@ class MainWindow(QMainWindow):
             self._nav.addItem(item)
         layout.addWidget(self._nav, 1)
 
+        footer = QWidget()
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(8, 0, 8, 0)
+        footer_layout.setSpacing(4)
         version_button = QPushButton(VERSION_DISPLAY)
         version_button.setObjectName("VersionButton")
         version_button.setCursor(Qt.CursorShape.PointingHandCursor)
         version_button.setToolTip(f"查看关于 {APP_NAME}")
         version_button.clicked.connect(self._show_about)
-        layout.addWidget(
-            version_button,
-            0,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
-        )
+        footer_layout.addWidget(version_button)
+        self._update_button = QPushButton("检查更新")
+        self._update_button.setObjectName("VersionButton")
+        self._update_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_button.clicked.connect(self._check_for_update)
+        footer_layout.addWidget(self._update_button)
+        footer_layout.addStretch(1)
+        layout.addWidget(footer)
         return panel
 
     def _settings_icon(self) -> QIcon:

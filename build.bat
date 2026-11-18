@@ -9,6 +9,9 @@ set "ICON=%ROOT%\resource\icon.ico"
 
 set "MODE=folder"
 
+REM 只改这一处：venv 使用项目 .venv；conda 使用已激活的 smartaccess 环境。
+set "ENV_MODE=venv"
+
 :parse_args
 if "%~1"=="" goto :args_done
 if /i "%~1"=="--onefile" (
@@ -27,23 +30,30 @@ echo     SmartAccess Nuitka Build
 echo ==========================================
 echo.
 
-call conda activate smartaccess
-if errorlevel 1 (
-    echo [ERROR] Failed to activate conda environment 'smartaccess'
-    pause
-    exit /b 1
+if /i "%ENV_MODE%"=="conda" (
+    call conda activate smartaccess
+    if errorlevel 1 (
+        echo [ERROR] Failed to activate conda environment 'smartaccess'
+        pause
+        exit /b 1
+    )
+    set "PYTHON=python"
+    set "SITE_PACKAGES=%CONDA_PREFIX%\Lib\site-packages"
+) else (
+    set "PYTHON=%ROOT%\.venv\Scripts\python.exe"
+    set "SITE_PACKAGES=%ROOT%\.venv\Lib\site-packages"
+    if not exist "%ROOT%\.venv\Scripts\python.exe" (
+        echo [ERROR] Virtual environment not found: %ROOT%\.venv
+        echo [ERROR] Create .venv and install dependencies before building.
+        pause
+        exit /b 1
+    )
 )
 
-where python >nul 2>nul
+"%PYTHON%" -c "import nuitka" >nul 2>nul
 if errorlevel 1 (
-    echo [ERROR] Python not found, please activate smartaccess env
-    pause
-    exit /b 1
-)
-
-python -m nuitka --version >nul 2>nul
-if errorlevel 1 (
-    echo [ERROR] Nuitka not installed, run: pip install nuitka ordered-set zstandard
+    echo [ERROR] Nuitka not installed in .venv
+    echo [ERROR] Run: "%PYTHON%" -m pip install nuitka ordered-set zstandard
     pause
     exit /b 1
 )
@@ -56,14 +66,14 @@ if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
 
 set "BUILD_START_TIME=%TIME: =0%"
 
-set "CMD=python -m nuitka"
-set "CMD=%CMD% --standalone"
+set "CMD=--standalone"
+set "CMD=%CMD% --assume-yes-for-downloads"
 set "CMD=%CMD% --windows-console-mode=disable"
 set "CMD=%CMD% --enable-plugin=pyqt6"
 set "CMD=%CMD% --include-package=smartaccess"
-set "CMD=%CMD% --include-package=cv2"
-set "CMD=%CMD% --include-package=paddleocr"
-set "CMD=%CMD% --include-package=paddle"
+set "CMD=%CMD% --nofollow-import-to=cv2"
+set "CMD=%CMD% --nofollow-import-to=paddle"
+set "CMD=%CMD% --nofollow-import-to=paddleocr"
 set "CMD=%CMD% --include-package=pydantic"
 set "CMD=%CMD% --include-package=fastapi"
 set "CMD=%CMD% --include-package=pika"
@@ -84,7 +94,8 @@ set "CMD=%CMD% %ROOT%\run_desktop.py"
 echo [STEP] Building with Nuitka...
 echo.
 
-%CMD%
+set "NUITKA_CMD=%CMD%"
+"%PYTHON%" -m nuitka !NUITKA_CMD!
 if errorlevel 1 (
     echo.
     echo [ERROR] Build failed
@@ -100,12 +111,32 @@ if exist "%ROOT%\.envexample" (
     copy "%ROOT%\.envexample" "%OUTPUT_DIR%\run_desktop.dist\.envexample" > nul
 )
 
+if "%MODE%"=="folder" (
+    call :copy_runtime_packages
+    if errorlevel 1 (
+        call :show_duration
+        pause
+        exit /b 1
+    )
+)
+
+set "RELEASE_ZIP="
+if "%MODE%"=="folder" (
+    call :package_release
+    if errorlevel 1 (
+        call :show_duration
+        pause
+        exit /b 1
+    )
+)
+
 echo.
 echo ==========================================
 echo Build complete!
 echo ==========================================
 echo.
 echo Output: %OUTPUT_DIR%\run_desktop.dist\
+if defined RELEASE_ZIP echo Release: %RELEASE_ZIP%
 echo.
 call :show_duration
 echo.
@@ -113,8 +144,64 @@ echo Next steps:
 echo   1. Copy .envexample to .env
 echo   2. Edit .env with your API keys
 echo   3. Run run_desktop.exe
+if defined RELEASE_ZIP echo   4. Publish %RELEASE_ZIP% to GitHub Release
 echo.
 pause
+exit /b 0
+
+:copy_runtime_packages
+echo.
+echo [STEP] Copying OpenCV and Paddle runtime packages...
+for %%P in (cv2 paddle paddleocr) do (
+    if not exist "%SITE_PACKAGES%\%%P" (
+        echo [ERROR] Missing runtime package: %SITE_PACKAGES%\%%P
+        exit /b 1
+    )
+    if exist "%OUTPUT_DIR%\run_desktop.dist\%%P" rmdir /s /q "%OUTPUT_DIR%\run_desktop.dist\%%P"
+    robocopy "%SITE_PACKAGES%\%%P" "%OUTPUT_DIR%\run_desktop.dist\%%P" /E /NFL /NDL /NJH /NJS /NP
+    if errorlevel 8 (
+        echo [ERROR] Failed to copy runtime package %%P
+        exit /b 1
+    )
+    echo [INFO] Copied %%P
+)
+exit /b 0
+
+:package_release
+set "VERSION_FILE=%TEMP%\smartaccess-version.txt"
+"%PYTHON%" "%ROOT%\scripts\read_version.py" > "%VERSION_FILE%"
+if errorlevel 1 (
+    echo [ERROR] Failed to read application version
+    exit /b 1
+)
+set /p APP_VERSION=<"%VERSION_FILE%"
+del /f /q "%VERSION_FILE%"
+if not defined APP_VERSION (
+    echo [ERROR] Failed to read application version
+    exit /b 1
+)
+
+set "STAGE=%OUTPUT_DIR%\SmartAccess"
+set "RELEASE_ZIP=%OUTPUT_DIR%\SmartAccess-v%APP_VERSION%.zip"
+echo.
+echo [STEP] Packaging %RELEASE_ZIP%...
+
+if exist "%STAGE%" rmdir /s /q "%STAGE%"
+mkdir "%STAGE%"
+robocopy "%OUTPUT_DIR%\run_desktop.dist" "%STAGE%" /E /NFL /NDL /NJH /NJS /NP
+if errorlevel 8 (
+    echo [ERROR] Failed to stage release directory
+    exit /b 1
+)
+if exist "%RELEASE_ZIP%" del /f /q "%RELEASE_ZIP%"
+"%PYTHON%" -c "import sys,zipfile; from pathlib import Path; root=Path(sys.argv[1]); out=Path(sys.argv[2]); z=zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6); files=[p for p in root.rglob('*') if p.is_file()];
+[z.write(p, Path('SmartAccess')/p.relative_to(root)) for p in files]; z.close(); print(len(files))" "%STAGE%" "%RELEASE_ZIP%"
+if errorlevel 1 (
+    echo [ERROR] Failed to create release zip
+    exit /b 1
+)
+rmdir /s /q "%STAGE%"
+echo [INFO] Release package: %RELEASE_ZIP%
 exit /b 0
 
 :show_help
