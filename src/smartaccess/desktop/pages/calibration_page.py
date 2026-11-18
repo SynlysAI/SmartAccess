@@ -82,14 +82,20 @@ class CalibrationPage(QWidget):
         root.setSpacing(12)
         root.addLayout(self._build_header())
 
+        content_splitter = QSplitter(Qt.Orientation.Vertical)
+        content_splitter.addWidget(self._build_center_panel())
+        content_splitter.addWidget(self._build_right_panel())
+        content_splitter.setStretchFactor(0, 1)
+        content_splitter.setStretchFactor(1, 1)
+        content_splitter.setChildrenCollapsible(False)
+        content_splitter.setSizes([420, 330])
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_left_panel())
-        splitter.addWidget(self._build_center_panel())
-        splitter.addWidget(self._build_right_panel())
+        splitter.addWidget(content_splitter)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
-        splitter.setSizes([280, 302, 350])
+        splitter.setSizes([280, 900])
         root.addWidget(splitter, 1)
 
         self._canvas.roi_changed.connect(self._on_roi_changed)
@@ -143,7 +149,8 @@ class CalibrationPage(QWidget):
         self._device_id.setPlaceholderText("氟基-2236实验室-元能极片电阻仪-01")
         self._device_id.textChanged.connect(self._update_device_id_hint)
         self._title_contains = QLineEdit()
-        self._title_contains.setPlaceholderText("窗口标题关键字")
+        self._title_contains.setReadOnly(True)
+        self._title_contains.setPlaceholderText("选择窗口后自动带出")
         form.addRow("设备 ID", self._device_id)
         form.addRow("窗口标题", self._title_contains)
         layout.addLayout(form)
@@ -152,8 +159,14 @@ class CalibrationPage(QWidget):
         window_title = QLabel("窗口")
         window_title.setObjectName("PageHint")
         layout.addWidget(window_title)
+        self._window_filter = QLineEdit()
+        self._window_filter.setPlaceholderText("输入关键字过滤窗口")
+        self._window_filter.setClearButtonEnabled(True)
+        self._window_filter.textChanged.connect(self._apply_window_filter)
+        layout.addWidget(self._window_filter)
         self._windows = QListWidget()
-        layout.addWidget(self._windows, 2)
+        # 过滤框占掉一行后，窗口列表略让出高度，已保存设备保持更大占比。
+        layout.addWidget(self._windows, 3)
         scan_row = QHBoxLayout()
         scan_btn = QPushButton("扫描")
         scan_btn.setObjectName("Secondary")
@@ -169,7 +182,7 @@ class CalibrationPage(QWidget):
         instruments_title.setObjectName("PageHint")
         layout.addWidget(instruments_title)
         self._instruments = QListWidget()
-        layout.addWidget(self._instruments, 1)
+        layout.addWidget(self._instruments, 2)
         return panel
 
     def _build_center_panel(self) -> QWidget:
@@ -205,7 +218,6 @@ class CalibrationPage(QWidget):
         """构建右侧锚点表格区域。"""
 
         panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
-        panel.setMinimumWidth(350)
         row = QHBoxLayout()
         add_btn = QPushButton("添加锚点")
         add_btn.setObjectName("TableToolbarButton")
@@ -252,6 +264,20 @@ class CalibrationPage(QWidget):
             self._windows.addItem(item)
         if not windows:
             self._windows.addItem("未发现可用窗口")
+        self._apply_window_filter()
+
+    def _apply_window_filter(self) -> None:
+        """按关键字过滤窗口列表，仅隐藏不匹配的行，不改动行索引。"""
+
+        keyword = self._window_filter.text().strip().lower()
+        for row in range(self._windows.count()):
+            item = self._windows.item(row)
+            if row >= len(self._windows_data):
+                # 占位行（如“未发现可用窗口”）始终保持可见。
+                item.setHidden(False)
+                continue
+            title = str(self._windows_data[row]["title"]).lower()
+            item.setHidden(bool(keyword) and keyword not in title)
 
     def _on_window_selected(self) -> None:
         """窗口选中变化时同步标题和截图按钮。"""

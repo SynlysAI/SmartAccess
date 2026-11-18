@@ -99,7 +99,11 @@ class RemoteTaskWorker:
             )
             return "rejected"
         try:
-            session = self._facade.start_run(workflow, background=True)
+            session = self._facade.start_run(
+                workflow,
+                background=True,
+                trigger_source="remote",
+            )
         except Exception as exc:  # noqa: BLE001 - 远程任务启动异常必须回传平台
             self._uploader.upload_event(
                 run_id,

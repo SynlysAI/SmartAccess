@@ -8,6 +8,7 @@ from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QHeaderView,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -61,11 +62,14 @@ class AnchorTable(QTableWidget):
         configure_data_table(self, row_height=38)
         header = interactive_header(self)
         header.setStretchLastSection(False)
+        # 目标/校验区域列弹性填充，锚点 ID 列保持固定初始宽，操作列固定宽度，
+        # 避免横向滚动导致删除按钮被滚出视野。
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.setColumnWidth(0, 190)
-        self.setColumnWidth(1, 140)
+        self.setColumnWidth(0, 210)
         self.setColumnWidth(2, 130)
-        self.setColumnWidth(3, 140)
         self.setColumnWidth(4, 50)
         self.itemChanged.connect(self._on_item_changed)
 

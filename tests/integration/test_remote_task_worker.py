@@ -12,9 +12,9 @@ class FakeFacade:
         self.started = []
         self._subscriber = None
 
-    def start_run(self, workflow, *, background: bool = True):
+    def start_run(self, workflow, *, background: bool = True, trigger_source: str = "local"):
         """记录启动运行请求。"""
-        self.started.append((workflow, background))
+        self.started.append((workflow, background, trigger_source))
         return type("Session", (), {"session_id": "run_local_1"})()
 
     def subscribe(self, callback):
@@ -80,6 +80,7 @@ def test_worker_starts_matching_device_workflow() -> None:
 
     assert result == "accepted"
     assert facade.started[0][0].metadata.workflow_id == "wf_weixin"
+    assert facade.started[0][2] == "remote"
     assert uploader.events[0]["status"] == "accepted"
 
 

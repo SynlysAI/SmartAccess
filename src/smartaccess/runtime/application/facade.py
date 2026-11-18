@@ -632,6 +632,7 @@ class RuntimeFacade:
         *,
         background: bool = True,
         runtime_inputs: dict[str, str] | None = None,
+        trigger_source: str = "local",
     ) -> RunSession:
         """启动工作流运行。
 
@@ -639,6 +640,7 @@ class RuntimeFacade:
             workflow: 待运行工作流。
             background: 是否在后台线程运行。
             runtime_inputs: 运行前填写的输入步骤值。
+            trigger_source: 发起来源，local 为本地界面，remote 为云端远程任务。
 
         Returns:
             创建的运行会话。
@@ -664,6 +666,7 @@ class RuntimeFacade:
             workflow_name=runtime_workflow.metadata.workflow_id,
             template_id=runtime_workflow.metadata.template_id,
             template_version=runtime_workflow.metadata.template_version,
+            trigger_source=trigger_source,
         )
 
         def _run() -> None:

@@ -111,6 +111,11 @@ class DataCollectionPage(QWidget):
             self._load_configuration()
         self._refresh_status()
 
+    def is_collecting(self) -> bool:
+        """返回数据采集监听是否正在运行。"""
+
+        return self._vm.is_running()
+
     def shutdown(self) -> None:
         """主窗口关闭时安全停止数据采集器。"""
 
