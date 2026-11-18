@@ -8,7 +8,6 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -36,7 +35,7 @@ from smartaccess.desktop.viewmodels.data_collection_vm import DataCollectionView
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.widgets.cards import create_card
 from smartaccess.desktop.widgets.spin_box import FocusWheelSpinBox
-from smartaccess.desktop.widgets.table_style import configure_data_table
+from smartaccess.desktop.widgets.table_style import NoWheelComboBox, configure_data_table
 from smartaccess.runtime.application.facade import RuntimeFacade
 
 
@@ -533,14 +532,14 @@ class WatcherDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self._name = QLineEdit()
-        self._site = QComboBox()
+        self._site = NoWheelComboBox()
         self._site.addItem("请选择设备", "")
         options = list(dict.fromkeys(device_ids or []))
         if watcher is not None and watcher.site and watcher.site not in options:
             options.append(watcher.site)
         for device_id in options:
             self._site.addItem(device_id, device_id)
-        self._type = QComboBox()
+        self._type = NoWheelComboBox()
         self._type.addItem("文件", "file")
         self._type.addItem("目录资产", "directory")
         self._path = QLineEdit()
@@ -551,7 +550,7 @@ class WatcherDialog(QDialog):
         path_layout.addWidget(self._path, 1)
         path_layout.addWidget(browse_button)
         self._patterns = QLineEdit("*")
-        self._data_type = QComboBox()
+        self._data_type = NoWheelComboBox()
         for value, label in DATA_TYPE_OPTIONS.items():
             self._data_type.addItem(label, value)
         self._recursive = QCheckBox("递归监听子目录")
