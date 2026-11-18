@@ -45,6 +45,7 @@ class SpecLabOSPlatformClient:
             "report_heartbeat": "/api/smartaccess/nodes/heartbeat",
             "register_node": "/api/smartaccess/nodes/register",
             "upload_device_image": "/api/smartaccess/device-images",
+            "sync_device": "/api/smartaccess/devices/sync",
             **(endpoints or {}),
         }
 
@@ -218,6 +219,17 @@ class SpecLabOSPlatformClient:
         """
 
         return self._request("POST", self._endpoints["register_node"], payload)
+
+    def sync_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """把仪器档案同步到 SpecLabOS。
+
+        Args:
+            payload: 包含 device_id、node_id、name、window_title。
+
+        Returns:
+            平台响应。
+        """
+        return self._request("POST", self._endpoints["sync_device"], payload)
 
     def upload_device_image(
         self,

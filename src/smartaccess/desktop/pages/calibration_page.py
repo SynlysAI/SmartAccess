@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
@@ -136,6 +138,9 @@ class CalibrationPage(QWidget):
         save_btn = QPushButton("保存")
         save_btn.clicked.connect(self._save)
         row.addWidget(save_btn)
+        sync_button = QPushButton("发布")
+        sync_button.clicked.connect(self._sync_to_platform)
+        row.addWidget(sync_button)
         return row
 
     def _build_left_panel(self) -> QWidget:
@@ -152,6 +157,19 @@ class CalibrationPage(QWidget):
         self._title_contains.setReadOnly(True)
         self._title_contains.setPlaceholderText("选择窗口后自动带出")
         form.addRow("设备 ID", self._device_id)
+        self._device_image_path = QLineEdit()
+        self._device_image_path.setClearButtonEnabled(True)
+        self._device_image_path.setPlaceholderText("未选择，非必填")
+        image_editor = QWidget()
+        image_layout = QHBoxLayout(image_editor)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        image_layout.setSpacing(6)
+        image_layout.addWidget(self._device_image_path, 1)
+        image_button = QPushButton("选择")
+        image_button.setObjectName("Secondary")
+        image_button.clicked.connect(self._select_device_image)
+        image_layout.addWidget(image_button)
+        form.addRow("设备图片", image_editor)
         form.addRow("窗口标题", self._title_contains)
         layout.addLayout(form)
         self._update_device_id_hint()
@@ -672,12 +690,46 @@ class CalibrationPage(QWidget):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "保存失败", str(exc))
             return
+        stored_image = self._vm.save_device_image_path(
+            device_id,
+            self._device_image_path.text().strip(),
+        )
+        self._device_image_path.setText(stored_image)
         self._refresh_instruments()
         QMessageBox.information(
             self,
             "已保存",
             f"设备 {profile.device_id} 已保存，锚点数：{len(profile.anchors)}",
         )
+
+    def _select_device_image(self) -> None:
+        """选择当前设备的展示图片。"""
+        current = self._device_image_path.text().strip()
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择设备图片",
+            current,
+            "图片文件 (*.png *.jpg *.jpeg *.webp *.gif)",
+        )
+        if selected:
+            self._device_image_path.setText(str(Path(selected).resolve()))
+
+    def _sync_to_platform(self) -> None:
+        """把当前已保存设备及其图片同步到 SpecLabOS。"""
+        device_id = self._device_id.text().strip()
+        title = self._title_contains.text().strip()
+        if self._require_device_fields(device_id=device_id, title=title) is None:
+            return
+        try:
+            self._vm.sync_instrument_to_platform(
+                device_id,
+                title,
+                self._device_image_path.text().strip(),
+            )
+        except Exception as exc:  # noqa: BLE001 - 同步失败需要直接提示给操作者
+            QMessageBox.critical(self, "发布失败", str(exc))
+            return
+        QMessageBox.information(self, "已发布", f"设备 {device_id} 已发布到SpecLabOS平台")
 
     def _ai_assist(self) -> None:
         """调用 AI 生成设备锚点草稿并加载到页面。"""
@@ -1270,6 +1322,9 @@ class CalibrationPage(QWidget):
         self._table.setRowCount(0)
         self._device_id.setText(profile.device_id)
         self._title_contains.setText(profile.window_signature.title_contains or "")
+        self._device_image_path.setText(
+            self._vm.load_device_image_path(profile.device_id)
+        )
         self._view_states = {}
         for view in profile.views:
             view_capture = (
@@ -1407,6 +1462,7 @@ class CalibrationPage(QWidget):
         self._refresh_views()
         self._device_id.clear()
         self._title_contains.clear()
+        self._device_image_path.clear()
         self._capture_btn.setEnabled(False)
         self._windows.blockSignals(True)
         self._windows.clearSelection()

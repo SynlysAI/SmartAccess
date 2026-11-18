@@ -218,6 +218,67 @@ class AnchorService:
         if path.exists():
             path.unlink()
 
+    def save_device_image_path(self, profile_id: str, image_path: str) -> str:
+        """把设备展示图片复制到锚点目录，或在清空时删除已保存图片。
+
+        Args:
+            profile_id: 设备 ID。
+            image_path: 用户选择的图片路径，空字符串表示清除。
+
+        Returns:
+            锚点目录中的图片路径；已清除时返回空字符串。
+        """
+        directory = self._workspace_dir / "anchors" / profile_id
+        directory.mkdir(parents=True, exist_ok=True)
+        legacy_pointer = directory / "device_image.txt"
+        if legacy_pointer.is_file():
+            legacy_pointer.unlink()
+        existing = self._find_device_image(profile_id)
+        source_text = image_path.strip()
+        if not source_text:
+            if existing is not None and existing.is_file():
+                existing.unlink()
+            return ""
+        source = Path(source_text)
+        if not source.is_file():
+            raise FileNotFoundError(source_text)
+        suffix = source.suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            suffix = ".png"
+        target = directory / f"device_image{suffix}"
+        if existing is not None and existing.resolve() != target.resolve() and existing.is_file():
+            existing.unlink()
+        if source.resolve() != target.resolve():
+            shutil.copyfile(source, target)
+        return str(target)
+
+    def load_device_image_path(self, profile_id: str) -> str:
+        """读取锚点目录中已保存的设备展示图片。
+
+        Args:
+            profile_id: 设备 ID。
+
+        Returns:
+            已复制到锚点目录的图片路径；未设置时返回空字符串。
+        """
+        image = self._find_device_image(profile_id)
+        if image is not None:
+            return str(image)
+        legacy_pointer = self._workspace_dir / "anchors" / profile_id / "device_image.txt"
+        if not legacy_pointer.is_file():
+            return ""
+        legacy_path = legacy_pointer.read_text(encoding="utf-8").strip()
+        return legacy_path if legacy_path and Path(legacy_path).is_file() else ""
+
+    def _find_device_image(self, profile_id: str) -> Path | None:
+        """查找锚点目录里的设备展示图片。"""
+        directory = self._workspace_dir / "anchors" / profile_id
+        for suffix in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+            candidate = directory / f"device_image{suffix}"
+            if candidate.is_file():
+                return candidate
+        return None
+
     def _profile_path(self, profile_id: str) -> Path:
         """返回锚点配置路径。"""
 

@@ -182,6 +182,19 @@ class StubPlatformClient:
         )
         return {"ok": True, "source_device_id": source_device_id}
 
+    def sync_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """记录仪器档案同步。
+
+        Args:
+            payload: 包含 device_id、node_id、name、window_title。
+
+        Returns:
+            平台响应。
+        """
+        self._raise_if_offline("sync_device")
+        self.uploads.append(("sync_device", dict(payload)))
+        return {"ok": True, "device_id": payload.get("device_id", "")}
+
     def _upload(self, kind: str, payload: dict[str, Any]) -> bool:
         """记录一次上传。"""
 
