@@ -218,7 +218,7 @@ copy .envexample .env
 1. 在 `.env` 中配置 `SMARTACCESS_PLATFORM_PROVIDER=real`、`SPECLABOS_BASE_URL` 和 `SPECLABOS_API_KEY`。
 2. 在 SmartAccess workflow 的 `metadata` 中填写 `template_id` 与 `template_version`，用于平台侧保存模板版本。
 3. 在“模板/平台”页点击发布，SmartAccess 会调用 SpecLabOS 的 `/api/smartaccess/templates/publish`，并保留本地模板副本。
-4. 可选：在系统设置页配置“设备图片”，发布模板时会自动上传到 `/api/smartaccess/device-images`，用于 SpecLabOS 设备监控页展示。
+4. 在设备接入页为每台设备选择图片，点「同步到平台」后上传到 SpecLabOS。同一台电脑可以同步多台设备，在线状态跟随这台执行端的心跳。
 5. 配置 `SMARTACCESS_DEVICE_ID` 和 `SMARTACCESS_RABBITMQ_*` 后，启动远程任务 worker：
 
 ```powershell

@@ -166,8 +166,8 @@ def test_template_publish_supersede_and_rollback(tmp_path: Path) -> None:
     assert versions["1.1.0"] == TemplateVersionStatus.ROLLED_BACK
 
 
-def test_template_publish_uploads_device_image_once(tmp_path: Path) -> None:
-    """验证发布模板时同步设备图片，内容未变时不重复上传。"""
+def test_template_publish_does_not_upload_shared_device_image(tmp_path: Path) -> None:
+    """发布模板不再上传系统设置里的共用设备图片。"""
 
     bus = EventBus()
     anchors = build_runtime_facade(AppSettings(workspace_dir=tmp_path)).providers()["anchors"]
@@ -198,8 +198,7 @@ def test_template_publish_uploads_device_image_once(tmp_path: Path) -> None:
     uploaded = [
         payload for kind, payload in platform.uploads if kind == "device_image"
     ]
-    assert len(uploaded) == 1
-    assert uploaded[0]["source_device_id"] == "pc-workstation"
+    assert uploaded == []
 
 
 def test_platform_outbox_retries_then_fails(tmp_path: Path) -> None:

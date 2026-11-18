@@ -46,6 +46,48 @@ class CalibrationViewModel(ViewModel):
 
         return self._facade.get_instrument(device_id)
 
+    def load_device_image_path(self, device_id: str) -> str:
+        """读取设备展示图片路径。
+
+        Args:
+            device_id: 设备 ID。
+
+        Returns:
+            本地图片路径。
+        """
+        return self._facade.load_device_image_path(device_id)
+
+    def save_device_image_path(self, device_id: str, image_path: str) -> str:
+        """把设备展示图片复制到锚点目录。
+
+        Args:
+            device_id: 设备 ID。
+            image_path: 用户选择的图片路径，空字符串表示清除。
+
+        Returns:
+            锚点目录中的图片路径；已清除时返回空字符串。
+        """
+        return self._facade.save_device_image_path(device_id, image_path)
+
+    def sync_instrument_to_platform(
+        self,
+        device_id: str,
+        window_title: str,
+        image_path: str = "",
+    ) -> None:
+        """把当前设备同步到 SpecLabOS。
+
+        Args:
+            device_id: 设备 ID。
+            window_title: 窗口标题。
+            image_path: 本地展示图片路径。
+        """
+        self._facade.sync_instrument_to_platform(
+            device_id,
+            window_title,
+            image_path,
+        )
+
     def load_instrument_capture(
         self,
         device_id: str | None,

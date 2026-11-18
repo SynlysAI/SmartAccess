@@ -8,7 +8,6 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -36,7 +35,7 @@ from smartaccess.desktop.viewmodels.data_collection_vm import DataCollectionView
 from smartaccess.desktop.widgets.background_worker import BackgroundTask
 from smartaccess.desktop.widgets.cards import create_card
 from smartaccess.desktop.widgets.spin_box import FocusWheelSpinBox
-from smartaccess.desktop.widgets.table_style import configure_data_table
+from smartaccess.desktop.widgets.table_style import NoWheelComboBox, configure_data_table
 from smartaccess.runtime.application.facade import RuntimeFacade
 
 
@@ -45,6 +44,7 @@ class DataCollectionPage(QWidget):
 
     WATCHER_HEADERS = (
         "名称",
+        "站点",
         "类型",
         "监听路径",
         "匹配模式",
@@ -66,6 +66,7 @@ class DataCollectionPage(QWidget):
         super().__init__(parent)
         self._vm = DataCollectionViewModel(facade, self)
         self._watchers: list[WatcherConfig] = []
+        self._collector_site = ""
         self._task: BackgroundTask | None = None
         self._config_loaded = False
 
@@ -163,8 +164,6 @@ class DataCollectionPage(QWidget):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self._collector_id = QLineEdit()
         self._collector_id.setPlaceholderText("例如 nmr_pc_01")
-        self._site = QLineEdit()
-        self._site.setPlaceholderText("例如 Lab-A")
         self._timeout = self._create_spin_box(1, 3600, 30, "秒")
         self._retry_interval = self._create_spin_box(1, 3600, 30, "秒")
         self._max_retry_count = self._create_spin_box(1, 1000, 3, "次")
@@ -175,7 +174,6 @@ class DataCollectionPage(QWidget):
         self._upload_existing.toggled.connect(self._force_upload_existing.setEnabled)
 
         form.addRow("采集器 ID", self._collector_id)
-        form.addRow("站点", self._site)
         form.addRow("请求超时", self._timeout)
         form.addRow("失败重试间隔", self._retry_interval)
         form.addRow("最大重试次数", self._max_retry_count)
@@ -211,8 +209,9 @@ class DataCollectionPage(QWidget):
         self._watcher_table.setHorizontalHeaderLabels(self.WATCHER_HEADERS)
         configure_data_table(self._watcher_table, row_height=36, stretch_last=True)
         self._watcher_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._watcher_table.setColumnWidth(2, 300)
-        self._watcher_table.setColumnWidth(3, 180)
+        self._watcher_table.setColumnWidth(1, 180)
+        self._watcher_table.setColumnWidth(3, 300)
+        self._watcher_table.setColumnWidth(4, 180)
         layout.addWidget(self._watcher_table)
         return layout
 
@@ -270,7 +269,7 @@ class DataCollectionPage(QWidget):
         """
 
         self._collector_id.setText(config.collector.collector_id)
-        self._site.setText(config.collector.site)
+        self._collector_site = config.collector.site
         self._timeout.setValue(config.server.timeout_seconds)
         self._retry_interval.setValue(config.queue.retry_interval_seconds)
         self._max_retry_count.setValue(config.queue.max_retry_count)
@@ -286,7 +285,7 @@ class DataCollectionPage(QWidget):
 
         return self._vm.build_configuration(
             collector_id=self._collector_id.text().strip(),
-            site=self._site.text().strip(),
+            site=self._collector_site,
             timeout_seconds=self._timeout.value(),
             retry_interval_seconds=self._retry_interval.value(),
             max_retry_count=self._max_retry_count.value(),
@@ -431,6 +430,7 @@ class DataCollectionPage(QWidget):
         for row_index, watcher in enumerate(self._watchers):
             values = (
                 watcher.name,
+                watcher.site or "未选择",
                 "目录资产" if watcher.type == "directory" else "文件",
                 str(watcher.path),
                 ", ".join(watcher.patterns),
@@ -446,7 +446,7 @@ class DataCollectionPage(QWidget):
     def _add_watcher(self) -> None:
         """打开新增监听器对话框。"""
 
-        dialog = WatcherDialog(parent=self)
+        dialog = WatcherDialog(device_ids=self._vm.list_device_ids(), parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._watchers.append(dialog.watcher_config())
@@ -459,7 +459,11 @@ class DataCollectionPage(QWidget):
         if row_index < 0:
             QMessageBox.information(self, "编辑监听器", "请先选择一个监听器")
             return
-        dialog = WatcherDialog(self._watchers[row_index], self)
+        dialog = WatcherDialog(
+            self._watchers[row_index],
+            device_ids=self._vm.list_device_ids(),
+            parent=self,
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._watchers[row_index] = dialog.watcher_config()
@@ -508,11 +512,17 @@ class DataCollectionPage(QWidget):
 class WatcherDialog(QDialog):
     """新增或编辑单个数据采集监听器的对话框。"""
 
-    def __init__(self, watcher: WatcherConfig | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        watcher: WatcherConfig | None = None,
+        device_ids: list[str] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         """初始化监听器编辑对话框。
 
         Args:
             watcher: 可选的现有监听器配置。
+            device_ids: 设备接入页已保存的设备 ID。
             parent: 可选 Qt 父对象。
         """
 
@@ -522,7 +532,14 @@ class WatcherDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self._name = QLineEdit()
-        self._type = QComboBox()
+        self._site = NoWheelComboBox()
+        self._site.addItem("请选择设备", "")
+        options = list(dict.fromkeys(device_ids or []))
+        if watcher is not None and watcher.site and watcher.site not in options:
+            options.append(watcher.site)
+        for device_id in options:
+            self._site.addItem(device_id, device_id)
+        self._type = NoWheelComboBox()
         self._type.addItem("文件", "file")
         self._type.addItem("目录资产", "directory")
         self._path = QLineEdit()
@@ -533,7 +550,7 @@ class WatcherDialog(QDialog):
         path_layout.addWidget(self._path, 1)
         path_layout.addWidget(browse_button)
         self._patterns = QLineEdit("*")
-        self._data_type = QComboBox()
+        self._data_type = NoWheelComboBox()
         for value, label in DATA_TYPE_OPTIONS.items():
             self._data_type.addItem(label, value)
         self._recursive = QCheckBox("递归监听子目录")
@@ -542,6 +559,7 @@ class WatcherDialog(QDialog):
         self._watch_updates = QCheckBox("采集文件后续修改")
         self._debounce_seconds = DataCollectionPage._create_spin_box(0, 3600, 30, "秒")
         form.addRow("名称", self._name)
+        form.addRow("站点", self._site)
         form.addRow("类型", self._type)
         form.addRow("监听目录", path_layout)
         form.addRow("匹配模式", self._patterns)
@@ -590,6 +608,7 @@ class WatcherDialog(QDialog):
             settle_seconds=self._settle_seconds.value(),
             watch_updates=self._watch_updates.isChecked(),
             update_debounce_seconds=debounce if debounce > 0 else None,
+            site=str(self._site.currentData() or ""),
         )
 
     def _fill_watcher(self, watcher: WatcherConfig) -> None:
@@ -600,6 +619,8 @@ class WatcherDialog(QDialog):
         """
 
         self._name.setText(watcher.name)
+        site_index = self._site.findData(watcher.site)
+        self._site.setCurrentIndex(site_index if site_index >= 0 else 0)
         self._type.setCurrentIndex(0 if watcher.type == "file" else 1)
         self._path.setText(str(watcher.path))
         self._patterns.setText(", ".join(watcher.patterns))
@@ -625,6 +646,9 @@ class WatcherDialog(QDialog):
         watcher = self.watcher_config()
         if not watcher.name:
             QMessageBox.warning(self, "监听器配置", "请填写监听器名称")
+            return
+        if not watcher.site:
+            QMessageBox.warning(self, "监听器配置", "请选择站点设备。设备来自设备接入页已保存的设备。")
             return
         if not self._path.text().strip():
             QMessageBox.warning(self, "监听器配置", "请选择监听目录")

@@ -301,7 +301,7 @@ class CollectorFileWatcher:
             metadata["device_run_id"] = active_run_id
         return FileAssetRecord(
             collector_id=self._identity.collector_id,
-            device_id=self._identity.device_id,
+            device_id=self._config.site.strip() or self._identity.device_id,
             watcher_name=self._config.name,
             watcher_type=self._config.type,
             data_type=self._config.data_type,

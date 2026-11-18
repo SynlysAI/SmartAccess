@@ -59,6 +59,7 @@ class WatcherConfig:
     settle_seconds: int = 5
     watch_updates: bool = False
     update_debounce_seconds: int | None = None
+    site: str = ""
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,7 @@ def save_config(config: CollectionConfig, config_path: Path) -> None:
                 "settle_seconds": watcher.settle_seconds,
                 "watch_updates": watcher.watch_updates,
                 "update_debounce_seconds": watcher.update_debounce_seconds,
+                "site": watcher.site,
             }
             for watcher in config.watchers
         ],
@@ -194,6 +196,8 @@ def validate_config(config: CollectionConfig, validate_paths: bool = True) -> No
             raise ValueError(f"监听器 {watcher.name} 的类型只能是 file 或 directory")
         if not watcher.patterns:
             raise ValueError(f"监听器 {watcher.name} 至少需要一个匹配模式")
+        if not watcher.site.strip():
+            raise ValueError(f"监听器 {watcher.name} 需要选择站点设备")
         if watcher.data_type not in DATA_TYPE_OPTIONS:
             supported_types = ", ".join(DATA_TYPE_OPTIONS)
             raise ValueError(
@@ -288,6 +292,7 @@ def _parse_watcher(raw_watcher: dict[str, Any], base_dir: Path) -> WatcherConfig
         settle_seconds=int(raw_watcher.get("settle_seconds", 5)),
         watch_updates=bool(raw_watcher.get("watch_updates", False)),
         update_debounce_seconds=int(debounce) if debounce is not None else None,
+        site=str(raw_watcher.get("site") or ""),
     )
 
 
