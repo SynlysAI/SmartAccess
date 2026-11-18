@@ -255,6 +255,14 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QPlainTextEdit:focus, QTextEdit:focus {{
     border: 1px solid {PRIMARY};
 }}
+QLineEdit[readOnly="true"] {{
+    background: {SURFACE_MUTED};
+    color: {TEXT_MUTED};
+    border: 1px solid {BORDER};
+}}
+QLineEdit[readOnly="true"]:focus {{
+    border: 1px solid {BORDER};
+}}
 QLineEdit[validationState="valid"] {{
     border: 1px solid {SUCCESS};
     background: #F0FDF4;

@@ -226,6 +226,11 @@ def show_login_dialog(settings: AppSettings) -> bool:
     status_label.setObjectName("FormError")
     status_label.setWordWrap(True)
     status_label.setVisible(False)
+    # 隐藏时保留布局占位，避免显示登录/错误提示时窗口高度突变，
+    # 在 Windows 上窗口 resize 的未绘制区域会闪现黑边。
+    status_policy = status_label.sizePolicy()
+    status_policy.setRetainSizeWhenHidden(True)
+    status_label.setSizePolicy(status_policy)
 
     login_btn = QPushButton("登录")
     login_btn.setDefault(False)

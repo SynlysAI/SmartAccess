@@ -165,7 +165,8 @@ class CalibrationPage(QWidget):
         self._window_filter.textChanged.connect(self._apply_window_filter)
         layout.addWidget(self._window_filter)
         self._windows = QListWidget()
-        layout.addWidget(self._windows, 2)
+        # 过滤框占掉一行后，窗口列表略让出高度，已保存设备保持更大占比。
+        layout.addWidget(self._windows, 3)
         scan_row = QHBoxLayout()
         scan_btn = QPushButton("扫描")
         scan_btn.setObjectName("Secondary")
@@ -181,7 +182,7 @@ class CalibrationPage(QWidget):
         instruments_title.setObjectName("PageHint")
         layout.addWidget(instruments_title)
         self._instruments = QListWidget()
-        layout.addWidget(self._instruments, 1)
+        layout.addWidget(self._instruments, 2)
         return panel
 
     def _build_center_panel(self) -> QWidget:
