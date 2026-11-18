@@ -341,6 +341,11 @@ class WorkflowPage(QWidget):
         """创建空工作流编辑状态。"""
 
         self._current = None
+        # 清除列表选中，避免旧高亮让"再次点击同一工作流"无反应。
+        self._workflow_list.blockSignals(True)
+        self._workflow_list.clearSelection()
+        self._workflow_list.setCurrentRow(-1)
+        self._workflow_list.blockSignals(False)
         self._workflow_id.setText(self._next_workflow_id())
         self._author.setText("smartaccess")
         self._lifecycle.setCurrentIndex(0)

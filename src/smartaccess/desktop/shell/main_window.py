@@ -89,6 +89,8 @@ class MainWindow(QMainWindow):
         self._nav.setObjectName("NavList")
         self._stack = QStackedWidget()
         self._right_panel = self._build_right_panel()
+        # 系统状态信息低频参考，默认收起把宽度让给主内容区，由顶栏 ⓘ 切换。
+        self._right_panel.hide()
         self._monitoring_page: MonitoringPage | None = None
         self._data_collection_page = None
         self._run_started_at: dict[str, datetime] = {}
@@ -423,7 +425,7 @@ class MainWindow(QMainWindow):
         self._right_toggle = QPushButton("ⓘ")
         self._right_toggle.setObjectName("Ghost")
         self._right_toggle.setCheckable(True)
-        self._right_toggle.setChecked(True)
+        self._right_toggle.setChecked(False)
         self._right_toggle.setToolTip("显示或隐藏系统状态面板")
         self._right_toggle.toggled.connect(self._right_panel.setVisible)
         info_font = self._right_toggle.font()
@@ -649,7 +651,8 @@ class MainWindow(QMainWindow):
             max(680, int(data.get("height", default_height))),
         )
         self._nav_toggle.setChecked(bool(data.get("nav_visible", True)))
-        self._right_toggle.setChecked(bool(data.get("right_visible", True)))
+        # 键名升级为 right_visible_v2：存量状态一次性迁移为默认隐藏，此后记住用户选择。
+        self._right_toggle.setChecked(bool(data.get("right_visible_v2", False)))
         if data.get("maximized"):
             self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
 
@@ -664,7 +667,7 @@ class MainWindow(QMainWindow):
             "height": self.height(),
             "maximized": bool(self.windowState() & Qt.WindowState.WindowMaximized),
             "nav_visible": self._nav_panel.isVisible(),
-            "right_visible": self._right_panel.isVisible(),
+            "right_visible_v2": self._right_panel.isVisible(),
         }
         self._state_path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
