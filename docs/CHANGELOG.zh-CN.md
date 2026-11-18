@@ -1,5 +1,9 @@
 # SmartAccess 功能更新日志
 
+## 2026-11-18 v1.2.1
+
+- 修复发布压缩包命令被批处理拆行导致打包失败的问题，改为独立脚本生成 `SmartAccess-vX.Y.Z.zip`。
+
 本文件记录已落地或已明确进入实现基线的产品能力。详细产品范围以 `docs/PRD.zh-CN.md` 为准，技术语义以 `docs/SPEC.zh-CN.md` 与 `docs/contracts/interfaces.md` 为准。
 
 ## 2026-11-18 校准页面锚点区域布局优化

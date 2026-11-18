@@ -181,26 +181,16 @@ if not defined APP_VERSION (
     exit /b 1
 )
 
-set "STAGE=%OUTPUT_DIR%\SmartAccess"
 set "RELEASE_ZIP=%OUTPUT_DIR%\SmartAccess-v%APP_VERSION%.zip"
 echo.
 echo [STEP] Packaging %RELEASE_ZIP%...
 
-if exist "%STAGE%" rmdir /s /q "%STAGE%"
-mkdir "%STAGE%"
-robocopy "%OUTPUT_DIR%\run_desktop.dist" "%STAGE%" /E /NFL /NDL /NJH /NJS /NP
-if errorlevel 8 (
-    echo [ERROR] Failed to stage release directory
-    exit /b 1
-)
 if exist "%RELEASE_ZIP%" del /f /q "%RELEASE_ZIP%"
-"%PYTHON%" -c "import sys,zipfile; from pathlib import Path; root=Path(sys.argv[1]); out=Path(sys.argv[2]); z=zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6); files=[p for p in root.rglob('*') if p.is_file()];
-[z.write(p, Path('SmartAccess')/p.relative_to(root)) for p in files]; z.close(); print(len(files))" "%STAGE%" "%RELEASE_ZIP%"
+"%PYTHON%" "%ROOT%\scripts\package_release.py" "%OUTPUT_DIR%\run_desktop.dist" "%RELEASE_ZIP%"
 if errorlevel 1 (
     echo [ERROR] Failed to create release zip
     exit /b 1
 )
-rmdir /s /q "%STAGE%"
 echo [INFO] Release package: %RELEASE_ZIP%
 exit /b 0
 
