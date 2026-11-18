@@ -184,6 +184,7 @@ class RunSessionService:
         workflow_name: str | None = None,
         template_id: str | None = None,
         template_version: str | None = None,
+        trigger_source: str = "local",
     ) -> RunSession:
         """创建运行会话。"""
 
@@ -197,6 +198,7 @@ class RunSessionService:
             template_id=template_id,
             template_version=template_version,
             steps=list(steps or []),
+            trigger_source=trigger_source,
         )
         self._sessions[session_id] = session
         self._traces[session_id] = []

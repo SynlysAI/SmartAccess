@@ -225,6 +225,15 @@ class MonitoringPage(QWidget):
             self._session_list.addItem("暂无运行记录")
         self._session_list.blockSignals(False)
 
+    def select_session(self, session_id: str) -> None:
+        """选中并展示指定运行会话。
+
+        Args:
+            session_id: 运行会话 ID。
+        """
+
+        self._vm.set_active_session(session_id)
+
     def _select_session(self) -> None:
         """选择运行会话。"""
 

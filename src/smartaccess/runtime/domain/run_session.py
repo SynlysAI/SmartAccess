@@ -73,6 +73,7 @@ class RunSession:
     status: RunSessionStatus = RunSessionStatus.CREATED
     steps: list[RunStep] = field(default_factory=list)
     emitted_events: list[RuntimeEventName] = field(default_factory=list)
+    trigger_source: str = "local"
 
     def apply(self, event: RuntimeEventName) -> None:
         """根据事件推进会话状态。"""

@@ -413,6 +413,8 @@ def run_app(settings: AppSettings, facade: object | None = None) -> int:
 
     logger = get_logger()
     app = QApplication.instance() or QApplication(sys.argv)
+    # 主窗口关闭后最小化到系统托盘继续后台运行，退出走托盘菜单
+    app.setQuitOnLastWindowClosed(False)
     _set_windows_app_id()
     _configure_app_metadata(app)
     icon = _load_app_icon()
