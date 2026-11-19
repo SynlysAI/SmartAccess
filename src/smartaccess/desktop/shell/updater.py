@@ -149,12 +149,16 @@ def download_release(asset: ReleaseAsset, timeout: float = 120.0) -> Path:
 
 
 def can_apply_update() -> bool:
-    """返回当前程序是否运行在可覆盖的打包目录中。"""
+    """返回当前程序是否运行在可覆盖的打包目录中。
 
-    if not getattr(sys, "frozen", False):
-        return False
+    Nuitka 独立打包不会设置 sys.frozen，并且 sys.executable 指向
+    安装目录中的 python.exe，而不是 run_desktop.exe。
+    """
+
     install_dir = Path(sys.executable).resolve().parent
-    return install_dir.name == "SmartAccess" and (install_dir / "run_desktop.exe").exists()
+    if install_dir.name != "SmartAccess":
+        return False
+    return (install_dir / "run_desktop.exe").is_file()
 
 
 def launch_update(zip_path: Path) -> None:
@@ -182,7 +186,9 @@ def launch_update(zip_path: Path) -> None:
 
 
 def apply_release_zip(zip_path: Path, install_dir: Path) -> None:
-    """把发布压缩包解压到安装目录。
+    """把发布压缩包覆盖到现有安装目录。
+
+    只覆盖发布包中的程序文件，保留安装目录里已有的 .env 和 workspace。
 
     Args:
         zip_path: 发布压缩包路径。
@@ -193,7 +199,6 @@ def apply_release_zip(zip_path: Path, install_dir: Path) -> None:
     """
 
     staging = install_dir.parent / f".{install_dir.name}.new"
-    backup = install_dir.parent / f".{install_dir.name}.old"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
@@ -202,8 +207,8 @@ def apply_release_zip(zip_path: Path, install_dir: Path) -> None:
         if not names or any(not name.startswith("SmartAccess/") for name in names):
             raise UpdateError("更新包结构不正确，解压后必须是 SmartAccess 目录。")
         for info in archive.infolist():
-            relative = info.filename.removeprefix("SmartAccess/")
-            if not relative:
+            relative = Path(info.filename.removeprefix("SmartAccess/"))
+            if not relative.parts or _is_preserved_path(relative):
                 continue
             destination = staging / relative
             if info.is_dir():
@@ -212,12 +217,22 @@ def apply_release_zip(zip_path: Path, install_dir: Path) -> None:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(info) as source, destination.open("wb") as output:
                 shutil.copyfileobj(source, output)
-    if backup.exists():
-        shutil.rmtree(backup)
-    if install_dir.exists():
-        install_dir.rename(backup)
-    staging.rename(install_dir)
-    shutil.rmtree(backup, ignore_errors=True)
+    install_dir.mkdir(parents=True, exist_ok=True)
+    for path in staging.rglob("*"):
+        relative = path.relative_to(staging)
+        destination = install_dir / relative
+        if path.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, destination)
+    shutil.rmtree(staging)
+
+
+def _is_preserved_path(relative: Path) -> bool:
+    """判断安装目录中的用户文件是否应在更新时保留。"""
+
+    return bool(relative.parts) and relative.parts[0] in {".env", "workspace"}
 
 
 def _write_update_script(install_dir: Path, zip_path: Path) -> Path:
@@ -242,9 +257,7 @@ def _write_update_script(install_dir: Path, zip_path: Path) -> Path:
         f"set \"INSTALL_DIR={install_dir}\"",
         f"set \"ZIP={zip_path}\"",
         f"set \"EXE={executable}\"",
-        "set \"PARENT=%INSTALL_DIR%\\..\"",
-        "set \"EXTRACT=%PARENT%\\.SmartAccess.extract\"",
-        "set \"BACKUP=%PARENT%\\.SmartAccess.old\"",
+        "set \"EXTRACT=%TEMP%\\SmartAccess-update-extract\"",
         ":wait_exit",
         "tasklist /FI \"PID eq %PID%\" | find \"%PID%\" >nul",
         "if not errorlevel 1 (",
@@ -256,17 +269,11 @@ def _write_update_script(install_dir: Path, zip_path: Path) -> Path:
         "tar -xf \"%ZIP%\" -C \"%EXTRACT%\"",
         "if errorlevel 1 goto :failed",
         "if not exist \"%EXTRACT%\\SmartAccess\\run_desktop.exe\" goto :failed",
-        "if exist \"%BACKUP%\" rmdir /s /q \"%BACKUP%\"",
-        "rename \"%INSTALL_DIR%\" \".SmartAccess.old\"",
-        "if errorlevel 1 goto :failed",
-        "move \"%EXTRACT%\\SmartAccess\" \"%PARENT%\\SmartAccess\" >nul",
-        "if errorlevel 1 goto :restore",
+        "robocopy \"%EXTRACT%\\SmartAccess\" \"%INSTALL_DIR%\" /E /XF .env /XD workspace /NFL /NDL /NJH /NJS /NP",
+        "if %ERRORLEVEL% GEQ 8 goto :failed",
         "rmdir /s /q \"%EXTRACT%\"",
-        "rmdir /s /q \"%BACKUP%\"",
         "start \"\" \"%EXE%\"",
         "exit /b 0",
-        ":restore",
-        "if not exist \"%INSTALL_DIR%\" rename \"%BACKUP%\" \"SmartAccess\"",
         ":failed",
         "echo SmartAccess update failed. > \"%TEMP%\\SmartAccess-update-error.txt\"",
         "exit /b 1",
