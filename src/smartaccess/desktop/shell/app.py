@@ -408,12 +408,17 @@ def show_login_dialog(settings: AppSettings) -> bool:
     return True
 
 
-def run_app(settings: AppSettings, facade: object | None = None) -> int:
+def run_app(
+    settings: AppSettings,
+    facade: object | None = None,
+    single_instance: object | None = None,
+) -> int:
     """启动 Qt 桌面应用。
 
     Args:
         settings: 应用配置。
         facade: 可选运行时门面。
+        single_instance: 可选单实例守卫，主窗口创建后注册为唤醒目标。
 
     Returns:
         Qt 应用退出码。
@@ -437,4 +442,6 @@ def run_app(settings: AppSettings, facade: object | None = None) -> int:
         window.setWindowIcon(icon)
     window.show()
     logger.info("桌面主窗口已显示")
+    if single_instance is not None:
+        single_instance.set_target(window)
     return app.exec()
