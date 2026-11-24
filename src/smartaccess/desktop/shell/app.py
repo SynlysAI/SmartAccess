@@ -100,7 +100,7 @@ def _http_post_json(
 
     import json
     from urllib.error import HTTPError, URLError
-    from urllib.request import Request, urlopen
+    from urllib.request import ProxyHandler, Request, build_opener
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request_headers = {
@@ -114,8 +114,11 @@ def _http_post_json(
         headers=request_headers,
         method="POST",
     )
+    # SpecLabOS 是内网服务，强制直连，避免系统代理把请求绕到
+    # 代理软件（如 Clash）导致每个请求多出数秒延迟（同 speclabos_client.py）
+    opener = build_opener(ProxyHandler({}))
     try:
-        with urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        with opener.open(req, timeout=timeout) as resp:  # noqa: S310
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")

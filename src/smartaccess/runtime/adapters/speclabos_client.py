@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urljoin
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 from uuid import uuid4
 
 from smartaccess.runtime.application.ports import PlatformOffline, TemplateVersionMissing
@@ -32,6 +32,9 @@ class SpecLabOSPlatformClient:
         self._base_url = base_url.rstrip("/") + "/"
         self._api_key = api_key
         self._timeout = timeout_seconds
+        # SpecLabOS 是内网服务，强制直连，避免 Windows 系统代理把
+        # 内网请求绕到代理软件（如 Clash）导致每个请求多出数秒延迟
+        self._opener = build_opener(ProxyHandler({}))
         self._endpoints = {
             "health": "/health",
             "fetch_task": "/smartaccess/tasks/next",
@@ -320,7 +323,7 @@ class SpecLabOSPlatformClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
         req = Request(url, data=body, headers=headers, method=method)
         try:
-            with urlopen(req, timeout=self._timeout) as resp:  # noqa: S310 - user-configured local/API endpoint
+            with self._opener.open(req, timeout=self._timeout) as resp:  # noqa: S310 - user-configured local/API endpoint
                 raw = resp.read()
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
