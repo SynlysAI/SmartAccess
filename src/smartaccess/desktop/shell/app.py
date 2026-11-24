@@ -226,6 +226,11 @@ def show_login_dialog(settings: AppSettings) -> bool:
     status_label.setObjectName("FormError")
     status_label.setWordWrap(True)
     status_label.setVisible(False)
+    # 隐藏时保留布局占位，避免显示登录/错误提示时窗口高度突变，
+    # 在 Windows 上窗口 resize 的未绘制区域会闪现黑边。
+    status_policy = status_label.sizePolicy()
+    status_policy.setRetainSizeWhenHidden(True)
+    status_label.setSizePolicy(status_policy)
 
     login_btn = QPushButton("登录")
     login_btn.setDefault(False)
@@ -274,7 +279,7 @@ def show_login_dialog(settings: AppSettings) -> bool:
     form.addWidget(_field("密码", password_edit))
 
     register_link = QLabel(
-        '<a href="https://speclabos.wumiaox.com/register"'
+        '<a href="https://speclabos.xmuzc.com/register"'
         ' style="color: #5b8def; text-decoration: none;">没有账号？点击注册</a>'
     )
     register_link.setOpenExternalLinks(True)
@@ -413,6 +418,8 @@ def run_app(settings: AppSettings, facade: object | None = None) -> int:
 
     logger = get_logger()
     app = QApplication.instance() or QApplication(sys.argv)
+    # 主窗口关闭后最小化到系统托盘继续后台运行，退出走托盘菜单
+    app.setQuitOnLastWindowClosed(False)
     _set_windows_app_id()
     _configure_app_metadata(app)
     icon = _load_app_icon()

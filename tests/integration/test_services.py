@@ -166,6 +166,41 @@ def test_template_publish_supersede_and_rollback(tmp_path: Path) -> None:
     assert versions["1.1.0"] == TemplateVersionStatus.ROLLED_BACK
 
 
+def test_template_publish_does_not_upload_shared_device_image(tmp_path: Path) -> None:
+    """发布模板不再上传系统设置里的共用设备图片。"""
+
+    bus = EventBus()
+    anchors = build_runtime_facade(AppSettings(workspace_dir=tmp_path)).providers()["anchors"]
+    workflows = WorkflowService(
+        workspace_dir=tmp_path,
+        anchors=anchors,
+        draft_generator=None,
+    )
+    platform = StubPlatformClient()
+    image_path = tmp_path / "device.png"
+    image_path.write_bytes(b"fake-image")
+    svc = TemplateService(
+        platform=platform,
+        workspace_dir=tmp_path,
+        event_bus=bus,
+        source_device_id="pc-workstation",
+        device_image_path=str(image_path),
+    )
+
+    v1 = workflows.register(_workflow("w1"))
+    v1.metadata.template_id = "t_image"
+    v1.metadata.template_version = "1.0.0"
+    svc.publish(v1)
+    v2 = v1.model_copy(deep=True)
+    v2.metadata.template_version = "1.1.0"
+    svc.publish(v2)
+
+    uploaded = [
+        payload for kind, payload in platform.uploads if kind == "device_image"
+    ]
+    assert uploaded == []
+
+
 def test_platform_outbox_retries_then_fails(tmp_path: Path) -> None:
     """验证平台 outbox 重试失败后发出失败事件。"""
 

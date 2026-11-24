@@ -59,6 +59,18 @@ class DataCollectionViewModel(ViewModel):
         self._controller.load_queue(effective_config)
         return effective_config
 
+    def list_device_ids(self) -> list[str]:
+        """列出设备接入页已保存的设备 ID。
+
+        Returns:
+            可作为采集站点选择的设备 ID。
+        """
+        return [
+            profile.device_id
+            for profile in self._facade.list_instruments()
+            if profile.device_id
+        ]
+
     def build_configuration(
         self,
         *,

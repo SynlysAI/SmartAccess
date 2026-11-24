@@ -56,6 +56,7 @@ class TemplateService:
         event_bus: EventBus,
         source_device_id: str = "",
         publisher: str = "",
+        device_image_path: str = "",
     ) -> None:
         """初始化模板服务。
 
@@ -65,8 +66,10 @@ class TemplateService:
             event_bus: 运行时事件总线。
             source_device_id: 当前 SmartAccess 执行端电脑 ID。
             publisher: 当前登录用户名，发布模板时随 payload 上报给平台。
+            device_image_path: 兼容旧调用，设备图片已改到设备接入页按仪器上传。
         """
 
+        del device_image_path
         self._platform = platform
         self._workspace_dir = Path(workspace_dir)
         self._event_bus = event_bus

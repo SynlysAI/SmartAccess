@@ -57,7 +57,7 @@ class DataHubClient:
             请求中提交的文件元数据。
         """
 
-        return {
+        metadata = {
             "collector_id": item.collector_id,
             "device_id": item.device_id,
             "watcher_name": item.watcher_name,
@@ -75,3 +75,8 @@ class DataHubClient:
             "created_at": item.created_at.isoformat(),
             "metadata": item.metadata,
         }
+        # 采集时打标的平台任务 ID提升到顶层，SpecLabOS 会据此自动绑定运行记录
+        device_run_id = str((item.metadata or {}).get("device_run_id") or "")
+        if device_run_id:
+            metadata["device_run_id"] = device_run_id
+        return metadata

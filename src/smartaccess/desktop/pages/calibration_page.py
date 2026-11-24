@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
@@ -82,14 +84,20 @@ class CalibrationPage(QWidget):
         root.setSpacing(12)
         root.addLayout(self._build_header())
 
+        content_splitter = QSplitter(Qt.Orientation.Vertical)
+        content_splitter.addWidget(self._build_center_panel())
+        content_splitter.addWidget(self._build_right_panel())
+        content_splitter.setStretchFactor(0, 1)
+        content_splitter.setStretchFactor(1, 1)
+        content_splitter.setChildrenCollapsible(False)
+        content_splitter.setSizes([420, 330])
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_left_panel())
-        splitter.addWidget(self._build_center_panel())
-        splitter.addWidget(self._build_right_panel())
+        splitter.addWidget(content_splitter)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
-        splitter.setSizes([280, 302, 350])
+        splitter.setSizes([280, 900])
         root.addWidget(splitter, 1)
 
         self._canvas.roi_changed.connect(self._on_roi_changed)
@@ -130,6 +138,9 @@ class CalibrationPage(QWidget):
         save_btn = QPushButton("保存")
         save_btn.clicked.connect(self._save)
         row.addWidget(save_btn)
+        sync_button = QPushButton("发布")
+        sync_button.clicked.connect(self._sync_to_platform)
+        row.addWidget(sync_button)
         return row
 
     def _build_left_panel(self) -> QWidget:
@@ -143,8 +154,22 @@ class CalibrationPage(QWidget):
         self._device_id.setPlaceholderText("氟基-2236实验室-元能极片电阻仪-01")
         self._device_id.textChanged.connect(self._update_device_id_hint)
         self._title_contains = QLineEdit()
-        self._title_contains.setPlaceholderText("窗口标题关键字")
+        self._title_contains.setReadOnly(True)
+        self._title_contains.setPlaceholderText("选择窗口后自动带出")
         form.addRow("设备 ID", self._device_id)
+        self._device_image_path = QLineEdit()
+        self._device_image_path.setClearButtonEnabled(True)
+        self._device_image_path.setPlaceholderText("未选择，非必填")
+        image_editor = QWidget()
+        image_layout = QHBoxLayout(image_editor)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        image_layout.setSpacing(6)
+        image_layout.addWidget(self._device_image_path, 1)
+        image_button = QPushButton("选择")
+        image_button.setObjectName("Secondary")
+        image_button.clicked.connect(self._select_device_image)
+        image_layout.addWidget(image_button)
+        form.addRow("设备图片", image_editor)
         form.addRow("窗口标题", self._title_contains)
         layout.addLayout(form)
         self._update_device_id_hint()
@@ -152,8 +177,14 @@ class CalibrationPage(QWidget):
         window_title = QLabel("窗口")
         window_title.setObjectName("PageHint")
         layout.addWidget(window_title)
+        self._window_filter = QLineEdit()
+        self._window_filter.setPlaceholderText("输入关键字过滤窗口")
+        self._window_filter.setClearButtonEnabled(True)
+        self._window_filter.textChanged.connect(self._apply_window_filter)
+        layout.addWidget(self._window_filter)
         self._windows = QListWidget()
-        layout.addWidget(self._windows, 2)
+        # 过滤框占掉一行后，窗口列表略让出高度，已保存设备保持更大占比。
+        layout.addWidget(self._windows, 3)
         scan_row = QHBoxLayout()
         scan_btn = QPushButton("扫描")
         scan_btn.setObjectName("Secondary")
@@ -169,7 +200,7 @@ class CalibrationPage(QWidget):
         instruments_title.setObjectName("PageHint")
         layout.addWidget(instruments_title)
         self._instruments = QListWidget()
-        layout.addWidget(self._instruments, 1)
+        layout.addWidget(self._instruments, 2)
         return panel
 
     def _build_center_panel(self) -> QWidget:
@@ -205,7 +236,6 @@ class CalibrationPage(QWidget):
         """构建右侧锚点表格区域。"""
 
         panel, layout = create_card(margins=(14, 14, 14, 14), spacing=10)
-        panel.setMinimumWidth(350)
         row = QHBoxLayout()
         add_btn = QPushButton("添加锚点")
         add_btn.setObjectName("TableToolbarButton")
@@ -252,6 +282,20 @@ class CalibrationPage(QWidget):
             self._windows.addItem(item)
         if not windows:
             self._windows.addItem("未发现可用窗口")
+        self._apply_window_filter()
+
+    def _apply_window_filter(self) -> None:
+        """按关键字过滤窗口列表，仅隐藏不匹配的行，不改动行索引。"""
+
+        keyword = self._window_filter.text().strip().lower()
+        for row in range(self._windows.count()):
+            item = self._windows.item(row)
+            if row >= len(self._windows_data):
+                # 占位行（如“未发现可用窗口”）始终保持可见。
+                item.setHidden(False)
+                continue
+            title = str(self._windows_data[row]["title"]).lower()
+            item.setHidden(bool(keyword) and keyword not in title)
 
     def _on_window_selected(self) -> None:
         """窗口选中变化时同步标题和截图按钮。"""
@@ -646,12 +690,46 @@ class CalibrationPage(QWidget):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "保存失败", str(exc))
             return
+        stored_image = self._vm.save_device_image_path(
+            device_id,
+            self._device_image_path.text().strip(),
+        )
+        self._device_image_path.setText(stored_image)
         self._refresh_instruments()
         QMessageBox.information(
             self,
             "已保存",
             f"设备 {profile.device_id} 已保存，锚点数：{len(profile.anchors)}",
         )
+
+    def _select_device_image(self) -> None:
+        """选择当前设备的展示图片。"""
+        current = self._device_image_path.text().strip()
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择设备图片",
+            current,
+            "图片文件 (*.png *.jpg *.jpeg *.webp *.gif)",
+        )
+        if selected:
+            self._device_image_path.setText(str(Path(selected).resolve()))
+
+    def _sync_to_platform(self) -> None:
+        """把当前已保存设备及其图片同步到 SpecLabOS。"""
+        device_id = self._device_id.text().strip()
+        title = self._title_contains.text().strip()
+        if self._require_device_fields(device_id=device_id, title=title) is None:
+            return
+        try:
+            self._vm.sync_instrument_to_platform(
+                device_id,
+                title,
+                self._device_image_path.text().strip(),
+            )
+        except Exception as exc:  # noqa: BLE001 - 同步失败需要直接提示给操作者
+            QMessageBox.critical(self, "发布失败", str(exc))
+            return
+        QMessageBox.information(self, "已发布", f"设备 {device_id} 已发布到SpecLabOS平台")
 
     def _ai_assist(self) -> None:
         """调用 AI 生成设备锚点草稿并加载到页面。"""
@@ -1244,6 +1322,9 @@ class CalibrationPage(QWidget):
         self._table.setRowCount(0)
         self._device_id.setText(profile.device_id)
         self._title_contains.setText(profile.window_signature.title_contains or "")
+        self._device_image_path.setText(
+            self._vm.load_device_image_path(profile.device_id)
+        )
         self._view_states = {}
         for view in profile.views:
             view_capture = (
@@ -1381,6 +1462,7 @@ class CalibrationPage(QWidget):
         self._refresh_views()
         self._device_id.clear()
         self._title_contains.clear()
+        self._device_image_path.clear()
         self._capture_btn.setEnabled(False)
         self._windows.blockSignals(True)
         self._windows.clearSelection()

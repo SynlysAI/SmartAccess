@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from smartaccess.runtime.application.ports import (
@@ -157,6 +158,42 @@ class StubPlatformClient:
             "conflict": False,
             "node_id": payload.get("node_id", ""),
         }
+
+    def upload_device_image(
+        self,
+        source_device_id: str,
+        image_path: str,
+    ) -> dict[str, Any]:
+        """记录设备图片上传。
+
+        Args:
+            source_device_id: 当前执行端 ID。
+            image_path: 本地设备图片路径。
+
+        Returns:
+            平台响应。
+        """
+
+        self._raise_if_offline("upload_device_image")
+        if not Path(image_path).is_file():
+            raise FileNotFoundError(image_path)
+        self.uploads.append(
+            ("device_image", {"source_device_id": source_device_id, "path": image_path})
+        )
+        return {"ok": True, "source_device_id": source_device_id}
+
+    def sync_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """记录仪器档案同步。
+
+        Args:
+            payload: 包含 device_id、node_id、name、window_title。
+
+        Returns:
+            平台响应。
+        """
+        self._raise_if_offline("sync_device")
+        self.uploads.append(("sync_device", dict(payload)))
+        return {"ok": True, "device_id": payload.get("device_id", "")}
 
     def _upload(self, kind: str, payload: dict[str, Any]) -> bool:
         """记录一次上传。"""

@@ -934,7 +934,7 @@ class WorkflowStepTable(QTableWidget):
         combo = NoWheelComboBox()
         combo.setObjectName("TableComboBox")
         set_embedded_editor_height(combo)
-        combo.addItem("", "")
+        combo.addItem("无", "")
         for item in anchor_ids:
             combo.addItem(item, item)
         index = combo.findData(anchor_id or "")

@@ -230,6 +230,31 @@ class PlatformClient(Protocol):
     def register_node(self, payload: dict[str, Any]) -> dict[str, Any]:
         """注册并校验执行端节点身份。"""
 
+    def upload_device_image(
+        self,
+        source_device_id: str,
+        image_path: str,
+    ) -> dict[str, Any]:
+        """上传设备图片。
+
+        Args:
+            source_device_id: 仪器设备 ID。
+            image_path: 本地设备图片路径。
+
+        Returns:
+            平台响应。
+        """
+
+    def sync_device(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """把仪器档案同步到 SpecLabOS。
+
+        Args:
+            payload: 包含 device_id、node_id、name、window_title。
+
+        Returns:
+            平台响应。
+        """
+
 
 class ArtifactStore(Protocol):
     """运行产物存储协议。"""

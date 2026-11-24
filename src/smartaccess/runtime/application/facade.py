@@ -233,6 +233,59 @@ class RuntimeFacade:
 
         return self._anchors.get_profile(device_id)
 
+    def load_device_image_path(self, device_id: str) -> str:
+        """读取设备展示图片路径。
+
+        Args:
+            device_id: 设备 ID。
+
+        Returns:
+            本地图片路径。
+        """
+        return self._anchors.load_device_image_path(device_id)
+
+    def save_device_image_path(self, device_id: str, image_path: str) -> str:
+        """把设备展示图片复制到锚点目录。
+
+        Args:
+            device_id: 设备 ID。
+            image_path: 用户选择的图片路径，空字符串表示清除。
+
+        Returns:
+            锚点目录中的图片路径；已清除时返回空字符串。
+        """
+        return self._anchors.save_device_image_path(device_id, image_path)
+
+    def sync_instrument_to_platform(
+        self,
+        device_id: str,
+        window_title: str,
+        image_path: str = "",
+    ) -> None:
+        """把已保存设备同步到 SpecLabOS，并上传该设备自己的图片。
+
+        Args:
+            device_id: 仪器设备 ID。
+            window_title: 绑定的窗口标题。
+            image_path: 可选的本地展示图片路径。
+        """
+        node_id = (self._settings.device_id or "").strip()
+        if not node_id:
+            raise RuntimeError("未配置执行端设备 ID，请先在系统设置中填写。")
+        if self._anchors.get_profile(device_id) is None:
+            raise RuntimeError("请先保存设备，再同步到平台。")
+        self._platform.sync_device(
+            {
+                "device_id": device_id,
+                "node_id": node_id,
+                "name": device_id,
+                "window_title": window_title,
+            }
+        )
+        stored_image = self._anchors.save_device_image_path(device_id, image_path)
+        if stored_image:
+            self._platform.upload_device_image(device_id, stored_image)
+
     def save_instrument(self, profile: AnchorsContract) -> AnchorsContract:
         """保存设备锚点配置。"""
 
@@ -632,6 +685,7 @@ class RuntimeFacade:
         *,
         background: bool = True,
         runtime_inputs: dict[str, str] | None = None,
+        trigger_source: str = "local",
     ) -> RunSession:
         """启动工作流运行。
 
@@ -639,6 +693,7 @@ class RuntimeFacade:
             workflow: 待运行工作流。
             background: 是否在后台线程运行。
             runtime_inputs: 运行前填写的输入步骤值。
+            trigger_source: 发起来源，local 为本地界面，remote 为云端远程任务。
 
         Returns:
             创建的运行会话。
@@ -664,6 +719,7 @@ class RuntimeFacade:
             workflow_name=runtime_workflow.metadata.workflow_id,
             template_id=runtime_workflow.metadata.template_id,
             template_version=runtime_workflow.metadata.template_version,
+            trigger_source=trigger_source,
         )
 
         def _run() -> None:
