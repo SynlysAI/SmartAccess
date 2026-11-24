@@ -27,8 +27,22 @@ def run_desktop(settings: AppSettings | None = None) -> int:
         Qt 应用退出码。
     """
 
+    import sys
+
     settings = settings or AppSettings.from_env()
     configure_logging(settings)
+
+    from PyQt6.QtWidgets import QApplication
+
+    from smartaccess.desktop.shell.single_instance import SingleInstanceGuard
+    from smartaccess.shared.logging import get_logger
+
+    QApplication.instance() or QApplication(sys.argv)
+    guard = SingleInstanceGuard()
+    if guard.poke_existing():
+        get_logger().info("SmartAccess 已在运行，唤醒已有实例窗口后本次启动退出")
+        return 0
+    guard.start()
 
     from smartaccess.desktop.shell.app import show_login_dialog
 
@@ -42,4 +56,4 @@ def run_desktop(settings: AppSettings | None = None) -> int:
 
     from smartaccess.desktop.shell.app import run_app
 
-    return run_app(settings, facade)
+    return run_app(settings, facade, single_instance=guard)
