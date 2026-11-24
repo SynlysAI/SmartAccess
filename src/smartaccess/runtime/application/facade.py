@@ -280,6 +280,8 @@ class RuntimeFacade:
                 "node_id": node_id,
                 "name": device_id,
                 "window_title": window_title,
+                "published_by": (self._settings.speclabos_username or "").strip()
+                or "smartaccess",
             }
         )
         stored_image = self._anchors.save_device_image_path(device_id, image_path)
