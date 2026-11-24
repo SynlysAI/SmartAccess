@@ -6,8 +6,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QSize, Qt
-from PyQt6.QtGui import QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtCore import QEvent, QSize, Qt, QUrl
+from PyQt6.QtGui import QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -488,21 +488,18 @@ class MainWindow(QMainWindow):
         if not is_newer_version(str(version)):
             QMessageBox.information(self, "检查更新", f"当前已是最新版本 {VERSION_DISPLAY}。")
             return
+        choice = self._ask_update_choice(str(version))
+        if choice == "manual":
+            QDesktopServices.openUrl(QUrl(str(getattr(release, "download_url", ""))))
+            return
+        if choice != "auto":
+            return
         if not can_apply_update():
             QMessageBox.information(
                 self,
                 "检查更新",
-                f"发现新版本 v{version}。\n当前是开发环境运行，请使用打包后的 SmartAccess 再更新。",
+                f"发现新版本 v{version}。\n当前是开发环境运行，不能自动覆盖安装目录。",
             )
-            return
-        reply = QMessageBox.question(
-            self,
-            "检查更新",
-            f"发现新版本 v{version}，是否下载并重启更新？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
             return
         self._update_button.setEnabled(False)
         self._update_button.setText("下载中")
@@ -510,6 +507,33 @@ class MainWindow(QMainWindow):
         self._update_task.done.connect(self._on_update_downloaded)
         self._update_task.error.connect(self._on_update_failed)
         self._update_task.start()
+
+    def _ask_update_choice(self, version: str) -> str:
+        """询问用户自动更新还是手动下载。
+
+        Args:
+            version: 发现的新版本号。
+
+        Returns:
+            auto、manual 或空字符串。
+        """
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("检查更新")
+        box.setText(f"发现新版本 v{version}。")
+        box.setInformativeText("自动更新会覆盖当前程序并重启，已有的 .env 和 workspace 会保留。")
+        auto_button = box.addButton("自动更新", QMessageBox.ButtonRole.AcceptRole)
+        manual_button = box.addButton("手动下载", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(auto_button)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is auto_button:
+            return "auto"
+        if clicked is manual_button:
+            return "manual"
+        return ""
 
     def _on_update_downloaded(self, zip_path: object) -> None:
         """下载完成后启动独立更新脚本并退出程序。
