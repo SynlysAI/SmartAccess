@@ -26,6 +26,7 @@ class CollectorFileWatcher:
         identity: CollectorIdentity,
         config: WatcherConfig,
         queue: SQLiteUploadQueue,
+        operator: str = "",
     ) -> None:
         """初始化一个数据监听器。
 
@@ -33,11 +34,13 @@ class CollectorFileWatcher:
             identity: 采集器身份配置。
             config: 监听器配置。
             queue: 本地可靠上传队列。
+            operator: 启动采集时 SmartAccess 的登录用户名，随数据上报平台。
         """
 
         self._identity = identity
         self._config = config
         self._queue = queue
+        self._operator = operator.strip()
         self._observer = Observer()
         self._stop_event = threading.Event()
         self._processing_paths: set[Path] = set()
@@ -299,6 +302,8 @@ class CollectorFileWatcher:
         metadata = {"source_path": str(file_path)}
         if active_run_id:
             metadata["device_run_id"] = active_run_id
+        if self._operator:
+            metadata["operator"] = self._operator
         return FileAssetRecord(
             collector_id=self._identity.collector_id,
             device_id=self._config.site.strip() or self._identity.device_id,
