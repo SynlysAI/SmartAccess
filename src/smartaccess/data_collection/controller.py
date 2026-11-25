@@ -65,6 +65,7 @@ class CollectionController:
         *,
         upload_existing: bool,
         force_upload_existing: bool,
+        operator: str = "",
     ) -> None:
         """启动监听器和上传工作器。
 
@@ -72,6 +73,7 @@ class CollectionController:
             config: 已由页面填写的采集配置。
             upload_existing: 是否先扫描当前已有的数据。
             force_upload_existing: 是否强制重置历史数据的上传状态。
+            operator: 启动采集时 SmartAccess 的登录用户名，随数据上报平台。
 
         Raises:
             RuntimeError: 采集器已经运行。
@@ -97,7 +99,12 @@ class CollectionController:
 
             queue = SQLiteUploadQueue(config.queue.sqlite_path)
             watchers = [
-                CollectorFileWatcher(config.collector, watcher_config, queue)
+                CollectorFileWatcher(
+                    config.collector,
+                    watcher_config,
+                    queue,
+                    operator=operator,
+                )
                 for watcher_config in config.watchers
             ]
             uploader = UploadWorker(

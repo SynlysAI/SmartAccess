@@ -79,4 +79,8 @@ class DataHubClient:
         device_run_id = str((item.metadata or {}).get("device_run_id") or "")
         if device_run_id:
             metadata["device_run_id"] = device_run_id
+        # 采集时的登录用户提升到顶层，SpecLabOS 会把它存为数据资产的操作人
+        operator = str((item.metadata or {}).get("operator") or "").strip()
+        if operator:
+            metadata["operator"] = operator
         return metadata

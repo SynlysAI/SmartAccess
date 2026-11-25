@@ -153,6 +153,7 @@ class DataCollectionViewModel(ViewModel):
             effective_config,
             upload_existing=upload_existing,
             force_upload_existing=force_upload_existing,
+            operator=self._facade.settings().speclabos_username,
         )
         self.changed.emit()
 
